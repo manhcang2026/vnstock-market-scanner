@@ -19,8 +19,15 @@ AVERAGE_VOLUME_SESSIONS = 10
 # Khoảng 430 ngày thường đủ để lấy hơn 200 phiên giao dịch.
 HISTORY_LOOKBACK_DAYS = 430
 
-# Nghỉ nhẹ giữa các mã để hạn chế gọi API quá nhanh.
-REQUEST_DELAY_SECONDS = 0.30
+# Giới hạn Guest hiện khoảng 20 request/phút.
+# 3.3 giây/request giúp có biên an toàn.
+REQUEST_INTERVAL_SECONDS = 3.3
+
+# Số lần thử lại khi gặp lỗi.
+MAX_RETRIES = 3
+
+# Khi gặp rate limit, chờ qua một chu kỳ rồi thử lại.
+RATE_LIMIT_WAIT_SECONDS = 65
 
 
 def normalize_text(series: pd.Series) -> pd.Series:
@@ -41,11 +48,11 @@ def load_watchlist() -> pd.DataFrame:
     watchlist = pd.read_csv(WATCHLIST_FILE)
 
     required_columns = {"symbol", "exchange"}
-    missing = required_columns.difference(watchlist.columns)
+    missing_columns = required_columns.difference(watchlist.columns)
 
-    if missing:
+    if missing_columns:
         raise RuntimeError(
-            f"Watchlist thieu cot: {sorted(missing)}"
+            f"Watchlist thieu cot: {sorted(missing_columns)}"
         )
 
     watchlist = watchlist.copy()
@@ -72,40 +79,89 @@ def load_watchlist() -> pd.DataFrame:
     return watchlist
 
 
+def is_rate_limit_error(error: Exception) -> bool:
+    error_text = str(error).lower()
+
+    rate_limit_markers = [
+        "rate limit",
+        "too many requests",
+        "gioi han api",
+        "giới hạn api",
+        "429",
+        "wait to retry",
+        "requests/minute",
+    ]
+
+    return any(
+        marker in error_text
+        for marker in rate_limit_markers
+    )
+
+
 def get_history(
     symbol: str,
     start_date: str,
     end_date: str,
 ) -> tuple[pd.DataFrame, str]:
     """
-    Thử nguồn KBS trước.
+    Thử lấy dữ liệu từ KBS trước.
     Nếu KBS lỗi hoặc không có dữ liệu thì thử VCI.
+    Nếu gặp giới hạn API thì chờ rồi thử lại.
     """
     errors = []
 
     for source in [PRIMARY_SOURCE, FALLBACK_SOURCE]:
-        try:
-            quote = Quote(
-                symbol=symbol,
-                source=source,
-            )
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                quote = Quote(
+                    symbol=symbol,
+                    source=source,
+                )
 
-            data = quote.history(
-                start=start_date,
-                end=end_date,
-                interval="1D",
-            )
+                data = quote.history(
+                    start=start_date,
+                    end=end_date,
+                    interval="1D",
+                )
 
-            if data is not None and not data.empty:
-                return data.copy(), source
+                if data is not None and not data.empty:
+                    return data.copy(), source
 
-            errors.append(f"{source}: du lieu rong")
+                errors.append(
+                    f"{source} lan {attempt}: du lieu rong"
+                )
 
-        except Exception as error:
-            errors.append(
-                f"{source}: "
-                f"{type(error).__name__}: {error}"
-            )
+                # Dữ liệu rỗng thường không cần thử lại nhiều lần.
+                break
+
+            except Exception as error:
+                error_text = str(error)
+
+                if is_rate_limit_error(error):
+                    if attempt < MAX_RETRIES:
+                        print(
+                            f"  Cham gioi han API tai {symbol}. "
+                            f"Cho {RATE_LIMIT_WAIT_SECONDS} giay "
+                            f"roi thu lai "
+                            f"({attempt + 1}/{MAX_RETRIES})..."
+                        )
+
+                        sleep(RATE_LIMIT_WAIT_SECONDS)
+                        continue
+
+                    errors.append(
+                        f"{source} lan {attempt}: "
+                        f"RATE_LIMIT: {error_text}"
+                    )
+                    break
+
+                errors.append(
+                    f"{source} lan {attempt}: "
+                    f"{type(error).__name__}: {error_text}"
+                )
+
+                # Lỗi khác không cần lặp lại cùng nguồn quá nhiều.
+                break
 
     raise RuntimeError(" | ".join(errors))
 
@@ -117,11 +173,11 @@ def prepare_history(data: pd.DataFrame) -> pd.DataFrame:
         "volume",
     }
 
-    missing = required_columns.difference(data.columns)
+    missing_columns = required_columns.difference(data.columns)
 
-    if missing:
+    if missing_columns:
         raise RuntimeError(
-            f"Thieu cot {sorted(missing)}. "
+            f"Thieu cot {sorted(missing_columns)}. "
             f"Cot hien co: {list(data.columns)}"
         )
 
@@ -167,7 +223,9 @@ def calculate_indicators(
     session_count = len(history)
 
     if session_count == 0:
-        raise RuntimeError("Khong con du lieu hop le sau khi xu ly.")
+        raise RuntimeError(
+            "Khong con du lieu hop le sau khi xu ly."
+        )
 
     latest_row = history.iloc[-1]
 
@@ -232,6 +290,10 @@ def main() -> None:
     print("========================================")
     print(f"So ma watchlist: {len(watchlist)}")
     print(f"Khoang du lieu: {start_text} den {end_text}")
+    print(
+        f"Khoang cach toi thieu moi request: "
+        f"{REQUEST_INTERVAL_SECONDS} giay"
+    )
     print("")
 
     results = []
@@ -257,7 +319,10 @@ def main() -> None:
             )
 
             history = prepare_history(raw_history)
-            indicators = calculate_indicators(history)
+
+            indicators = calculate_indicators(
+                history
+            )
 
             elapsed = round(
                 perf_counter() - symbol_start,
@@ -297,7 +362,7 @@ def main() -> None:
                 f"| MA200={ma_text} "
                 f"| KLTB10={volume_text} "
                 f"| source={source_used} "
-                f"| {elapsed}s"
+                f"| request_time={elapsed}s"
             )
 
         except Exception as error:
@@ -329,7 +394,10 @@ def main() -> None:
 
             print(f"  ERROR | {error}")
 
-        sleep(REQUEST_DELAY_SECONDS)
+        # Nghỉ sau mỗi mã để không vượt 20 request/phút.
+        # Không cần nghỉ sau mã cuối cùng.
+        if position < len(watchlist):
+            sleep(REQUEST_INTERVAL_SECONDS)
 
     result_df = pd.DataFrame(results)
 
@@ -372,18 +440,38 @@ def main() -> None:
     print(f"Tong thoi gian: {total_elapsed} giay")
     print(f"Da luu: {OUTPUT_FILE}")
 
+    if partial_count > 0:
+        print("")
+        print("CAC MA THIEU DU LIEU MA200 HOAC KLTB10:")
+        print(
+            result_df.loc[
+                result_df["status"] == "PARTIAL",
+                [
+                    "symbol",
+                    "exchange",
+                    "sessions_available",
+                    "ma200_status",
+                    "avg_volume_10_status",
+                ],
+            ].to_string(index=False)
+        )
+
     if error_count > 0:
         print("")
         print("CAC MA BI LOI:")
         print(
             result_df.loc[
                 result_df["status"] == "ERROR",
-                ["symbol", "exchange", "error"],
+                [
+                    "symbol",
+                    "exchange",
+                    "error",
+                ],
             ].to_string(index=False)
         )
 
-    # Không làm workflow thất bại chỉ vì một vài mã riêng lẻ bị lỗi.
-    # Nhưng nếu quá 20% watchlist lỗi thì coi là lỗi hệ thống.
+    # Không làm workflow thất bại chỉ vì vài mã riêng lẻ bị lỗi.
+    # Nhưng nếu quá 20% watchlist lỗi thì xem là lỗi hệ thống.
     maximum_allowed_errors = max(
         5,
         int(len(result_df) * 0.20),
