@@ -153,9 +153,10 @@ def main() -> None:
     volume_column = find_column(
         result.columns,
         [
+            "volume_accumulated",
             "total_volume",
-            "volume",
             "accumulated_volume",
+            "volume",
         ],
     )
 
