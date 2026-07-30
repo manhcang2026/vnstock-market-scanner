@@ -60,6 +60,12 @@ jobs:
           echo "So dong signals:"
           wc -l data/signals_latest.csv
 
+      - name: Gui du lieu sang Google Sheets
+        env:
+          GAS_WEB_APP_URL: ${{ secrets.GAS_WEB_APP_URL }}
+          GAS_API_SECRET: ${{ secrets.GAS_API_SECRET }}
+        run: python src/push_market_scan_to_gas.py
+
       - name: Luu artifact du phong
         uses: actions/upload-artifact@v6
         with:
