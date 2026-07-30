@@ -1,0 +1,39 @@
+name: Test Daily Indicators
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-daily-indicators:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Lay source code
+        uses: actions/checkout@v5
+
+      - name: Cai dat Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Cai thu vien
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Tinh MA200 va KLTB10
+        run: python src/test_daily_indicators.py
+
+      - name: Luu ket qua
+        uses: actions/upload-artifact@v6
+        with:
+          name: daily-indicators-test
+          path: |
+            output/daily_indicators_test_summary.csv
+            output/daily_indicators_test_detail.csv
+          if-no-files-found: error
+          retention-days: 7
