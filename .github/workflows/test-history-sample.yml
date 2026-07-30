@@ -1,0 +1,39 @@
+name: Test History Sample
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-history-sample:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Lay source code
+        uses: actions/checkout@v5
+
+      - name: Cai dat Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Cai thu vien
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Kiem tra lich su 10 phien
+        run: python src/test_history_sample.py
+
+      - name: Luu ket qua
+        uses: actions/upload-artifact@v6
+        with:
+          name: history-sample-analysis
+          path: |
+            output/history_sample_summary.csv
+            output/history_sample_detail.csv
+          if-no-files-found: error
+          retention-days: 7
