@@ -29,7 +29,7 @@ jobs:
         run: python src/test_three_exchanges.py
 
       - name: Luu file ket qua
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: three-exchanges-symbols
           path: output/three_exchanges_symbols.csv
