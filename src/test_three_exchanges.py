@@ -10,7 +10,7 @@ ALL_SYMBOLS_FILE = OUTPUT_DIR / "three_exchanges_symbols.csv"
 TYPE_SUMMARY_FILE = OUTPUT_DIR / "security_type_summary.csv"
 TYPE_EXCHANGE_FILE = OUTPUT_DIR / "security_type_by_exchange.csv"
 TYPE_SAMPLES_FILE = OUTPUT_DIR / "security_type_samples.csv"
-
+STOCK_ONLY_FILE = OUTPUT_DIR / "stock_symbols_only.csv"
 
 def find_column(columns, possible_names):
     """Tìm tên cột mà không phân biệt chữ hoa và chữ thường."""
@@ -219,6 +219,35 @@ def main() -> None:
         .reset_index(drop=True)
     )
 
+    # Chỉ giữ cổ phiếu doanh nghiệp.
+    stock_only = result[
+        result[type_column] == "STOCK"
+    ].copy()
+
+    stock_only = stock_only.sort_values(
+        by=[
+            exchange_column,
+            symbol_column,
+        ]
+    ).reset_index(drop=True)
+
+    print("")
+    print("========================================")
+    print("DANH SACH CO PHIEU DUOC GIU LAI")
+    print("========================================")
+
+    stock_exchange_summary = (
+        stock_only.groupby(exchange_column)[symbol_column]
+        .nunique()
+        .sort_index()
+    )
+
+    print(stock_exchange_summary.to_string())
+    print(
+        f"Tong co phieu duoc giu lai: "
+        f"{stock_only[symbol_column].nunique()}"
+    )
+    
     for security_type, group in type_samples.groupby(type_column):
         symbols = ", ".join(
             group[symbol_column].astype(str).tolist()
@@ -255,6 +284,12 @@ def main() -> None:
         encoding="utf-8-sig",
     )
 
+    stock_only.to_csv(
+        STOCK_ONLY_FILE,
+        index=False,
+        encoding="utf-8-sig",
+    )
+    
     print("")
     print("========================================")
     print("HOAN TAT")
@@ -265,7 +300,7 @@ def main() -> None:
     print(f"Da luu: {TYPE_SUMMARY_FILE}")
     print(f"Da luu: {TYPE_EXCHANGE_FILE}")
     print(f"Da luu: {TYPE_SAMPLES_FILE}")
-
+    print(f"Da luu: {STOCK_ONLY_FILE}")
 
 if __name__ == "__main__":
     main()
