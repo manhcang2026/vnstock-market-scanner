@@ -31,7 +31,7 @@ jobs:
       - name: Luu file ket qua
         uses: actions/upload-artifact@v6
         with:
-          name: three-exchanges-symbols
-          path: output/three_exchanges_symbols.csv
+          name: three-exchanges-analysis
+          path: output/
           if-no-files-found: error
           retention-days: 7
