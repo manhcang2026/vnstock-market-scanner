@@ -1,0 +1,29 @@
+name: Test Vnstock
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-vnstock:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Lay source code
+        uses: actions/checkout@v4
+
+      - name: Cai dat Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Cai thu vien
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Chay thu vnstock
+        run: python src/test_vnstock.py
