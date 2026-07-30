@@ -1,0 +1,37 @@
+name: Test Three Exchanges
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-three-exchanges:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Lay source code
+        uses: actions/checkout@v5
+
+      - name: Cai dat Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Cai thu vien
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Lay danh sach ba san
+        run: python src/test_three_exchanges.py
+
+      - name: Luu file ket qua
+        uses: actions/upload-artifact@v4
+        with:
+          name: three-exchanges-symbols
+          path: output/three_exchanges_symbols.csv
+          if-no-files-found: error
+          retention-days: 7
