@@ -1,0 +1,16 @@
+name: Test Schedule
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/15 * * * *"
+
+jobs:
+  test-schedule:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Show scheduled time
+        run: |
+          echo "Schedule works"
+          date -u
