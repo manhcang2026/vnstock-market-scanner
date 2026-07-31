@@ -2,11 +2,7 @@ name: Update Daily Indicators
 
 on:
   workflow_dispatch:
-  schedule:
-    # 18:07 UTC Chủ nhật–Thứ năm
-    # = 01:07 sáng Thứ hai–Thứ sáu tại Việt Nam.
-    - cron: "7 18 * * 0-4"
-
+  
 permissions:
   contents: write
 
