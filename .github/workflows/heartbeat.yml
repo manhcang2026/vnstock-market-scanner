@@ -1,8 +1,12 @@
 name: Heartbeat Test
 
 on:
+  push:
+    branches:
+      - main
+
   schedule:
-    - cron: "7,17,27,37,47,57 * * * *"
+    - cron: "*/5 * * * *"
 
 jobs:
   heartbeat:
@@ -11,5 +15,5 @@ jobs:
     steps:
       - name: Heartbeat
         run: |
-          echo "GitHub schedule is alive"
+          echo "trigger works"
           date
