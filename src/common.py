@@ -4,7 +4,9 @@ import json
 import os
 from datetime import datetime, time, timedelta
 from pathlib import Path
+from time import sleep
 from typing import Any
+from urllib.parse import urljoin
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -19,6 +21,28 @@ MORNING_START = time(9, 0)
 MORNING_END = time(11, 30)
 AFTERNOON_START = time(13, 0)
 AFTERNOON_END = time(15, 0)
+
+READ_ONLY_GAS_ACTIONS = frozenset(
+    {
+        "get_daily_baseline",
+        "get_rvol_reference",
+    }
+)
+RETRYABLE_HTTP_STATUS = frozenset(
+    {
+        404,
+        408,
+        425,
+        429,
+        500,
+        502,
+        503,
+        504,
+    }
+)
+GAS_MAX_ATTEMPTS = 4
+GAS_RETRY_DELAYS_SECONDS = (2, 5, 10)
+GAS_TIMEOUT_SECONDS = 180
 
 
 def normalize_text(series: pd.Series) -> pd.Series:
@@ -66,21 +90,165 @@ def records(df: pd.DataFrame) -> list[dict[str, Any]]:
     ]
 
 
-def gas_request(action: str, **payload: Any) -> dict[str, Any]:
-    if not GAS_WEB_APP_URL or not GAS_API_SECRET:
-        raise RuntimeError("Thieu GAS_WEB_APP_URL hoac GAS_API_SECRET")
-    body = {"secret": GAS_API_SECRET, "action": action, **payload}
+def retry_delay(attempt: int) -> int:
+    index = min(
+        max(attempt - 1, 0),
+        len(GAS_RETRY_DELAYS_SECONDS) - 1,
+    )
+    return GAS_RETRY_DELAYS_SECONDS[index]
+
+
+def response_preview(response: requests.Response) -> str:
+    text = (response.text or "").strip().replace("\n", " ")
+    return text[:500]
+
+
+def fetch_redirect_response(
+    redirect_url: str,
+    action: str,
+) -> requests.Response:
+    """
+    Tai phan hoi tu URL chuyen huong cua GAS.
+
+    Viec lap lai GET nay an toan cho ca lenh doc va lenh ghi vi
+    khong gui lai POST da thuc thi Apps Script.
+    """
+    last_error: Exception | None = None
+
+    for attempt in range(1, GAS_MAX_ATTEMPTS + 1):
+        try:
+            response = requests.get(
+                redirect_url,
+                timeout=GAS_TIMEOUT_SECONDS,
+                allow_redirects=True,
+            )
+
+            if (
+                response.status_code in RETRYABLE_HTTP_STATUS
+                and attempt < GAS_MAX_ATTEMPTS
+            ):
+                delay = retry_delay(attempt)
+                print(
+                    f"GAS redirect tam loi HTTP {response.status_code} "
+                    f"cho action={action}; thu lai GET sau {delay}s "
+                    f"({attempt}/{GAS_MAX_ATTEMPTS})."
+                )
+                sleep(delay)
+                continue
+
+            response.raise_for_status()
+            return response
+        except requests.RequestException as exc:
+            last_error = exc
+            if attempt >= GAS_MAX_ATTEMPTS:
+                break
+            delay = retry_delay(attempt)
+            print(
+                f"Khong tai duoc GAS redirect cho action={action}: "
+                f"{type(exc).__name__}; thu lai GET sau {delay}s "
+                f"({attempt}/{GAS_MAX_ATTEMPTS})."
+            )
+            sleep(delay)
+
+    raise RuntimeError(
+        f"Khong lay duoc phan hoi GAS sau {GAS_MAX_ATTEMPTS} lan GET "
+        f"cho action={action}: {last_error}"
+    ) from last_error
+
+
+def gas_post_once(action: str, body: dict[str, Any]) -> requests.Response:
+    """Gui POST dung mot lan, sau do tu xu ly URL chuyen huong."""
     response = requests.post(
         GAS_WEB_APP_URL,
         json=body,
-        timeout=180,
-        allow_redirects=True,
+        timeout=GAS_TIMEOUT_SECONDS,
+        allow_redirects=False,
     )
+
+    if response.is_redirect or response.is_permanent_redirect:
+        location = response.headers.get("Location", "").strip()
+        if not location:
+            raise RuntimeError(
+                f"GAS chuyen huong nhung thieu Location cho action={action}"
+            )
+        return fetch_redirect_response(
+            urljoin(GAS_WEB_APP_URL, location),
+            action,
+        )
+
     response.raise_for_status()
+    return response
+
+
+def gas_request(action: str, **payload: Any) -> dict[str, Any]:
+    if not GAS_WEB_APP_URL or not GAS_API_SECRET:
+        raise RuntimeError("Thieu GAS_WEB_APP_URL hoac GAS_API_SECRET")
+
+    body = {"secret": GAS_API_SECRET, "action": action, **payload}
+    read_only = action in READ_ONLY_GAS_ACTIONS
+    response: requests.Response | None = None
+
+    for attempt in range(1, GAS_MAX_ATTEMPTS + 1):
+        try:
+            response = gas_post_once(action, body)
+            break
+        except requests.RequestException as exc:
+            status = (
+                exc.response.status_code
+                if exc.response is not None
+                else None
+            )
+            retryable = status is None or status in RETRYABLE_HTTP_STATUS
+
+            # Lenh ghi khong duoc POST lai: GAS co the da nhan du lieu
+            # nhung phan hoi bi mat, gui lai co the tao snapshot/log trung.
+            if not read_only:
+                raise RuntimeError(
+                    f"GAS write action={action} that bai; khong POST lai "
+                    "de tranh ghi trung. Hay kiem tra Sheet/Run_Log truoc "
+                    f"khi chay lai. Chi tiet: {exc}"
+                ) from exc
+
+            if (
+                not retryable
+                or attempt >= GAS_MAX_ATTEMPTS
+            ):
+                raise
+
+            delay = retry_delay(attempt)
+            print(
+                f"GAS read action={action} tam loi"
+                f"{f' HTTP {status}' if status else ''}; "
+                f"thu lai POST sau {delay}s "
+                f"({attempt}/{GAS_MAX_ATTEMPTS})."
+            )
+            sleep(delay)
+        except RuntimeError:
+            # Loi sau khi POST (vi du URL redirect hong) khong duoc
+            # POST lai doi voi lenh ghi. Lenh doc co the thu lai an toan.
+            if not read_only or attempt >= GAS_MAX_ATTEMPTS:
+                raise
+            delay = retry_delay(attempt)
+            print(
+                f"GAS read action={action} chua co phan hoi hop le; "
+                f"thu lai POST sau {delay}s "
+                f"({attempt}/{GAS_MAX_ATTEMPTS})."
+            )
+            sleep(delay)
+
+    if response is None:
+        raise RuntimeError(
+            f"Khong nhan duoc phan hoi GAS cho action={action}"
+        )
+
     try:
         result = response.json()
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f"GAS khong tra JSON: {response.text[:1000]}") from exc
+    except (json.JSONDecodeError, requests.exceptions.JSONDecodeError) as exc:
+        raise RuntimeError(
+            f"GAS khong tra JSON cho action={action}: "
+            f"{response_preview(response)}"
+        ) from exc
+
     if not result.get("ok"):
         raise RuntimeError(f"GAS bao loi: {result.get('error')}")
     return result
