@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import os
 from datetime import date, timedelta
-from time import sleep
+from time import monotonic, sleep
 
 import pandas as pd
+from vnai.beam.auth import authenticator
 from vnstock.api.quote import Quote
 
 from common import gas_request, load_watchlist, now_vn, records
@@ -13,17 +15,57 @@ MA_SESSIONS = 200
 MA10_SESSIONS = 10
 AVG_VOLUME_SESSIONS = 10
 LOOKBACK_DAYS = 500
-REQUEST_INTERVAL_SECONDS = 3.3
+# Community vnstock cho toi da 60 request/phut khi workflow co VNSTOCK_API_KEY.
+# Moi ma duoc doi chieu tren ca VCI va KBS, vi vay phai gian cach TUNG REQUEST.
+# 1.25 giay/request tuong duong toi da 48 request/phut, chua 20% bien an toan.
+REQUEST_INTERVAL_SECONDS = 1.25
 MAX_RETRIES = 3
 RATE_LIMIT_WAIT_SECONDS = 65
+_last_request_started_at: float | None = None
 
 
-def is_rate_limit(error: Exception) -> bool:
+def verify_vnstock_api_access() -> None:
+    """Dung som neu GitHub Actions chua nhan API key Community."""
+    if not os.getenv("VNSTOCK_API_KEY", "").strip():
+        raise RuntimeError(
+            "Thieu VNSTOCK_API_KEY. Hay tao GitHub Actions secret "
+            "VNSTOCK_API_KEY de mo gioi han Community 60 request/phut."
+        )
+
+    tier = authenticator.get_tier(force_refresh=True)
+    limits = authenticator.get_limits(tier)
+    per_minute = int(limits.get("min", 0))
+    if per_minute < 60:
+        raise RuntimeError(
+            f"VNSTOCK_API_KEY chua duoc nhan: tier={tier}, "
+            f"limit={per_minute} request/phut."
+        )
+
+    print(
+        f"VNStock API: tier={tier}, limit={per_minute} request/phut; "
+        "job tu gioi han 48 request/phut."
+    )
+
+
+def is_rate_limit(error: BaseException) -> bool:
     text = str(error).lower()
     return any(
         marker in text
         for marker in ("rate limit", "too many requests", "429", "requests/minute")
     )
+
+
+def wait_for_request_slot() -> None:
+    """Giu khoang cach toi thieu giua hai request vnstock thuc te."""
+    global _last_request_started_at
+
+    now = monotonic()
+    if _last_request_started_at is not None:
+        remaining = REQUEST_INTERVAL_SECONDS - (now - _last_request_started_at)
+        if remaining > 0:
+            sleep(remaining)
+
+    _last_request_started_at = monotonic()
 
 
 def prepare_history(data: pd.DataFrame, run_date: date) -> pd.DataFrame:
@@ -75,6 +117,7 @@ def fetch_source_history(
 
     for attempt in range(1, MAX_RETRIES + 1):
         try:
+            wait_for_request_slot()
             data = Quote(symbol=symbol, source=source).history(
                 start=start,
                 end=end,
@@ -83,9 +126,13 @@ def fetch_source_history(
             if data is None or data.empty:
                 raise RuntimeError("empty")
             return normalize_price_unit(prepare_history(data, run_date))
-        except Exception as exc:
+        except (Exception, SystemExit) as exc:
             last_error = f"{type(exc).__name__}: {exc}"
             if is_rate_limit(exc) and attempt < MAX_RETRIES:
+                print(
+                    f"  -> {source} cham rate limit; cho "
+                    f"{RATE_LIMIT_WAIT_SECONDS}s roi thu lai ({attempt}/{MAX_RETRIES})"
+                )
                 sleep(RATE_LIMIT_WAIT_SECONDS)
                 continue
             break
@@ -120,6 +167,7 @@ def get_history(
 
 
 def main() -> None:
+    verify_vnstock_api_access()
     run_at = now_vn()
     run_date = run_at.date()
     watchlist = load_watchlist()
@@ -191,8 +239,6 @@ def main() -> None:
                 }
             )
             print(f"  -> ERROR: {exc}")
-
-        sleep(REQUEST_INTERVAL_SECONDS)
 
     result = pd.DataFrame(rows)
     success = len(watchlist) - failed
