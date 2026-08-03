@@ -30,4 +30,5 @@ jobs:
         env:
           GAS_WEB_APP_URL: ${{ secrets.GAS_WEB_APP_URL }}
           GAS_API_SECRET: ${{ secrets.GAS_API_SECRET }}
+          VNSTOCK_API_KEY: ${{ secrets.VNSTOCK_API_KEY }}
         run: python src/daily_baseline.py
