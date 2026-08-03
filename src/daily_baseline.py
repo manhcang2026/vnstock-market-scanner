@@ -8,8 +8,8 @@ from vnstock.api.quote import Quote
 
 from common import gas_request, load_watchlist, now_vn, records
 
-PRIMARY_SOURCE = "KBS"
-FALLBACK_SOURCE = "VCI"
+PRIMARY_SOURCE = "VCI"
+FALLBACK_SOURCE = "KBS"
 MA_SESSIONS = 200
 AVG_VOLUME_SESSIONS = 10
 LOOKBACK_DAYS = 500
