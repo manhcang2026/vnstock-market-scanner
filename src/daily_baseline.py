@@ -10,6 +10,7 @@ from common import gas_request, load_watchlist, now_vn, records
 
 SOURCES = ("VCI", "KBS")
 MA_SESSIONS = 200
+MA10_SESSIONS = 10
 AVG_VOLUME_SESSIONS = 10
 LOOKBACK_DAYS = 500
 REQUEST_INTERVAL_SECONDS = 3.3
@@ -135,6 +136,7 @@ def main() -> None:
             history, source = get_history(symbol, start, end, run_date)
             session_count = len(history)
             ma_sessions = min(session_count, MA_SESSIONS)
+            ma10_sessions = min(session_count, MA10_SESSIONS)
             volume_sessions = min(session_count, AVG_VOLUME_SESSIONS)
             latest = history.iloc[-1]
             trading_date = latest["time"].date()
@@ -162,6 +164,10 @@ def main() -> None:
                     "source": source,
                     "updated_at": run_at.isoformat(),
                     "data_status": "OK",
+                    "ma10": round(
+                        float(history["close"].tail(ma10_sessions).mean()), 4
+                    ),
+                    "ma10_sessions": ma10_sessions,
                 }
             )
             print(f"  -> {source} | baseline {trading_date.isoformat()}")
@@ -180,6 +186,8 @@ def main() -> None:
                     "source": None,
                     "updated_at": run_at.isoformat(),
                     "data_status": f"ERROR: {exc}"[:500],
+                    "ma10": None,
+                    "ma10_sessions": 0,
                 }
             )
             print(f"  -> ERROR: {exc}")
