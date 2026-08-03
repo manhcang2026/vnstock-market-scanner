@@ -49,6 +49,9 @@ DASHBOARD_COLUMNS = [
     "time_slot",
     "updated_at",
     "data_status",
+    "ma10",
+    "ma10_sessions",
+    "ma10_distance_pct",
 ]
 
 
@@ -422,10 +425,12 @@ def main() -> None:
 
     for column in [
         "previous_close",
+        "ma10",
         "ma200",
         "avg_volume_10",
         "ma200_sessions",
         "avg_volume_sessions",
+        "ma10_sessions",
     ]:
         if column in baseline.columns:
             baseline[column] = (
@@ -541,6 +546,14 @@ def main() -> None:
     result["ma200_distance_pct"] = (
         result["close_price"]
         / result["ma200"]
+        - 1
+    ) * 100
+
+    # MA10 chi la chi so tham khao xu huong ngan han.
+    # Khong dua cot nay vao signal_columns va signal_count.
+    result["ma10_distance_pct"] = (
+        result["close_price"]
+        / result["ma10"]
         - 1
     ) * 100
 
