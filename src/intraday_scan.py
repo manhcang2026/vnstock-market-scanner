@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from time import sleep
 
 import pandas as pd
 from vnstock import Trading
@@ -18,9 +19,30 @@ from common import (
 
 SOURCE = "KBS"
 
+PRICE_BOARD_BATCH_SIZE = 50
+PRICE_BOARD_MAX_ATTEMPTS = 3
+PRICE_BOARD_RETRY_DELAYS_SECONDS = (3, 8)
+MIN_PRICE_BOARD_SUCCESS_RATIO = 0.80
+
 PRICE_THRESHOLD_PCT = 3.0
 DAILY_VOLUME_THRESHOLD_PCT = 200.0
 RVOL30_THRESHOLD_PCT = 200.0
+
+
+PRICE_BOARD_COLUMNS = [
+    "symbol",
+    "close_price",
+    "volume_accumulated",
+    "exchange",
+]
+
+
+RVOL_COLUMNS = [
+    "volume_30m",
+    "avg_volume_30m_10",
+    "rvol30_pct",
+    "rvol30_sessions",
+]
 
 
 DASHBOARD_COLUMNS = [
@@ -83,21 +105,17 @@ def env_bool(name: str, default: bool = False) -> bool:
     }
 
 
-def fetch_price_board(
-    symbols: list[str],
+def normalize_price_board(
+    data: pd.DataFrame,
 ) -> pd.DataFrame:
-    """Lấy bảng giá hiện tại từ vnstock."""
-    data = Trading(
-        source=SOURCE
-    ).price_board(symbols)
+    """Chuan hoa va chi giu cac cot intraday thuc su su dung."""
+    if data is None or not isinstance(data, pd.DataFrame) or data.empty:
+        raise RuntimeError("Price board rong hoac khong hop le")
 
-    if (
-        data is None
-        or not isinstance(data, pd.DataFrame)
-        or data.empty
-    ):
+    if isinstance(data.columns, pd.MultiIndex):
         raise RuntimeError(
-            "Price board rong hoac khong hop le"
+            "Price board tra cot MultiIndex khong dung schema KBS; "
+            "hay kiem tra vnstock/source"
         )
 
     required = {
@@ -118,6 +136,9 @@ def fetch_price_board(
         )
 
     df = data.copy()
+
+    if "exchange" not in df.columns:
+        df["exchange"] = pd.NA
 
     df["symbol"] = (
         df["symbol"]
@@ -153,10 +174,121 @@ def fetch_price_board(
             )
         )
 
-    return df.drop_duplicates(
-        "symbol",
-        keep="last",
+    # Loai cac cot phu cua nha cung cap. Day cung la lop bao ve de cac cot
+    # trung ten nhu rvol30_pct khong theo price board vao phep merge sau do.
+    return (
+        df[PRICE_BOARD_COLUMNS]
+        .loc[df["symbol"] != ""]
+        .drop_duplicates("symbol", keep="last")
+        .reset_index(drop=True)
     )
+
+
+def price_board_retry_delay(attempt: int) -> int:
+    index = min(
+        max(attempt - 1, 0),
+        len(PRICE_BOARD_RETRY_DELAYS_SECONDS) - 1,
+    )
+    return PRICE_BOARD_RETRY_DELAYS_SECONDS[index]
+
+
+def fetch_price_board_once(symbols: list[str]) -> pd.DataFrame:
+    """Mot request KBS; tach rieng de co the kiem thu retry an toan."""
+    data = Trading(source=SOURCE).price_board(symbols_list=symbols)
+    return normalize_price_board(data)
+
+
+def fetch_price_board(symbols: list[str]) -> pd.DataFrame:
+    """Lay bang gia theo lo, retry ca lo rong va cac ma bi thieu."""
+    requested = list(dict.fromkeys(str(symbol).strip().upper() for symbol in symbols))
+    requested = [symbol for symbol in requested if symbol]
+    if not requested:
+        raise RuntimeError("Danh sach ma lay price board dang rong")
+
+    collected: list[pd.DataFrame] = []
+    batch_count = (
+        len(requested) + PRICE_BOARD_BATCH_SIZE - 1
+    ) // PRICE_BOARD_BATCH_SIZE
+
+    for offset in range(0, len(requested), PRICE_BOARD_BATCH_SIZE):
+        batch_number = offset // PRICE_BOARD_BATCH_SIZE + 1
+        batch = requested[offset:offset + PRICE_BOARD_BATCH_SIZE]
+        pending = batch[:]
+        received_by_symbol: dict[str, dict] = {}
+        last_error = "unknown"
+
+        for attempt in range(1, PRICE_BOARD_MAX_ATTEMPTS + 1):
+            try:
+                part = fetch_price_board_once(pending)
+                for row in part.to_dict(orient="records"):
+                    if (
+                        pd.notna(row.get("close_price"))
+                        and pd.notna(row.get("volume_accumulated"))
+                    ):
+                        received_by_symbol[str(row["symbol"])] = row
+
+                pending = [
+                    symbol for symbol in batch
+                    if symbol not in received_by_symbol
+                ]
+                print(
+                    f"Price board lo {batch_number}/{batch_count}: "
+                    f"nhan {len(received_by_symbol)}/{len(batch)} ma "
+                    f"(lan {attempt}/{PRICE_BOARD_MAX_ATTEMPTS})."
+                )
+                if not pending:
+                    break
+                last_error = f"thieu {len(pending)} ma: {pending[:10]}"
+            except (Exception, SystemExit) as exc:
+                last_error = f"{type(exc).__name__}: {exc}"
+                print(
+                    f"Price board lo {batch_number}/{batch_count} loi "
+                    f"(lan {attempt}/{PRICE_BOARD_MAX_ATTEMPTS}): {last_error}"
+                )
+
+            if attempt < PRICE_BOARD_MAX_ATTEMPTS:
+                delay = price_board_retry_delay(attempt)
+                print(f"  -> Thu lai sau {delay}s; con {len(pending)} ma.")
+                sleep(delay)
+
+        if received_by_symbol:
+            collected.append(pd.DataFrame(received_by_symbol.values()))
+
+        if pending:
+            print(
+                f"CANH BAO: lo {batch_number}/{batch_count} con thieu "
+                f"{len(pending)} ma sau retry. Chi tiet cuoi: {last_error}"
+            )
+
+    if not collected:
+        raise RuntimeError(
+            "KBS khong tra duoc ma nao sau khi chia lo va retry"
+        )
+
+    result = (
+        pd.concat(collected, ignore_index=True)
+        .drop_duplicates("symbol", keep="last")
+        .reset_index(drop=True)
+    )
+
+    valid = result[
+        result["close_price"].notna()
+        & result["volume_accumulated"].notna()
+    ]
+    success_ratio = len(valid) / len(requested)
+    print(
+        f"Price board hop le: {len(valid)}/{len(requested)} ma "
+        f"({success_ratio:.1%})."
+    )
+    if success_ratio < MIN_PRICE_BOARD_SUCCESS_RATIO:
+        raise RuntimeError(
+            "Price board khong dat nguong an toan: "
+            f"{len(valid)}/{len(requested)} ma ({success_ratio:.1%}), "
+            f"yeu cau toi thieu {MIN_PRICE_BOARD_SUCCESS_RATIO:.0%}. "
+            "Khong ghi de Dashboard_Current bang du lieu thieu."
+        )
+
+    return result
 
 
 def build_rvol_reference(
@@ -182,6 +314,27 @@ def build_rvol_reference(
                 ]
             ),
         )
+
+    required = {
+        "symbol",
+        "trading_date",
+        "time_slot",
+        "volume_accumulated",
+    }
+    missing = required.difference(ref.columns)
+    if missing:
+        print(
+            "CANH BAO: du lieu RVOL tham chieu thieu cot "
+            f"{sorted(missing)}; tam de RVOL trong."
+        )
+        return (
+            pd.DataFrame(columns=["symbol", "start_volume_today"]),
+            pd.DataFrame(),
+        )
+
+    ref["symbol"] = (
+        ref["symbol"].fillna("").astype(str).str.strip().str.upper()
+    )
 
     ref["volume_accumulated"] = (
         pd.to_numeric(
@@ -230,6 +383,15 @@ def build_rvol_reference(
     historical = ref[
         ref["trading_date"] != today
     ].copy()
+
+    # GAS da gioi han 10 phien; Python van khoa them mot lop de ten chi so
+    # avg_volume_30m_10 luon dung ngay ca khi Web App cu tra nhieu hon.
+    historical_dates = sorted(
+        historical["trading_date"].dropna().unique().tolist()
+    )[-10:]
+    historical = historical[
+        historical["trading_date"].isin(historical_dates)
+    ]
 
     pivot = historical.pivot_table(
         index=[
@@ -376,6 +538,49 @@ def build_empty_rvol(
     return output
 
 
+def merge_rvol_columns(
+    result: pd.DataFrame,
+    rvol: pd.DataFrame,
+) -> pd.DataFrame:
+    """Ghep RVOL ma khong bao gio sinh hau to _x/_y hoac mat cot goc."""
+    clean_result = result.drop(columns=RVOL_COLUMNS, errors="ignore")
+    clean_rvol = rvol.copy()
+
+    defaults = {
+        "volume_30m": pd.NA,
+        "avg_volume_30m_10": pd.NA,
+        "rvol30_pct": pd.NA,
+        "rvol30_sessions": 0,
+    }
+    for column, default in defaults.items():
+        if column not in clean_rvol.columns:
+            clean_rvol[column] = default
+
+    if "symbol" not in clean_rvol.columns:
+        clean_rvol["symbol"] = pd.Series(dtype="object")
+
+    clean_rvol["symbol"] = (
+        clean_rvol["symbol"].fillna("").astype(str).str.strip().str.upper()
+    )
+    clean_rvol = (
+        clean_rvol[["symbol", *RVOL_COLUMNS]]
+        .drop_duplicates("symbol", keep="last")
+    )
+
+    merged = clean_result.merge(
+        clean_rvol,
+        on="symbol",
+        how="left",
+        validate="one_to_one",
+    )
+    merged["rvol30_sessions"] = (
+        pd.to_numeric(merged["rvol30_sessions"], errors="coerce")
+        .fillna(0)
+        .astype(int)
+    )
+    return merged
+
+
 def main() -> None:
     scan_at = now_vn()
 
@@ -445,6 +650,23 @@ def main() -> None:
             "Hay cap nhat header GAS/Google Sheet, "
             "deploy lai Web App va chay lai Daily Baseline."
         )
+
+    baseline = baseline[
+        [
+            "symbol",
+            "previous_close",
+            "ma10",
+            "ma10_sessions",
+            "ma200",
+            "ma200_sessions",
+            "avg_volume_10",
+            "avg_volume_sessions",
+        ]
+    ].copy()
+    baseline["symbol"] = (
+        baseline["symbol"].fillna("").astype(str).str.strip().str.upper()
+    )
+    baseline = baseline.drop_duplicates("symbol", keep="last")
 
     for column in [
         "previous_close",
@@ -544,15 +766,9 @@ def main() -> None:
     else:
         rvol = build_empty_rvol(result)
 
-    result = result.merge(
-        rvol.drop(
-            columns=[
-                "volume_accumulated"
-            ],
-            errors="ignore",
-        ),
-        on="symbol",
-        how="left",
+    result = merge_rvol_columns(
+        result,
+        rvol.drop(columns=["volume_accumulated"], errors="ignore"),
     )
 
     result["price_change_pct"] = (
@@ -738,7 +954,8 @@ def main() -> None:
         if forced_outside_session
         else (
             f"slot={current_slot}; "
-            f"rvol_start={start_slot}"
+            f"rvol_start={start_slot}; "
+            f"price_board={successful}/{len(watchlist)}"
         )
     )
 
