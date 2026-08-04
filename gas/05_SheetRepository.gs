@@ -1,7 +1,22 @@
 function getSheet_(name) {
   const sheet = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID).getSheetByName(name);
   if (!sheet) throw new Error(`Khong tim thay sheet ${name}. Hay chay setupNewBackend().`);
+  ensureHeaders_(sheet, name);
   return sheet;
+}
+
+function ensureHeaders_(sheet, name) {
+  const headers = HEADERS[name];
+  if (!headers || !headers.length) return;
+  const current = sheet.getRange(1, 1, 1, headers.length).getDisplayValues()[0];
+  const needsUpdate = headers.some((header, index) => current[index] !== header);
+  if (!needsUpdate) return;
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  sheet.getRange(1, 1, 1, headers.length)
+    .setFontWeight('bold')
+    .setBackground('#17365D')
+    .setFontColor('#FFFFFF');
+  sheet.setFrozenRows(1);
 }
 
 function readRows_(name) {
