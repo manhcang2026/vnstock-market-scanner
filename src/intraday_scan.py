@@ -423,6 +423,29 @@ def main() -> None:
             "Hay chay job 01:00 truoc."
         )
 
+    required_baseline_columns = {
+        "symbol",
+        "previous_close",
+        "ma10",
+        "ma10_sessions",
+        "ma200",
+        "ma200_sessions",
+        "avg_volume_10",
+        "avg_volume_sessions",
+    }
+    missing_baseline_columns = sorted(
+        required_baseline_columns.difference(
+            baseline.columns
+        )
+    )
+    if missing_baseline_columns:
+        raise RuntimeError(
+            "Daily_Baseline thieu cot bat buoc: "
+            f"{missing_baseline_columns}. "
+            "Hay cap nhat header GAS/Google Sheet, "
+            "deploy lai Web App va chay lai Daily Baseline."
+        )
+
     for column in [
         "previous_close",
         "ma10",
