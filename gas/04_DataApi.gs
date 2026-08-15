@@ -13,12 +13,19 @@ function doPost(e) {
       case 'get_rvol_reference':
         return json_({ok: true, rows: getRvolReference_(body)});
       case 'update_intraday_scan':
-        appendRows_(CONFIG.SHEETS.SNAPSHOTS, body.snapshots || []);
+        const snapshotResult = upsertSnapshotRows_(body.snapshots || []);
         replaceRows_(CONFIG.SHEETS.DASHBOARD, body.dashboard || []);
         appendRunLog_(body.run_log || {});
         updateMeta_(body.dashboard || [], body.run_log || {});
         clearDashboardCache_();
-        return json_({ok: true, snapshots: (body.snapshots || []).length, dashboard: (body.dashboard || []).length});
+        return json_({
+          ok: true,
+          snapshots: snapshotResult.total,
+          snapshots_inserted: snapshotResult.inserted,
+          snapshots_updated: snapshotResult.updated,
+          snapshots_duplicates_removed: snapshotResult.duplicatesRemoved,
+          dashboard: (body.dashboard || []).length,
+        });
       default:
         throw new Error(`Action khong hop le: ${body.action}`);
     }
@@ -127,11 +134,23 @@ function validateSecret_(secret) {
 }
 
 function getRvolReference_(body) {
-  const currentSlot = String(body.current_slot || '');
-  const startSlot = String(body.start_slot || '');
-  if (!currentSlot || !startSlot) return [];
+  const currentSlot = normalizeTimeSlot_(body.current_slot);
+  const startSlot = normalizeTimeSlot_(body.start_slot);
+  const tradingDate = normalizeTradingDate_(body.trading_date);
+  if (!currentSlot || !startSlot || !tradingDate) return [];
+
   const rows = readRows_(CONFIG.SHEETS.SNAPSHOTS);
-  const dates = [...new Set(rows.map(r => String(r.trading_date || '')).filter(Boolean))].sort().slice(-12);
-  const allowedDates = new Set(dates);
-  return rows.filter(r => allowedDates.has(String(r.trading_date)) && (r.time_slot === currentSlot || r.time_slot === startSlot));
+  const historicalDates = [...new Set(
+    rows
+      .map(row => normalizeTradingDate_(row.trading_date))
+      .filter(date => date && date < tradingDate),
+  )].sort().slice(-10);
+
+  const allowedDates = new Set([tradingDate, ...historicalDates]);
+  return rows.filter(row => {
+    const rowDate = normalizeTradingDate_(row.trading_date);
+    const rowSlot = normalizeTimeSlot_(row.time_slot);
+    return allowedDates.has(rowDate)
+      && (rowSlot === currentSlot || rowSlot === startSlot);
+  });
 }
