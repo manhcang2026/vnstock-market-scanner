@@ -1,7 +1,38 @@
 /**
  * Chạy job Daily Baseline thủ công.
+ *
+ * Hàm này KHÔNG kiểm tra thứ trong tuần.
+ * Dùng khi cần test / chạy phục hồi thủ công từ GAS.
  */
 function runDailyBaselineNow() {
+  return dispatchWorkflow_(
+    CONFIG.DAILY_WORKFLOW_FILE
+  );
+}
+
+
+/**
+ * Daily Baseline production tự động.
+ *
+ * Chỉ dispatch GitHub từ thứ Ba đến thứ Bảy:
+ * - Thứ Ba sáng lấy phiên chốt thứ Hai.
+ * - ...
+ * - Thứ Bảy sáng lấy phiên chốt thứ Sáu.
+ *
+ * Chủ nhật và thứ Hai sáng không cần chạy.
+ */
+function scheduledDailyBaseline() {
+  const now = new Date();
+  const day = now.getDay();
+
+  // JavaScript: 0 = CN, 1 = T2, 2 = T3, ... 6 = T7.
+  if (day === 0 || day === 1) {
+    return {
+      ok: true,
+      skipped: 'daily_baseline_off_day'
+    };
+  }
+
   return dispatchWorkflow_(
     CONFIG.DAILY_WORKFLOW_FILE
   );
@@ -43,7 +74,7 @@ function runIntradayScanForceNow() {
 
 
 /**
- * Hàm trigger production.
+ * Hàm trigger Intraday production.
  *
  * Chỉ phát lệnh từ thứ Hai đến thứ Sáu,
  * trong hai phiên giao dịch.
