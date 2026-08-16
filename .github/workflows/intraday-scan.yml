@@ -19,7 +19,7 @@ concurrency:
 jobs:
   intraday-scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
@@ -40,5 +40,8 @@ jobs:
         env:
           GAS_WEB_APP_URL: ${{ secrets.GAS_WEB_APP_URL }}
           GAS_API_SECRET: ${{ secrets.GAS_API_SECRET }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           FORCE_RUN: ${{ inputs.force_run }}
         run: python -u src/intraday_scan.py
