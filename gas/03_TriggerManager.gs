@@ -1,15 +1,16 @@
 /**
  * Cài lại toàn bộ trigger của backend.
  *
- * Chỉ cần chạy thủ công một lần.
+ * Chỉ cần chạy thủ công một lần sau khi update code GAS.
  */
 function installBackendTriggers() {
   deleteBackendTriggers();
 
   // Daily Baseline:
-  // GAS sẽ chạy một lần trong khoảng 01:00–02:00.
+  // Trigger thức dậy một lần trong khoảng 01:00–02:00 mỗi ngày.
+  // scheduledDailyBaseline() tự lọc: chỉ chạy thứ Ba -> thứ Bảy.
   ScriptApp
-    .newTrigger('runDailyBaselineNow')
+    .newTrigger('scheduledDailyBaseline')
     .timeBased()
     .atHour(1)
     .everyDays(1)
@@ -17,7 +18,7 @@ function installBackendTriggers() {
 
   // Intraday:
   // Trigger thức dậy mỗi 10 phút.
-  // Hàm scheduledIntradayScan() tự kiểm tra
+  // scheduledIntradayScan() tự kiểm tra
   // ngày làm việc và giờ giao dịch trước khi gọi GitHub.
   ScriptApp
     .newTrigger('scheduledIntradayScan')
@@ -28,7 +29,7 @@ function installBackendTriggers() {
   return {
     ok: true,
     triggers: [
-      'runDailyBaselineNow',
+      'scheduledDailyBaseline',
       'scheduledIntradayScan'
     ]
   };
@@ -36,12 +37,15 @@ function installBackendTriggers() {
 
 
 /**
- * Chỉ xóa hai trigger backend do hệ thống này quản lý.
- * Không ảnh hưởng các trigger khác trong project.
+ * Chỉ xóa các trigger backend do hệ thống này quản lý.
+ *
+ * Có giữ tên runDailyBaselineNow trong danh sách để dọn trigger cũ
+ * nếu project đang còn trigger daily phiên bản trước.
  */
 function deleteBackendTriggers() {
   const managedHandlers = new Set([
     'runDailyBaselineNow',
+    'scheduledDailyBaseline',
     'scheduledIntradayScan'
   ]);
 
