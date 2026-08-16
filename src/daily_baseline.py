@@ -12,13 +12,18 @@ from vnstock.api.quote import Quote
 
 from common import gas_request, load_watchlist, now_vn, records
 
-SOURCES = ("VCI", "KBS")
+PRIMARY_SOURCE = "VCI"
+FALLBACK_SOURCE = "KBS"
+# Neu nguon chinh co phien cu hon run_date qua nguong nay, thu nguon du phong.
+# 4 ngay van bao phu cuoi tuan + 1 ngay nghi le lien ke, tranh hoi KBS vo ich.
+SOURCE_STALE_AFTER_DAYS = 4
 MA_SESSIONS = 200
 MA10_SESSIONS = 10
 AVG_VOLUME_SESSIONS = 10
 LOOKBACK_DAYS = 500
 
-# VNStock Community: 60 request/phut. Moi ma doi chieu VCI + KBS.
+# VNStock Community: 60 request/phut.
+# VCI la nguon chinh; KBS chi duoc goi khi VCI loi/empty/qua cu.
 # 1.25 giay/request ~= 48 request/phut, de lai bien an toan.
 REQUEST_INTERVAL_SECONDS = 1.25
 SOURCE_MAX_RETRIES = 3
@@ -168,30 +173,71 @@ def fetch_source_history(
     raise RuntimeError(f"{source}: {last_error}")
 
 
+def source_is_too_stale(history: pd.DataFrame, run_date: date) -> bool:
+    latest_date = history.iloc[-1]["time"].date()
+    age_days = (run_date - latest_date).days
+    return age_days > SOURCE_STALE_AFTER_DAYS
+
+
 def get_history(
     symbol: str,
     start: str,
     end: str,
     run_date: date,
 ) -> tuple[pd.DataFrame, str]:
-    candidates: list[tuple[date, int, pd.DataFrame, str]] = []
-    errors: list[str] = []
+    """
+    Uu tien VCI de giam gan mot nua so request.
 
-    # Doc ca VCI va KBS, sau do chon nguon co phien moi nhat.
-    # Neu cung ngay, uu tien VCI.
-    for priority, source in enumerate(SOURCES):
-        try:
-            history = fetch_source_history(symbol, source, start, end, run_date)
-            latest_date = history.iloc[-1]["time"].date()
-            candidates.append((latest_date, -priority, history, source))
-        except Exception as exc:
-            errors.append(str(exc))
+    - VCI hop le va khong qua cu: dung ngay, KHONG goi KBS.
+    - VCI loi/empty: goi KBS fallback.
+    - VCI co du lieu nhung qua cu: thu KBS; neu KBS khong tot hon thi van giu VCI.
+    """
+    primary_history: pd.DataFrame | None = None
+    primary_error: str | None = None
 
-    if not candidates:
-        raise RuntimeError(" | ".join(errors))
+    try:
+        primary_history = fetch_source_history(
+            symbol, PRIMARY_SOURCE, start, end, run_date
+        )
+        primary_date = primary_history.iloc[-1]["time"].date()
 
-    _, _, history, source = max(candidates, key=lambda item: (item[0], item[1]))
-    return history, source
+        if not source_is_too_stale(primary_history, run_date):
+            return primary_history, PRIMARY_SOURCE
+
+        print(
+            f"  -> {PRIMARY_SOURCE} co du lieu cu {primary_date.isoformat()}; "
+            f"thu {FALLBACK_SOURCE} fallback"
+        )
+    except Exception as exc:
+        primary_error = str(exc)
+        print(
+            f"  -> {PRIMARY_SOURCE} khong dung duoc; "
+            f"thu {FALLBACK_SOURCE} fallback"
+        )
+
+    try:
+        fallback_history = fetch_source_history(
+            symbol, FALLBACK_SOURCE, start, end, run_date
+        )
+        fallback_date = fallback_history.iloc[-1]["time"].date()
+
+        if primary_history is None:
+            return fallback_history, FALLBACK_SOURCE
+
+        primary_date = primary_history.iloc[-1]["time"].date()
+        if fallback_date > primary_date:
+            return fallback_history, FALLBACK_SOURCE
+
+        # KBS khong moi hon: giu VCI de tranh thay doi nguon khong can thiet.
+        return primary_history, PRIMARY_SOURCE
+    except Exception as fallback_exc:
+        if primary_history is not None:
+            return primary_history, PRIMARY_SOURCE
+
+        raise RuntimeError(
+            f"{PRIMARY_SOURCE}: {primary_error or 'unknown'} | "
+            f"{FALLBACK_SOURCE}: {fallback_exc}"
+        ) from fallback_exc
 
 
 def calculate_symbol(
@@ -292,6 +338,25 @@ def supabase_request(
 
             response.raise_for_status()
             return response
+        except requests.HTTPError as exc:
+            last_error = exc
+            status = exc.response.status_code if exc.response is not None else None
+
+            # 4xx nhu 401/403 la loi config/quyen co dinh; retry khong giup gi.
+            if status is not None and 400 <= status < 500 and status not in {408, 425, 429}:
+                body = (exc.response.text or "").strip()[:300] if exc.response else ""
+                raise RuntimeError(
+                    f"Supabase HTTP {status} tai {table}; khong retry. {body}"
+                ) from exc
+
+            if attempt >= SUPABASE_MAX_ATTEMPTS:
+                break
+            delay = supabase_retry_delay(attempt)
+            print(
+                f"Supabase HTTP loi {status}; "
+                f"thu lai sau {delay}s ({attempt}/{SUPABASE_MAX_ATTEMPTS})"
+            )
+            sleep(delay)
         except requests.RequestException as exc:
             last_error = exc
             if attempt >= SUPABASE_MAX_ATTEMPTS:
