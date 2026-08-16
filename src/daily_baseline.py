@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import os
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from time import monotonic, sleep
+from typing import Any
 
 import pandas as pd
+import requests
 from vnai.beam.auth import authenticator
 from vnstock.api.quote import Quote
 
@@ -15,12 +17,29 @@ MA_SESSIONS = 200
 MA10_SESSIONS = 10
 AVG_VOLUME_SESSIONS = 10
 LOOKBACK_DAYS = 500
-# Community vnstock cho toi da 60 request/phut khi workflow co VNSTOCK_API_KEY.
-# Moi ma duoc doi chieu tren ca VCI va KBS, vi vay phai gian cach TUNG REQUEST.
-# 1.25 giay/request tuong duong toi da 48 request/phut, chua 20% bien an toan.
+
+# VNStock Community: 60 request/phut. Moi ma doi chieu VCI + KBS.
+# 1.25 giay/request ~= 48 request/phut, de lai bien an toan.
 REQUEST_INTERVAL_SECONDS = 1.25
-MAX_RETRIES = 3
+SOURCE_MAX_RETRIES = 3
 RATE_LIMIT_WAIT_SECONDS = 65
+
+# Sau luot dau, chi retry cac ma loi. Tong cong: 1 luot dau + 3 luot retry.
+SYMBOL_RETRY_ROUNDS = 3
+SYMBOL_RETRY_DELAYS_SECONDS = (15, 30, 60)
+
+# Ghi Supabase tung phan de khong mat ket qua neu workflow bi dung giua chung.
+SUPABASE_BATCH_SIZE = 25
+SUPABASE_MAX_ATTEMPTS = 4
+SUPABASE_RETRY_DELAYS_SECONDS = (2, 5, 10)
+SUPABASE_TIMEOUT_SECONDS = 60
+
+SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
+SUPABASE_KEY = (
+    os.getenv("SUPABASE_SECRET_KEY", "").strip()
+    or os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+)
+
 _last_request_started_at: float | None = None
 
 
@@ -45,6 +64,16 @@ def verify_vnstock_api_access() -> None:
         f"VNStock API: tier={tier}, limit={per_minute} request/phut; "
         "job tu gioi han 48 request/phut."
     )
+
+
+def verify_supabase_config() -> None:
+    if not SUPABASE_URL:
+        raise RuntimeError("Thieu GitHub Secret SUPABASE_URL")
+    if not SUPABASE_KEY:
+        raise RuntimeError(
+            "Thieu GitHub Secret SUPABASE_SECRET_KEY "
+            "(hoac SUPABASE_SERVICE_ROLE_KEY cu)"
+        )
 
 
 def is_rate_limit(error: BaseException) -> bool:
@@ -81,10 +110,8 @@ def prepare_history(data: pd.DataFrame, run_date: date) -> pd.DataFrame:
     df = df.dropna(subset=["time", "close", "volume"])
     df = df[(df["close"] > 0) & (df["volume"] >= 0)]
 
-    # Baseline chi duoc dung cac phien da ket thuc truoc ngay chay.
-    # Vi du:
-    # - Chay trong ngay 03/08/2026 -> lay toi da phien 31/07/2026.
-    # - Chay luc 01:00 ngay 04/08/2026 -> lay toi da phien 03/08/2026.
+    # Baseline chi dung cac phien da ket thuc TRUOC ngay chay.
+    # Vi du: sang thu Bay lay phien chot thu Sau.
     df = df[df["time"].dt.date < run_date]
     df = (
         df.sort_values("time")
@@ -115,7 +142,7 @@ def fetch_source_history(
 ) -> pd.DataFrame:
     last_error = "empty"
 
-    for attempt in range(1, MAX_RETRIES + 1):
+    for attempt in range(1, SOURCE_MAX_RETRIES + 1):
         try:
             wait_for_request_slot()
             data = Quote(symbol=symbol, source=source).history(
@@ -128,10 +155,11 @@ def fetch_source_history(
             return normalize_price_unit(prepare_history(data, run_date))
         except (Exception, SystemExit) as exc:
             last_error = f"{type(exc).__name__}: {exc}"
-            if is_rate_limit(exc) and attempt < MAX_RETRIES:
+            if is_rate_limit(exc) and attempt < SOURCE_MAX_RETRIES:
                 print(
                     f"  -> {source} cham rate limit; cho "
-                    f"{RATE_LIMIT_WAIT_SECONDS}s roi thu lai ({attempt}/{MAX_RETRIES})"
+                    f"{RATE_LIMIT_WAIT_SECONDS}s roi thu lai "
+                    f"({attempt}/{SOURCE_MAX_RETRIES})"
                 )
                 sleep(RATE_LIMIT_WAIT_SECONDS)
                 continue
@@ -150,7 +178,7 @@ def get_history(
     errors: list[str] = []
 
     # Doc ca VCI va KBS, sau do chon nguon co phien moi nhat.
-    # Neu hai nguon cung ngay, uu tien VCI vi VCI dung truoc trong SOURCES.
+    # Neu cung ngay, uu tien VCI.
     for priority, source in enumerate(SOURCES):
         try:
             history = fetch_source_history(symbol, source, start, end, run_date)
@@ -166,100 +194,388 @@ def get_history(
     return history, source
 
 
-def main() -> None:
-    verify_vnstock_api_access()
-    run_at = now_vn()
-    run_date = run_at.date()
-    watchlist = load_watchlist()
-    end = run_date.isoformat()
-    start = (run_date - timedelta(days=LOOKBACK_DAYS)).isoformat()
-    rows: list[dict] = []
-    failed = 0
+def calculate_symbol(
+    symbol: str,
+    exchange: str,
+    start: str,
+    end: str,
+    run_date: date,
+    updated_at: datetime,
+) -> dict[str, Any]:
+    history, source = get_history(symbol, start, end, run_date)
+    session_count = len(history)
+    ma_sessions = min(session_count, MA_SESSIONS)
+    ma10_sessions = min(session_count, MA10_SESSIONS)
+    volume_sessions = min(session_count, AVG_VOLUME_SESSIONS)
+    latest = history.iloc[-1]
+    trading_date = latest["time"].date()
 
-    for index, item in watchlist.iterrows():
-        symbol = item["symbol"]
-        print(f"[{index + 1}/{len(watchlist)}] {symbol}")
+    if trading_date >= run_date:
+        raise RuntimeError(
+            f"Baseline khong an toan: trading_date={trading_date}, "
+            f"run_date={run_date}"
+        )
 
+    return {
+        "symbol": symbol,
+        "exchange": exchange,
+        "trading_date": trading_date.isoformat(),
+        "previous_close": round(float(latest["close"]), 4),
+        "ma200": round(float(history["close"].tail(ma_sessions).mean()), 4),
+        "ma200_sessions": ma_sessions,
+        "avg_volume_10": round(
+            float(history["volume"].tail(volume_sessions).mean()), 4
+        ),
+        "avg_volume_sessions": volume_sessions,
+        "source": source,
+        "updated_at": updated_at.isoformat(),
+        "data_status": "OK",
+        "ma10": round(float(history["close"].tail(ma10_sessions).mean()), 4),
+        "ma10_sessions": ma10_sessions,
+    }
+
+
+def supabase_headers() -> dict[str, str]:
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Content-Type": "application/json",
+    }
+
+    # Key moi sb_secret_* phai gui qua apikey header.
+    # Legacy service_role la JWT thi van dung Authorization Bearer.
+    if not SUPABASE_KEY.startswith("sb_secret_"):
+        headers["Authorization"] = f"Bearer {SUPABASE_KEY}"
+
+    return headers
+
+
+def supabase_retry_delay(attempt: int) -> int:
+    index = min(max(attempt - 1, 0), len(SUPABASE_RETRY_DELAYS_SECONDS) - 1)
+    return SUPABASE_RETRY_DELAYS_SECONDS[index]
+
+
+def supabase_request(
+    method: str,
+    table: str,
+    *,
+    params: dict[str, str] | None = None,
+    payload: Any = None,
+    prefer: str | None = None,
+) -> requests.Response:
+    url = f"{SUPABASE_URL}/rest/v1/{table}"
+    headers = supabase_headers()
+    if prefer:
+        headers["Prefer"] = prefer
+
+    last_error: Exception | None = None
+
+    for attempt in range(1, SUPABASE_MAX_ATTEMPTS + 1):
         try:
-            history, source = get_history(symbol, start, end, run_date)
-            session_count = len(history)
-            ma_sessions = min(session_count, MA_SESSIONS)
-            ma10_sessions = min(session_count, MA10_SESSIONS)
-            volume_sessions = min(session_count, AVG_VOLUME_SESSIONS)
-            latest = history.iloc[-1]
-            trading_date = latest["time"].date()
-
-            if trading_date >= run_date:
-                raise RuntimeError(
-                    f"Baseline khong an toan: trading_date={trading_date}, "
-                    f"run_date={run_date}"
-                )
-
-            rows.append(
-                {
-                    "symbol": symbol,
-                    "exchange": item["exchange"],
-                    "trading_date": trading_date.isoformat(),
-                    "previous_close": round(float(latest["close"]), 4),
-                    "ma200": round(
-                        float(history["close"].tail(ma_sessions).mean()), 4
-                    ),
-                    "ma200_sessions": ma_sessions,
-                    "avg_volume_10": round(
-                        float(history["volume"].tail(volume_sessions).mean()), 4
-                    ),
-                    "avg_volume_sessions": volume_sessions,
-                    "source": source,
-                    "updated_at": run_at.isoformat(),
-                    "data_status": "OK",
-                    "ma10": round(
-                        float(history["close"].tail(ma10_sessions).mean()), 4
-                    ),
-                    "ma10_sessions": ma10_sessions,
-                }
+            response = requests.request(
+                method,
+                url,
+                headers=headers,
+                params=params,
+                json=payload,
+                timeout=SUPABASE_TIMEOUT_SECONDS,
             )
-            print(f"  -> {source} | baseline {trading_date.isoformat()}")
-        except Exception as exc:
-            failed += 1
-            rows.append(
-                {
-                    "symbol": symbol,
-                    "exchange": item["exchange"],
-                    "trading_date": None,
-                    "previous_close": None,
-                    "ma200": None,
-                    "ma200_sessions": 0,
-                    "avg_volume_10": None,
-                    "avg_volume_sessions": 0,
-                    "source": None,
-                    "updated_at": run_at.isoformat(),
-                    "data_status": f"ERROR: {exc}"[:500],
-                    "ma10": None,
-                    "ma10_sessions": 0,
-                }
-            )
-            print(f"  -> ERROR: {exc}")
 
-    result = pd.DataFrame(rows)
-    success = len(watchlist) - failed
-    response = gas_request(
-        "replace_daily_baseline",
-        rows=records(result),
-        run_log={
-            "run_id": run_at.strftime("daily-%Y%m%d-%H%M%S"),
-            "job_type": "DAILY_BASELINE",
-            "started_at": run_at.isoformat(),
-            "finished_at": now_vn().isoformat(),
-            "status": "SUCCESS" if failed == 0 else "PARTIAL",
-            "symbols_requested": len(watchlist),
-            "symbols_success": success,
-            "symbols_failed": failed,
-            "message": (
-                f"Daily baseline completed: {success}/{len(watchlist)} symbols"
-            ),
+            if response.status_code in {408, 425, 429, 500, 502, 503, 504}:
+                if attempt < SUPABASE_MAX_ATTEMPTS:
+                    delay = supabase_retry_delay(attempt)
+                    print(
+                        f"Supabase tam loi HTTP {response.status_code}; "
+                        f"thu lai sau {delay}s ({attempt}/{SUPABASE_MAX_ATTEMPTS})"
+                    )
+                    sleep(delay)
+                    continue
+
+            response.raise_for_status()
+            return response
+        except requests.RequestException as exc:
+            last_error = exc
+            if attempt >= SUPABASE_MAX_ATTEMPTS:
+                break
+            delay = supabase_retry_delay(attempt)
+            print(
+                f"Supabase request loi {type(exc).__name__}; "
+                f"thu lai sau {delay}s ({attempt}/{SUPABASE_MAX_ATTEMPTS})"
+            )
+            sleep(delay)
+
+    raise RuntimeError(
+        f"Supabase request that bai sau {SUPABASE_MAX_ATTEMPTS} lan: {last_error}"
+    ) from last_error
+
+
+def upsert_daily_rows(rows: list[dict[str, Any]]) -> None:
+    if not rows:
+        return
+
+    supabase_request(
+        "POST",
+        "daily_baseline",
+        params={"on_conflict": "symbol,trading_date"},
+        payload=rows,
+        prefer="resolution=merge-duplicates,return=minimal",
+    )
+    print(f"  -> Supabase da ghi {len(rows)} baseline rows")
+
+
+def upsert_scan_run(run_log: dict[str, Any]) -> None:
+    supabase_request(
+        "POST",
+        "scan_runs",
+        params={"on_conflict": "run_id"},
+        payload=[run_log],
+        prefer="resolution=merge-duplicates,return=minimal",
+    )
+
+
+def load_today_checkpoints(run_at: datetime) -> dict[str, dict[str, Any]]:
+    """
+    Lay cac ma da ghi OK trong ngay hien tai.
+
+    Neu workflow bi fail/timeout va chay lai cung ngay, cac ma nay se duoc bo qua,
+    chi scan lai nhung ma chua co checkpoint OK.
+    """
+    day_start = run_at.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    response = supabase_request(
+        "GET",
+        "daily_baseline",
+        params={
+            "select": "*",
+            "updated_at": f"gte.{day_start}",
+            "data_status": "eq.OK",
+            "order": "updated_at.desc",
+            "limit": "1000",
         },
     )
-    print(response)
+    rows = response.json()
+    result: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        symbol = str(row.get("symbol") or "").strip().upper()
+        if symbol and symbol not in result:
+            result[symbol] = row
+    return result
+
+
+def load_latest_baseline(symbol: str) -> dict[str, Any] | None:
+    response = supabase_request(
+        "GET",
+        "daily_baseline",
+        params={
+            "select": "*",
+            "symbol": f"eq.{symbol}",
+            "order": "trading_date.desc,updated_at.desc",
+            "limit": "1",
+        },
+    )
+    rows = response.json()
+    return rows[0] if rows else None
+
+
+def stale_row_from_previous(
+    symbol: str,
+    exchange: str,
+    error_message: str,
+    run_at: datetime,
+) -> dict[str, Any]:
+    previous = load_latest_baseline(symbol)
+    if previous:
+        row = dict(previous)
+        row["exchange"] = exchange
+        row["updated_at"] = run_at.isoformat()
+        row["data_status"] = f"STALE: {error_message}"[:500]
+        return row
+
+    return {
+        "symbol": symbol,
+        "exchange": exchange,
+        "trading_date": None,
+        "previous_close": None,
+        "ma200": None,
+        "ma200_sessions": 0,
+        "avg_volume_10": None,
+        "avg_volume_sessions": 0,
+        "source": None,
+        "updated_at": run_at.isoformat(),
+        "data_status": f"ERROR: {error_message}"[:500],
+        "ma10": None,
+        "ma10_sessions": 0,
+    }
+
+
+def flush_batch(batch: list[dict[str, Any]]) -> None:
+    if not batch:
+        return
+    upsert_daily_rows(batch)
+    batch.clear()
+
+
+def main() -> None:
+    verify_vnstock_api_access()
+    verify_supabase_config()
+
+    run_at = now_vn()
+    run_date = run_at.date()
+    run_id = run_at.strftime("daily-%Y%m%d-%H%M%S")
+    watchlist = load_watchlist()
+    watchlist_map = {
+        str(row["symbol"]).strip().upper(): str(row["exchange"]).strip().upper()
+        for _, row in watchlist.iterrows()
+    }
+
+    end = run_date.isoformat()
+    start = (run_date - timedelta(days=LOOKBACK_DAYS)).isoformat()
+
+    checkpoint_rows = load_today_checkpoints(run_at)
+    success_rows: dict[str, dict[str, Any]] = {
+        symbol: row
+        for symbol, row in checkpoint_rows.items()
+        if symbol in watchlist_map
+    }
+
+    if success_rows:
+        print(
+            f"Resume: Supabase da co {len(success_rows)}/{len(watchlist_map)} "
+            "ma OK trong hom nay; se bo qua cac ma nay."
+        )
+
+    pending_symbols = [
+        symbol for symbol in watchlist_map if symbol not in success_rows
+    ]
+    last_errors: dict[str, str] = {}
+
+    total_rounds = 1 + SYMBOL_RETRY_ROUNDS
+    for round_index in range(total_rounds):
+        if not pending_symbols:
+            break
+
+        if round_index > 0:
+            delay = SYMBOL_RETRY_DELAYS_SECONDS[
+                min(round_index - 1, len(SYMBOL_RETRY_DELAYS_SECONDS) - 1)
+            ]
+            print(
+                f"\nRetry round {round_index}/{SYMBOL_RETRY_ROUNDS}: "
+                f"{len(pending_symbols)} ma loi; cho {delay}s truoc khi retry."
+            )
+            sleep(delay)
+        else:
+            print(f"Bat dau Daily Baseline: {len(pending_symbols)} ma can scan.")
+
+        failed_this_round: list[str] = []
+        batch: list[dict[str, Any]] = []
+
+        for index, symbol in enumerate(pending_symbols, start=1):
+            exchange = watchlist_map[symbol]
+            print(
+                f"[round {round_index + 1}/{total_rounds}] "
+                f"[{index}/{len(pending_symbols)}] {symbol}"
+            )
+
+            try:
+                row = calculate_symbol(
+                    symbol=symbol,
+                    exchange=exchange,
+                    start=start,
+                    end=end,
+                    run_date=run_date,
+                    updated_at=run_at,
+                )
+                success_rows[symbol] = row
+                last_errors.pop(symbol, None)
+                batch.append(row)
+                print(
+                    f"  -> {row['source']} | baseline {row['trading_date']} | OK"
+                )
+
+                if len(batch) >= SUPABASE_BATCH_SIZE:
+                    flush_batch(batch)
+            except Exception as exc:
+                message = f"{type(exc).__name__}: {exc}"
+                last_errors[symbol] = message
+                failed_this_round.append(symbol)
+                print(f"  -> ERROR: {message}")
+
+        flush_batch(batch)
+        pending_symbols = failed_this_round
+
+    final_failed = list(pending_symbols)
+    success_count = len(watchlist_map) - len(final_failed)
+    finished_at = now_vn()
+
+    # Tao bang 256 ma cho Sheet backup. Ma con loi sau moi retry se dung baseline cu
+    # tu Supabase va danh dau STALE, khong xoa du lieu cu.
+    sheet_rows: list[dict[str, Any]] = []
+    for symbol, exchange in watchlist_map.items():
+        if symbol in success_rows:
+            sheet_rows.append(success_rows[symbol])
+        else:
+            sheet_rows.append(
+                stale_row_from_previous(
+                    symbol=symbol,
+                    exchange=exchange,
+                    error_message=last_errors.get(symbol, "unknown error"),
+                    run_at=run_at,
+                )
+            )
+
+    status = "SUCCESS" if not final_failed else "PARTIAL"
+    failed_text = ", ".join(final_failed[:30])
+    if len(final_failed) > 30:
+        failed_text += f", ... (+{len(final_failed) - 30})"
+
+    message = f"Daily baseline completed: {success_count}/{len(watchlist_map)} symbols"
+    if final_failed:
+        message += f"; failed after retries: {failed_text}"
+
+    run_log = {
+        "run_id": run_id,
+        "job_type": "DAILY_BASELINE",
+        "started_at": run_at.isoformat(),
+        "finished_at": finished_at.isoformat(),
+        "status": status,
+        "symbols_requested": len(watchlist_map),
+        "symbols_success": success_count,
+        "symbols_failed": len(final_failed),
+        "message": message[:1000],
+    }
+    upsert_scan_run(run_log)
+
+    # Sheet chi la backup/nguon doc cu trong giai doan chuyen tiep.
+    # Supabase da duoc ghi tung batch truoc do.
+    try:
+        response = gas_request(
+            "replace_daily_baseline",
+            rows=records(pd.DataFrame(sheet_rows)),
+            run_log=run_log,
+        )
+        print(f"Sheet backup OK: {response}")
+    except Exception as exc:
+        sheet_error = f"Sheet backup failed: {type(exc).__name__}: {exc}"
+        print(sheet_error)
+        run_log["status"] = "PARTIAL"
+        run_log["finished_at"] = now_vn().isoformat()
+        run_log["message"] = f"{message}; {sheet_error}"[:1000]
+        upsert_scan_run(run_log)
+        raise RuntimeError(
+            "Supabase da luu du lieu, nhung Sheet backup that bai. "
+            "Chay lai workflow trong cung ngay se bo qua cac ma Supabase da OK "
+            "va thu lai phan con thieu/Sheet backup."
+        ) from exc
+
+    if final_failed:
+        raise RuntimeError(
+            f"Con {len(final_failed)} ma loi sau {SYMBOL_RETRY_ROUNDS} luot retry: "
+            f"{failed_text}. Chay lai workflow trong cung ngay se chi scan lai "
+            "cac ma chua co checkpoint OK."
+        )
+
+    print(
+        f"DONE: {success_count}/{len(watchlist_map)} ma OK; "
+        "Supabase primary + Sheet backup OK."
+    )
 
 
 if __name__ == "__main__":
