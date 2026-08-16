@@ -10,7 +10,7 @@ import requests
 from vnai.beam.auth import authenticator
 from vnstock.api.quote import Quote
 
-from common import gas_request, load_watchlist, now_vn, records
+from common import load_watchlist, now_vn, records
 
 PRIMARY_SOURCE = "VCI"
 FALLBACK_SOURCE = "KBS"
@@ -38,6 +38,57 @@ SUPABASE_BATCH_SIZE = 25
 SUPABASE_MAX_ATTEMPTS = 4
 SUPABASE_RETRY_DELAYS_SECONDS = (2, 5, 10)
 SUPABASE_TIMEOUT_SECONDS = 60
+
+SHEET_BACKUP_TIMEOUT_SECONDS = 30
+
+
+def backup_sheet_best_effort(rows: list[dict[str, Any]], run_log: dict[str, Any]) -> tuple[bool, str]:
+    """
+    Gui backup sang GAS dung mot lan voi timeout ngan.
+
+    Sheet chi la backup trong giai doan chuyen tiep, nen loi/timeout tai day
+    khong duoc lam workflow Daily Baseline that bai khi Supabase da luu xong.
+    """
+    gas_url = os.getenv("GAS_WEB_APP_URL", "").strip()
+    gas_secret = os.getenv("GAS_API_SECRET", "").strip()
+
+    if not gas_url or not gas_secret:
+        return False, "Sheet backup skipped: thieu GAS_WEB_APP_URL hoac GAS_API_SECRET"
+
+    body = {
+        "secret": gas_secret,
+        "action": "replace_daily_baseline",
+        "rows": rows,
+        "run_log": run_log,
+    }
+
+    try:
+        response = requests.post(
+            gas_url,
+            json=body,
+            timeout=SHEET_BACKUP_TIMEOUT_SECONDS,
+            allow_redirects=True,
+        )
+        response.raise_for_status()
+
+        try:
+            result = response.json()
+        except ValueError:
+            return False, (
+                "Sheet backup warning: GAS khong tra JSON hop le; "
+                f"HTTP {response.status_code}"
+            )
+
+        if not result.get("ok"):
+            return False, f"Sheet backup warning: GAS bao loi: {result.get('error')}"
+
+        return True, f"Sheet backup OK: {result}"
+    except requests.RequestException as exc:
+        return False, (
+            "Sheet backup warning: "
+            f"{type(exc).__name__}: {exc}"
+        )
+
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
 SUPABASE_KEY = (
@@ -609,26 +660,18 @@ def main() -> None:
     upsert_scan_run(run_log)
 
     # Sheet chi la backup/nguon doc cu trong giai doan chuyen tiep.
-    # Supabase da duoc ghi tung batch truoc do.
-    try:
-        response = gas_request(
-            "replace_daily_baseline",
-            rows=records(pd.DataFrame(sheet_rows)),
-            run_log=run_log,
-        )
-        print(f"Sheet backup OK: {response}")
-    except Exception as exc:
-        sheet_error = f"Sheet backup failed: {type(exc).__name__}: {exc}"
-        print(sheet_error)
-        run_log["status"] = "PARTIAL"
+    # Backup chi thu dung mot lan, timeout ngan va KHONG lam workflow fail.
+    sheet_ok, sheet_message = backup_sheet_best_effort(
+        records(pd.DataFrame(sheet_rows)),
+        run_log,
+    )
+    print(sheet_message)
+
+    if not sheet_ok:
+        # Giu nguyen SUCCESS/PARTIAL theo ket qua Supabase; chi bo sung canh bao.
         run_log["finished_at"] = now_vn().isoformat()
-        run_log["message"] = f"{message}; {sheet_error}"[:1000]
+        run_log["message"] = f"{message}; {sheet_message}"[:1000]
         upsert_scan_run(run_log)
-        raise RuntimeError(
-            "Supabase da luu du lieu, nhung Sheet backup that bai. "
-            "Chay lai workflow trong cung ngay se bo qua cac ma Supabase da OK "
-            "va thu lai phan con thieu/Sheet backup."
-        ) from exc
 
     if final_failed:
         raise RuntimeError(
@@ -639,7 +682,7 @@ def main() -> None:
 
     print(
         f"DONE: {success_count}/{len(watchlist_map)} ma OK; "
-        "Supabase primary + Sheet backup OK."
+        f"Supabase primary; Sheet backup={'OK' if sheet_ok else 'WARNING'}."
     )
 
 
