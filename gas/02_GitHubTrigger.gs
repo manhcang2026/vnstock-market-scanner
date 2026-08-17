@@ -18,14 +18,11 @@ function runDailyBaselineNow() {
  * - Thứ Ba sáng lấy phiên chốt thứ Hai.
  * - ...
  * - Thứ Bảy sáng lấy phiên chốt thứ Sáu.
- *
- * Chủ nhật và thứ Hai sáng không cần chạy.
  */
 function scheduledDailyBaseline() {
   const now = new Date();
   const day = now.getDay();
 
-  // JavaScript: 0 = CN, 1 = T2, 2 = T3, ... 6 = T7.
   if (day === 0 || day === 1) {
     return {
       ok: true,
@@ -41,9 +38,7 @@ function scheduledDailyBaseline() {
 
 /**
  * Chạy Intraday production thủ công.
- *
- * Vẫn tuân thủ giờ giao dịch.
- * Nếu chạy ngoài giờ, Python sẽ tự bỏ qua.
+ * Vẫn tuân thủ giờ giao dịch; Python tự bỏ qua nếu ngoài giờ.
  */
 function runIntradayScanNow() {
   return dispatchWorkflow_(
@@ -53,15 +48,7 @@ function runIntradayScanNow() {
 
 
 /**
- * Chạy Intraday thủ công ngoài giờ.
- *
- * Chỉ dùng để kiểm tra:
- * - GitHub Actions
- * - nguồn dữ liệu
- * - kết nối GAS
- * - ghi Dashboard_Current
- *
- * Không dùng cho trigger tự động.
+ * Chạy Intraday thủ công ngoài giờ để test kết nối.
  */
 function runIntradayScanForceNow() {
   return dispatchWorkflow_(
@@ -74,10 +61,12 @@ function runIntradayScanForceNow() {
 
 
 /**
- * Hàm trigger Intraday production.
+ * Trigger Intraday production.
  *
- * Chỉ phát lệnh từ thứ Hai đến thứ Sáu,
- * trong hai phiên giao dịch.
+ * Cadence: 5 phút.
+ * Cho phép grace 4 phút sau 11:30 và 15:00 vì Apps Script trigger
+ * thường thức dậy trễ ~1 phút. Python sẽ clamp các run này về
+ * snapshot 11:30 hoặc 15:00.
  */
 function scheduledIntradayScan() {
   const now = new Date();
@@ -94,13 +83,15 @@ function scheduledIntradayScan() {
     now.getHours() * 60 +
     now.getMinutes();
 
+  const closeGraceMinutes = 4;
+
   const inMorning =
     minutes >= 9 * 60 &&
-    minutes <= 11 * 60 + 30;
+    minutes <= 11 * 60 + 30 + closeGraceMinutes;
 
   const inAfternoon =
     minutes >= 13 * 60 &&
-    minutes <= 15 * 60;
+    minutes <= 15 * 60 + closeGraceMinutes;
 
   if (!inMorning && !inAfternoon) {
     return {
@@ -117,9 +108,6 @@ function scheduledIntradayScan() {
 
 /**
  * Phát workflow_dispatch đến GitHub.
- *
- * inputs là tùy chọn.
- * Production bình thường không truyền inputs.
  */
 function dispatchWorkflow_(
   workflowFile,
@@ -158,21 +146,17 @@ function dispatchWorkflow_(
     {
       method: 'post',
       contentType: 'application/json',
-
       headers: {
         Authorization: `Bearer ${token}`,
         Accept: 'application/vnd.github+json',
         'X-GitHub-Api-Version': '2022-11-28'
       },
-
       payload: JSON.stringify(payload),
-
       muteHttpExceptions: true
     }
   );
 
-  const code =
-    response.getResponseCode();
+  const code = response.getResponseCode();
 
   if (code !== 204) {
     throw new Error(
