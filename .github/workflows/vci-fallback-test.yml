@@ -1,0 +1,164 @@
+name: VCI Fallback Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-vci:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Test VCI price board
+        run: |
+          python - <<'PY'
+          import sys
+          import pandas as pd
+          from vnstock import Trading
+
+          SYMBOLS = ["VCB", "FPT", "SSI", "SHS", "BSR"]
+
+          def normalize_price_board(data: pd.DataFrame) -> pd.DataFrame:
+              if data is None or not isinstance(data, pd.DataFrame) or data.empty:
+                  raise RuntimeError("VCI price board rong hoac khong hop le")
+
+              df = data.copy()
+
+              print("\n=== RAW COLUMNS ===")
+              print(type(df.columns).__name__)
+              print(list(df.columns))
+
+              if isinstance(df.columns, pd.MultiIndex):
+                  df.columns = [
+                      "_".join(
+                          str(part)
+                          for part in col
+                          if str(part) not in {"", "None"}
+                      )
+                      for col in df.columns.to_flat_index()
+                  ]
+
+              print("\n=== FLATTENED COLUMNS ===")
+              print(list(df.columns))
+
+              aliases = {
+                  "listing_symbol": "symbol",
+                  "listing_ticker": "symbol",
+                  "match_match_price": "close_price",
+                  "match_price": "close_price",
+                  "match_accumulated_volume": "volume_accumulated",
+                  "accumulated_volume": "volume_accumulated",
+                  "listing_exchange": "exchange",
+                  "listing_board": "exchange",
+              }
+
+              for source_col, target_col in aliases.items():
+                  if target_col not in df.columns and source_col in df.columns:
+                      df = df.rename(columns={source_col: target_col})
+
+              required = {"symbol", "close_price", "volume_accumulated"}
+              missing = required.difference(df.columns)
+              if missing:
+                  raise RuntimeError(
+                      f"VCI schema chua map duoc {sorted(missing)}; "
+                      f"columns={list(df.columns)}"
+                  )
+
+              if "exchange" not in df.columns:
+                  df["exchange"] = pd.NA
+
+              df["symbol"] = (
+                  df["symbol"]
+                  .fillna("")
+                  .astype(str)
+                  .str.strip()
+                  .str.upper()
+              )
+              df["close_price"] = pd.to_numeric(
+                  df["close_price"], errors="coerce"
+              )
+              df["volume_accumulated"] = pd.to_numeric(
+                  df["volume_accumulated"], errors="coerce"
+              )
+              df["exchange"] = (
+                  df["exchange"]
+                  .fillna("")
+                  .astype(str)
+                  .str.upper()
+                  .replace({"HSX": "HOSE", "UPCO": "UPCOM"})
+              )
+
+              out = (
+                  df[
+                      [
+                          "symbol",
+                          "close_price",
+                          "volume_accumulated",
+                          "exchange",
+                      ]
+                  ]
+                  .loc[df["symbol"] != ""]
+                  .drop_duplicates("symbol", keep="last")
+                  .reset_index(drop=True)
+              )
+              return out
+
+          print("Testing VCI with symbols:", SYMBOLS)
+
+          trading = Trading(source="VCI")
+          data = trading.price_board(
+              symbols_list=SYMBOLS,
+              flatten_columns=True,
+          )
+
+          normalized = normalize_price_board(data)
+
+          print("\n=== NORMALIZED RESULT ===")
+          print(normalized.to_string(index=False))
+
+          returned = set(normalized["symbol"])
+          requested = set(SYMBOLS)
+          missing_symbols = sorted(requested - returned)
+
+          valid = normalized[
+              normalized["close_price"].notna()
+              & normalized["volume_accumulated"].notna()
+          ]
+
+          print("\n=== VALIDATION ===")
+          print(f"Requested: {len(SYMBOLS)}")
+          print(f"Returned: {len(normalized)}")
+          print(f"Valid price+volume: {len(valid)}")
+          print(f"Missing symbols: {missing_symbols}")
+
+          if normalized.empty:
+              raise RuntimeError("VCI khong tra duoc ma nao")
+
+          if len(valid) < 3:
+              raise RuntimeError(
+                  f"VCI chi co {len(valid)} ma hop le; can toi thieu 3/5 de test schema"
+              )
+
+          if (valid["close_price"] <= 0).any():
+              raise RuntimeError("VCI co close_price <= 0")
+
+          if (valid["volume_accumulated"] < 0).any():
+              raise RuntimeError("VCI co volume_accumulated < 0")
+
+          print("\n✅ VCI FALLBACK TEST PASSED")
+          sys.exit(0)
+          PY
