@@ -366,21 +366,45 @@ def backup_sheet_best_effort(
 def normalize_price_board(data: pd.DataFrame) -> pd.DataFrame:
     if data is None or not isinstance(data, pd.DataFrame) or data.empty:
         raise RuntimeError("Price board rong hoac khong hop le")
-    if isinstance(data.columns, pd.MultiIndex):
-        raise RuntimeError(
-            "Price board tra cot MultiIndex khong dung schema KBS; hay kiem tra vnstock/source"
-        )
-
-    required = {"symbol", "close_price", "volume_accumulated"}
-    missing = required.difference(data.columns)
-    if missing:
-        raise RuntimeError(
-            f"Price board thieu cot {sorted(missing)}; hien co {list(data.columns)}"
-        )
 
     df = data.copy()
+
+    # VCI co the tra MultiIndex neu khong flatten. Day la lop bao ve thu hai.
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = [
+            "_".join(
+                str(part)
+                for part in col
+                if str(part) not in {"", "None"}
+            )
+            for col in df.columns.to_flat_index()
+        ]
+
+    # Chuan hoa schema KBS/VCI ve schema noi bo cua scanner.
+    aliases = {
+        "listing_symbol": "symbol",
+        "listing_ticker": "symbol",
+        "match_match_price": "close_price",
+        "match_price": "close_price",
+        "match_accumulated_volume": "volume_accumulated",
+        "accumulated_volume": "volume_accumulated",
+        "listing_exchange": "exchange",
+        "listing_board": "exchange",
+    }
+    for source_col, target_col in aliases.items():
+        if target_col not in df.columns and source_col in df.columns:
+            df = df.rename(columns={source_col: target_col})
+
+    required = {"symbol", "close_price", "volume_accumulated"}
+    missing = required.difference(df.columns)
+    if missing:
+        raise RuntimeError(
+            f"Price board thieu cot {sorted(missing)}; hien co {list(df.columns)}"
+        )
+
     if "exchange" not in df.columns:
         df["exchange"] = pd.NA
+
     df["symbol"] = df["symbol"].fillna("").astype(str).str.strip().str.upper()
     df["close_price"] = pd.to_numeric(df["close_price"], errors="coerce")
     df["volume_accumulated"] = pd.to_numeric(
@@ -390,6 +414,7 @@ def normalize_price_board(data: pd.DataFrame) -> pd.DataFrame:
         df["exchange"].fillna("").astype(str).str.upper()
         .replace({"HSX": "HOSE", "UPCO": "UPCOM"})
     )
+
     return (
         df[PRICE_BOARD_COLUMNS]
         .loc[df["symbol"] != ""]
@@ -403,7 +428,17 @@ def seconds_left(deadline: float) -> float:
 
 
 def fetch_price_board_once(symbols: list[str], source: str) -> pd.DataFrame:
-    data = Trading(source=source).price_board(symbols_list=symbols)
+    trading = Trading(source=source)
+
+    # VCI mac dinh co the tra MultiIndex; yeu cau vnstock flatten ngay tu nguon.
+    if source.upper() == "VCI":
+        data = trading.price_board(
+            symbols_list=symbols,
+            flatten_columns=True,
+        )
+    else:
+        data = trading.price_board(symbols_list=symbols)
+
     return normalize_price_board(data)
 
 
