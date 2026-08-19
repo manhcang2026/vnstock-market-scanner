@@ -173,16 +173,16 @@ def append_checkpoint(p,s):
         w.writerow({"symbol":s,"status":"OK"})
 def main():
     ap=argparse.ArgumentParser()
-    ap.add_argument("--master",default="tools/financial/output/industry_new_current_final.csv")
-    ap.add_argument("--out-dir",default="tools/financial/output/fundamental_current")
+    ap.add_argument("--master",default="tools/financial/work/industry_final.csv")
+    ap.add_argument("--out-dir",default="tools/financial/work/fundamental")
     ap.add_argument("--force-model",choices=["BANK","SECURITIES","INSURANCE","NORMAL"],default=None,help="Chạy lại riêng một financial_model dù đã checkpoint")
     args=ap.parse_args()
     mp=Path(args.master)
     if not mp.exists():raise FileNotFoundError(f"Không thấy {mp}; phải duyệt STEP 1 trước.")
     master=load_master(mp); symbols=sorted(master)
-    if len(symbols)!=543:raise RuntimeError(f"Master phải 543 mã, hiện {len(symbols)}")
+    if not symbols: raise RuntimeError("Master rỗng")
     out=Path(args.out_dir);out.mkdir(parents=True,exist_ok=True)
-    summary_csv=out/"fundamental_summary_current.csv";long_csv=out/"metrics_long_current.csv";raw_json=out/"raw_current.json";error_csv=out/"errors_current.csv";checkpoint_csv=out/"checkpoint_success_current.csv";latest_csv=out/"financial_latest_raw_current.csv"
+    summary_csv=out/"fundamental_summary.csv";long_csv=out/"metrics_long.csv";raw_json=out/"raw.json";error_csv=out/"errors.csv";checkpoint_csv=out/"checkpoint_success.csv";latest_csv=out/"financial_latest_raw.csv"
     completed=load_completed(checkpoint_csv);allsum=read_csv(summary_csv) if summary_csv.exists() else [];alllong=read_csv(long_csv) if long_csv.exists() else [];errors=read_csv(error_csv) if error_csv.exists() else []
     raw={}
     if raw_json.exists():

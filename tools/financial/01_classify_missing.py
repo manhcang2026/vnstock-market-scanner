@@ -143,16 +143,18 @@ def fetch_html(session,url):
 def main():
     ap=argparse.ArgumentParser()
     ap.add_argument("--watchlist",default="config/watchlist.csv")
-    ap.add_argument("--existing",default="tools/financial/data/existing_symbols_current.csv")
-    ap.add_argument("--out",default="tools/financial/output/industry_new_current_raw.csv")
-    ap.add_argument("--review",default="tools/financial/output/industry_review_current.csv")
+    ap.add_argument("--targets",default="tools/financial/work/targets.csv")
+    ap.add_argument("--out",default="tools/financial/work/industry_raw.csv")
+    ap.add_argument("--review",default="tools/financial/work/industry_review.csv")
     args=ap.parse_args()
     watch=read_csv(Path(args.watchlist))
     by={(r.get("symbol") or "").strip().upper():r for r in watch if (r.get("symbol") or "").strip()}
-    existing={(r.get("symbol") or "").strip().upper() for r in read_csv(Path(args.existing))}
-    targets=sorted(set(by)-existing)
-    print(f"Universe {len(by)} | existing {len(existing & set(by))} | targets {len(targets)}")
-    if len(by)!=800 or len(targets)!=543: raise RuntimeError("Universe/target count không đúng 800/543")
+    target_rows=read_csv(Path(args.targets))
+    targets=sorted({(r.get("symbol") or "").strip().upper() for r in target_rows if (r.get("symbol") or "").strip()})
+    if not targets: raise RuntimeError("Targets rỗng. Chạy 00_prepare_targets.py trước.")
+    missing=[s for s in targets if s not in by]
+    if missing: raise RuntimeError("Targets không có trong watchlist: "+", ".join(missing))
+    print(f"Universe {len(by)} | targets {len(targets)}")
 
     outp=Path(args.out); previous={}
     if outp.exists():
@@ -164,6 +166,7 @@ def main():
                 if s: previous[s]=r
         else:
             print(f"Classifier đổi sang {CLASSIFIER_VERSION}: rebuild toàn bộ {len(targets)} mã.")
+    previous={s:r for s,r in previous.items() if s in set(targets)}
     done={s for s,r in previous.items() if str(r.get("status","")).startswith(("OK","NO_INDUSTRY"))}
     result=dict(previous); session=requests.Session()
     pending=[s for s in targets if s not in done]

@@ -73,10 +73,10 @@ def write_parts(out: Path,prefix: str,table: str,cols:list[str],rows:list[dict],
 def main():
     ap=argparse.ArgumentParser()
     ap.add_argument("--watchlist",default="config/watchlist.csv")
-    ap.add_argument("--industry",default="tools/financial/output/industry_new_current_final.csv")
-    ap.add_argument("--quarterly",default="tools/financial/output/production_current/financial_quarterly_production_current.csv")
-    ap.add_argument("--latest",default="tools/financial/output/production_current/financial_latest_production_current.csv")
-    ap.add_argument("--out-dir",default="tools/financial/output/sql_current")
+    ap.add_argument("--industry",default="tools/financial/work/industry_final.csv")
+    ap.add_argument("--quarterly",default="tools/financial/work/production/financial_quarterly.csv")
+    ap.add_argument("--latest",default="tools/financial/work/production/financial_latest.csv")
+    ap.add_argument("--out-dir",default="tools/financial/work/sql")
     args=ap.parse_args()
 
     watch={(r.get("symbol") or "").upper():r for r in read_csv(Path(args.watchlist)) if (r.get("symbol") or "").strip()}
@@ -104,10 +104,12 @@ def main():
     quarterly=read_csv(Path(args.quarterly))
     latest=read_csv(Path(args.latest))
 
-    if len(metadata)!=543:
-        raise RuntimeError(f"Metadata phải 543 rows, hiện {len(metadata)}")
-    if len(latest)!=543:
-        raise RuntimeError(f"Financial latest phải 543 rows, hiện {len(latest)}")
+    expected=len(industry)
+    if expected==0: raise RuntimeError("Industry final rỗng")
+    if len(metadata)!=expected:
+        raise RuntimeError(f"Metadata phải {expected} rows, hiện {len(metadata)}")
+    if len(latest)!=expected:
+        raise RuntimeError(f"Financial latest phải {expected} rows, hiện {len(latest)}")
 
     out=Path(args.out_dir)
     out.mkdir(parents=True,exist_ok=True)
@@ -140,16 +142,34 @@ def main():
         LATEST_ROWS_PER_FILE,
     )
 
-    verify="""-- CHỈ KIỂM TRA
+    target_values=", ".join("('"+m["symbol"].replace("'","''")+"')" for m in metadata)
+    verify=f"""-- CHỈ KIỂM TRA - KHÔNG GHI DATABASE
+with targets(symbol) as (values {target_values})
+select count(*) target_symbols,
+       count(m.symbol) with_metadata,
+       count(f.symbol) with_financial_latest,
+       count(*) filter(where m.symbol is null) missing_metadata,
+       count(*) filter(where f.symbol is null) missing_financial
+from targets t
+left join public.stock_metadata m using(symbol)
+left join public.financial_latest f using(symbol);
+
+select data_status,production_ready,count(*) symbols
+from public.financial_latest
+where symbol in (select symbol from targets)
+group by data_status,production_ready
+order by data_status,production_ready;
+
+-- Coverage toàn universe scanner hiện tại
 with u as (select distinct symbol from public.stock_snapshot)
-select count(*) universe_symbols,count(m.symbol) with_metadata,count(f.symbol) with_financial_latest,
-count(*) filter(where m.symbol is null) missing_metadata,count(*) filter(where f.symbol is null) missing_financial
-from u left join public.stock_metadata m using(symbol) left join public.financial_latest f using(symbol);
-select data_status,production_ready,count(*) symbols from public.financial_latest
-where symbol in (select symbol from public.stock_snapshot)
-group by data_status,production_ready order by data_status,production_ready;
-select u.symbol from (select distinct symbol from public.stock_snapshot) u left join public.stock_metadata m using(symbol) where m.symbol is null order by u.symbol;
-select u.symbol from (select distinct symbol from public.stock_snapshot) u left join public.financial_latest f using(symbol) where f.symbol is null order by u.symbol;
+select count(*) universe_symbols,
+       count(m.symbol) with_metadata,
+       count(f.symbol) with_financial_latest,
+       count(*) filter(where m.symbol is null) missing_metadata,
+       count(*) filter(where f.symbol is null) missing_financial
+from u
+left join public.stock_metadata m using(symbol)
+left join public.financial_latest f using(symbol);
 """
     (out/"99_verify_coverage.sql").write_text(verify,encoding="utf-8")
 

@@ -2,3 +2,12 @@ __pycache__/
 *.pyc
 .env
 .DS_Store
+
+# Generated financial pipeline artifacts - do not commit
+/tools/financial/work/
+/tools/financial/output/
+
+# Generated company logos - do not commit
+/tools/logos/output/
+/tools/logos/work/
+/tools/logos/.env

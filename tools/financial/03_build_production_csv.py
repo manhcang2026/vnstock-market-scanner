@@ -37,10 +37,10 @@ def freshness(r,ty,tq):
     return "STALE"
 def main():
     ap=argparse.ArgumentParser()
-    ap.add_argument("--summary",default="tools/financial/output/fundamental_current/fundamental_summary_current.csv")
-    ap.add_argument("--master",default="tools/financial/output/industry_new_current_final.csv")
-    ap.add_argument("--errors",default="tools/financial/output/fundamental_current/errors_current.csv")
-    ap.add_argument("--out-dir",default="tools/financial/output/production_current")
+    ap.add_argument("--summary",default="tools/financial/work/fundamental/fundamental_summary.csv")
+    ap.add_argument("--master",default="tools/financial/work/industry_final.csv")
+    ap.add_argument("--errors",default="tools/financial/work/fundamental/errors.csv")
+    ap.add_argument("--out-dir",default="tools/financial/work/production")
     args=ap.parse_args()
 
     source=Path(args.summary)
@@ -52,14 +52,14 @@ def main():
     rows=read_csv(source)
     master_rows=read_csv(master_path)
     if not rows:raise RuntimeError("Summary rỗng")
-    if len(master_rows)!=543:raise RuntimeError(f"Master phải 543 mã, hiện {len(master_rows)}")
+    if not master_rows: raise RuntimeError("Master rỗng")
 
     master={}
     for r in master_rows:
         s=(r.get("symbol") or "").strip().upper()
         if not s:raise RuntimeError("Master có symbol rỗng")
         master[s]=r
-    if len(master)!=543:raise RuntimeError("Master có symbol trùng")
+    if len(master)!=len(master_rows):raise RuntimeError("Master có symbol trùng")
 
     errors={}
     if error_path.exists():
@@ -123,12 +123,13 @@ def main():
             "production_ready":"NO",
         })
 
-    if len(outlatest)!=543 or len({r["symbol"] for r in outlatest})!=543:
-        raise RuntimeError(f"Latest coverage phải 543/543, hiện {len(outlatest)}")
+    target_count=len(master)
+    if len(outlatest)!=target_count or len({r["symbol"] for r in outlatest})!=target_count:
+        raise RuntimeError(f"Latest coverage phải {target_count}/{target_count}, hiện {len(outlatest)}")
 
     out=Path(args.out_dir);out.mkdir(parents=True,exist_ok=True)
-    qf=out/"financial_quarterly_production_current.csv"
-    lf=out/"financial_latest_production_current.csv"
+    qf=out/"financial_quarterly.csv"
+    lf=out/"financial_latest.csv"
     write_csv(qf,quarterly);write_csv(lf,outlatest)
 
     no_data=[r["symbol"] for r in outlatest if r["data_status"]=="NO_FINANCIAL_DATA"]
@@ -136,7 +137,7 @@ def main():
     stale=[r["symbol"] for r in outlatest if r.get("freshness_status")=="STALE"]
     current_ok=[r["symbol"] for r in outlatest if r.get("production_ready")=="YES"]
 
-    print(f"Quarterly {len(quarterly)} | Latest {len(outlatest)}/543")
+    print(f"Quarterly {len(quarterly)} | Latest {len(outlatest)}/{len(master)}")
     print(f"READY {len(current_ok)} | PARTIAL {len(partial)} | NO_DATA {len(no_data)} | STALE {len(stale)}")
     if no_data:print("NO_DATA:",", ".join(no_data))
     if partial:print("PARTIAL:",", ".join(partial))
