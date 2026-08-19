@@ -303,22 +303,7 @@ insert into public.stock_metadata (
   ('PGS', 'HNX', 'CTCP Kinh doanh Khí Miền Nam', 'CTCP Kinh doanh Khí Miền Nam', 'Southern Gas Trading Joint Stock Company', 'Dầu khí', 'NORMAL', 6, 'COMPLETE', now()),
   ('PGV', 'HOSE', 'Tổng Công ty Phát điện 3 - CTCP', 'Tổng Công ty Phát điện 3 - CTCP', 'Power Generation Joint Stock Corporation 3', 'Điện', 'NORMAL', 7, 'COMPLETE', now()),
   ('PHC', 'HOSE', 'CTCP Xây dựng Phục Hưng Holdings', 'CTCP Xây dựng Phục Hưng Holdings', 'Phuc Hung Holdings Construction Joint Stock Company', 'Xây dựng', 'NORMAL', 15, 'COMPLETE', now()),
-  ('PHS', 'UPCOM', 'CTCP Chứng khoán Phú Hưng', 'CTCP Chứng khoán Phú Hưng', 'Phu Hung Securities Corporation', 'Chứng khoán', 'SECURITIES', 2, 'COMPLETE', now())
-
-on conflict (symbol) do update set
-  exchange=excluded.exchange,
-  company_name=excluded.company_name,
-  display_name=excluded.display_name,
-  en_company_name=excluded.en_company_name,
-  website_group=excluded.website_group,
-  financial_model=excluded.financial_model,
-  website_group_order=excluded.website_group_order,
-  metadata_status=excluded.metadata_status,
-  updated_at=now();
-
-insert into public.stock_metadata (
-  symbol, exchange, company_name, display_name, en_company_name, website_group, financial_model, website_group_order, metadata_status, updated_at
-) values
+  ('PHS', 'UPCOM', 'CTCP Chứng khoán Phú Hưng', 'CTCP Chứng khoán Phú Hưng', 'Phu Hung Securities Corporation', 'Chứng khoán', 'SECURITIES', 2, 'COMPLETE', now()),
   ('PIC', 'HNX', 'CTCP Đầu tư Điện lực 3', 'CTCP Đầu tư Điện lực 3', 'PC3 - Investment Joint Stock Company', 'Điện', 'NORMAL', 7, 'COMPLETE', now()),
   ('PIS', 'UPCOM', 'Tổng Công ty Pisico Bình Định - CTCP', 'Tổng Công ty Pisico Bình Định - CTCP', 'PISICO Binh Dinh Corporation Joint Stock Company', 'Gỗ & Giấy', 'NORMAL', 24, 'COMPLETE', now()),
   ('PJT', 'HOSE', 'CTCP Vận tải Xăng dầu Đường Thủy Petrolimex', 'CTCP Vận tải Xăng dầu Đường Thủy Petrolimex', 'Petrolimex Joint Stock Tanker Company', 'Dầu khí', 'NORMAL', 6, 'COMPLETE', now()),
