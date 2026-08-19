@@ -1,38 +1,33 @@
 ﻿symbol,exchange,organ_name,en_organ_name
-AAT,HOSE,CTCP Tập Đoàn Tiên Sơn Thanh Hóa,Tien Son Thanh Hoa Group JSC
+AAM,HOSE,CTCP Thủy sản MeKong,Mekong Fisheries Joint Stock Company
+AAT,HOSE,CTCP Tập Đoàn Tiên Sơn Thanh Hóa ,Tien Son Thanh Hoa Group Joint Stock Company
 ABI,UPCOM,CTCP Bảo hiểm Ngân hàng Nông nghiệp Việt Nam,Agriculture Bank Insurance Joint Stock Corporation
 ACG,HOSE,CTCP Gỗ An Cường,An Cuong Wood - Working Joint Stock Company
 ACL,HOSE,CTCP Xuất nhập khẩu Thủy sản Cửu Long An Giang,Cuu Long Fish Joint Stock Company
-ACM,UPCOM,CTCP Tập đoàn Khoáng sản Á Cường,A Cuong Mineral Group JSC
+ACM,UPCOM,CTCP Tập đoàn Khoáng sản Á Cường,A Cuong Mineral Group Joint Stock Company
 ADG,HOSE,CTCP Clever Group,Clever Group Corporation
-ADP,HOSE,CTCP Sơn Á Đông,A Dong Paint JSC
-ADS,HOSE,CTCP Damsan,DamSan Joint Stock Company
-AGF,UPCOM,CTCP Xuất nhập khẩu Thủy sản An Giang,Angiang Fisheries Import Export JSC
-AGP,UPCOM,CTCP Dược phẩm Agimexpharm,Agimexpharm Pharmaceutical JSC
-AIC,UPCOM,Tổng Công ty Cổ phần Bảo hiểm DBV,DBV Insurance Corporation
-AMD,UPCOM,CTCP Đầu tư và Khoáng sản FLC Stone,FLC Stone Mining And Investment Joint Stock Company
+ADP,HOSE,CTCP Sơn Á Đông,A Dong Paint Stock Company
+ADS,HOSE,CTCP Damsan,Damsan Joint Stock Company
+AGF,UPCOM,CTCP Xuất nhập khẩu Thủy sản An Giang,Angiang Fisheries Import  Export JSC
+AGP,UPCOM,CTCP Dược phẩm Agimexpharm,Agimexpharm Pharmaceutical Joint Stock Company
+AIC,UPCOM,Tổng Công ty Cổ phần Bảo hiểm DBV,DBV Insurance Group Joint Stock Company
+ALV,UPCOM,CTCP Tập đoàn MCST,MCST Group Joint Stock Company
 AME,HNX,CTCP Alphanam E&C,Alphanam E&C Joint Stock Company
-AMS,UPCOM,CTCP Cơ khí Xây dựng AMECC,AMECC MECHANICAL CONSTRUCTION JSC
-APF,UPCOM,CTCP Nông sản Thực phẩm Quảng Ngãi,Quang Ngai Agricultural Products and Foodstuff JSC
-ARM,HNX,CTCP Xuất nhập khẩu Hàng không,General Aviation Import Export JSC
-ART,UPCOM,CTCP Chứng khoán Artex,Artex Securities Joint Stock Company
+AMS,UPCOM,CTCP Cơ khí Xây dựng AMECC,AMECC Mechanical Construction Joint Stock Company
+APF,UPCOM,CTCP Nông sản Thực phẩm Quảng Ngãi,Quang Ngai Agricultural Products and Foodstuff Joint Stock Company
 ASG,HOSE,CTCP Tập đoàn ASG,ASG Corporation
-AST,HOSE,CTCP Dịch vụ Hàng không Taseco,Taseco Air Services JSC
-AVC,UPCOM,CTCP Thủy điện A Vương,A Vuong Hydropower JSC
-AVF,UPCOM,CTCP Việt An,AnViFish Joint Stock Company
+AST,HOSE,CTCP Dịch vụ Hàng không Taseco,Taseco Air Services Joint Stock Company
+AVC,UPCOM,CTCP Thủy điện A Vương,A Vuong Hydropower Joint Stock Company
 BCA,UPCOM,CTCP B.C.H,B.C.H Joint Stock Company
-BCC,HNX,CTCP Xi măng Bỉm Sơn,Bim Son Cement JSC
-BCF,HNX,CTCP Thực phẩm Bích Chi,Bich Chi Food JSC
-BCG,HOSE,CTCP Tập đoàn Bamboo Capital,Bamboo Capital Group Joint Stock Company
-BCR,UPCOM,CTCP BCG Land,BCG Land Joint Stock Company
+BCC,HNX,CTCP Xi măng Bỉm Sơn,Bim Son Cement Joint Stock Company
+BCF,HNX,CTCP Thực phẩm Bích Chi,Bich Chi Food Company
 BDG,UPCOM,CTCP May mặc Bình Dương,Protrade Garment Joint Stock Company
 BDT,UPCOM,CTCP Xây lắp và Vật liệu Xây dựng Đồng Tháp,Dong Thap Building Materials & Contruction Joint Stock Company
 BGE,UPCOM,CTCP BCG Energy,BCG Energy Joint Stock Company
-BHA,UPCOM,CTCP Thủy điện Bắc Hà,Bac Ha Hydropower JSC
+BHA,UPCOM,CTCP Thủy điện Bắc Hà,Bac Ha Hydropower Joint Stock Company
 BHI,UPCOM,Tổng Công ty cổ phần Bảo hiểm Sài Gòn - Hà Nội,Sai Gon - Ha Noi Insurance Corporation
-BHN,HOSE,Tổng Công ty cổ phần Bia - Rượu - Nước giải khát Hà Nội,Hanoi Beer Alcohol And Beverage Joint Stock Corporation
+BHN,HOSE,Tổng Công ty cổ phần Bia - Rượu - Nước giải khát Hà Nội,Hanoi Beer Alcohol and Beverage Joint Stock Corporation
 BIC,HOSE,Tổng Công ty cổ phần Bảo hiểm Ngân hàng Đầu tư và Phát triển Việt Nam,BIDV Insurance Corporation
-BII,UPCOM,CTCP Louis Land,Louis Land JSC
 BKC,HNX,CTCP Khoáng sản Bắc Kạn,Bac Kan Mineral Joint Stock Corporation
 BLI,UPCOM,Tổng Công ty cổ phần Bảo hiểm Bảo Long,Bao Long Insurance Corporation
 BMI,HOSE,Tổng Công ty cổ phần Bảo Minh,Bao Minh Insurance Corporation
@@ -43,264 +38,269 @@ BNA,HNX,CTCP Tập đoàn Đầu tư Bảo Ngọc,Bao Ngoc Investment Group Join
 BNW,UPCOM,CTCP Nước sạch Bắc Ninh,Bac Ninh Clean Water Joint Stock Company
 BOT,UPCOM,CTCP BOT Cầu Thái Hà,Thai Ha Bridge BOT Joint Stock Company
 BRR,UPCOM,CTCP Cao su Bà Rịa,BaRia Rubber Joint Stock Company
-BSA,UPCOM,CTCP Thủy điện Buôn Đôn,Buon Don Hydropower JSC
+BSA,UPCOM,CTCP Thủy điện Buôn Đôn,Buon Don Hydropower Joint Stock Company
 BSG,UPCOM,CTCP Xe khách Sài Gòn,Saigon Passenger Transport JSC
 BSL,UPCOM,CTCP Bia Sài Gòn - Sông Lam,SaiGon-SongLam Beer Joint Stock Company
-BSQ,UPCOM,CTCP Bia Sài Gòn - Quảng Ngãi,Sai Gon - Quang Ngai Beer JSC
-BT6,UPCOM,CTCP Beton 6,Beton 6 Corporation
+BSQ,UPCOM,CTCP Bia Sài Gòn - Quảng Ngãi,Sai Gon - Quang Ngai Beer Joint Stock Company
 BTH,UPCOM,CTCP Chế tạo Biến thế và Vật liệu Điện Hà Nội,Ha Noi Transformer Manufacturing And Electric Material Joint Stock Company
 BTP,HOSE,CTCP Nhiệt điện Bà Rịa,BaRia Thermal Power Joint Stock Company
 BTS,HNX,CTCP Xi măng VICEM Bút Sơn,Vicem But Son Cement Joint Stock Company
-BTV,UPCOM,CTCP Dịch vụ Du lịch Bến Thành,BenThanh Tourist Service Corporation
-BVL,UPCOM,CTCP BV Land,BV Land JSC
+BTV,UPCOM,CTCP Dịch vụ Du lịch Bến Thành,BenThanh Tourist Service Corporation 
+BTW,HNX,CTCP Cấp nước Bến Thành,Ben Thanh Water Supply Joint Stock Company
+BVL,UPCOM,CTCP BV Land,BV Land Joint Stock Company
 BWS,UPCOM,CTCP Cấp nước Bà Rịa - Vũng Tàu,Ba Ria - Vung Tau Water Supply Joint Stock Company
+C32,HOSE,CTCP Đầu tư và Xây dựng 3-2,3-2 Investment and Construction Joint Stock Company
 C47,HOSE,CTCP Xây dựng 47,Construction Joint Stock Company 47
-CBI,UPCOM,CTCP Gang thép Cao Bằng,Cao Bang Cast Iron And Steel Joint Stock Company
+CBI,UPCOM,CTCP Gang thép Cao Bằng,Cao Bang Cast Iron and Steel Joint Stock Company 
 CC1,UPCOM,Tổng Công ty Xây dựng Số 1 - CTCP,Construction Corporation No 1 Joint Stock Company
 CCC,HOSE,CTCP Xây dựng CDC,CDC Construction Joint Stock Company
-CCL,HOSE,CTCP Đầu tư và Phát triển Đô thị Dầu khí Cửu Long,Cuu Long Petro Urban Development & Investment Corporation
+CCL,HOSE,CTCP Đầu tư và Phát triển Đô thị Dầu khí Cửu Long,Cuu Long Petro Urban Development and Investment Corporation
 CCR,HNX,CTCP Cảng Cam Ranh,Cam Ranh Port Joint Stock Company
-CCT,UPCOM,CTCP Cảng Cần Thơ,CanTho Port Joint Stock Company
 CDN,HNX,CTCP Cảng Đà Nẵng,Danang Port Joint Stock Company
-CDO,UPCOM,CTCP Tư vấn Thiết kế và Phát triển Đô thị,Consultancy Design & Urban Development JSC
-CEN,UPCOM,CTCP CENCON Việt Nam,Cencon Vietnam JSC
+CDO,UPCOM,CTCP Tư vấn Thiết kế và Phát triển Đô thị,Consultancy Design and Urban Development Joint Stock Company
+CDR,UPCOM,CTCP Xây dựng Cao su Đồng Nai,Dong Nai Rubber Construction Joint Stock Company
+CEN,UPCOM,CTCP CENCON Việt Nam,CENCON Vietnam Joint Stock Company
 CHP,HOSE,CTCP Thủy điện Miền Trung,Central Hydropower Joint Stock Company
-CHS,UPCOM,CTCP Chiếu sáng Công cộng Thành phố Hồ Chí Minh,HOCHIMINH CITY PUBLIC LIGHTING JSC
+CHS,UPCOM,CTCP Chiếu sáng Công cộng Thành phố Hồ Chí Minh,Ho Chi Minh City Public Lighting Joint Stock Company
 CIG,HOSE,CTCP COMA 18,COMA 18 Joint Stock Company
 CKD,UPCOM,CTCP Cơ khí Đông Anh LICOGI,Dong Anh Licogi Mechanical Joint Stock Company
 CKG,HOSE,CTCP Tập đoàn CIC,CIC Group Joint Stock Company
 CLC,HOSE,CTCP Cát Lợi,Cat Loi Joint Stock Company
-CLG,UPCOM,CTCP Đầu tư và Phát triển Nhà đất COTEC,Cotec Invesment & Land-House Development JSC
 CLL,HOSE,CTCP Cảng Cát Lái,Cat Lai Port Joint Stock Company
 CLX,UPCOM,CTCP Xuất nhập khẩu và Đầu tư Chợ Lớn (CHOLIMEX),Cho Lon Investment And Import Export Corporation (CHOLIMEX)
 CMM,UPCOM,CTCP Camimex,Camimex Joint Stock Company
-CMP,UPCOM,CTCP Cảng Chân Mây,Chanmay Port Joint Stock Company
+CMN,UPCOM,CTCP Lương thực Thực phẩm Colusa - Miliket,Colusa - Miliket Foodstuff Joint Stock Company
 CMS,HNX,CTCP Tập Đoàn CMH Việt Nam,CMH Viet Nam Group Joint Stock Company
-CMX,HOSE,CTCP Camimex Group,Camimex Group JSC
+CMX,HOSE,CTCP Camimex Group,Camimex Group Joint Stock Company
 CNG,HOSE,CTCP CNG Việt Nam,CNG Viet Nam Joint Stock Company
 CNT,UPCOM,CTCP Tập đoàn CNT,CNT Group Corporation
 CPA,UPCOM,CTCP Cà phê Phước An,PhuocAn Coffee Joint Stock Company
-CPI,UPCOM,CTCP Đầu tư Cảng Cái Lân,Cailan Port Investment Joint Stock Company
-CQN,UPCOM,CTCP Cảng Quảng Ninh,QUANG NINH PORT JSC
-CQT,UPCOM,CTCP Xi măng Quán Triều VVMI,VVMI QUAN TRIEU CEMENT JSC
-CSC,HNX,CTCP Tập đoàn COTANA,COTANA Group JSC
-CST,HNX,CTCP Than Cao Sơn - TKV,Cao Son Coal JSC
-CTW,UPCOM,CTCP Cấp thoát nước Cần Thơ,Can Tho Water Supply - Sewerage JSC
+CPI,UPCOM,CTCP Đầu tư Cảng Cái Lân,Cailan Port  Investment Joint Stock Company
+CQN,UPCOM,CTCP Cảng Quảng Ninh,Quang Ninh Port Joint Stock Company
+CQT,UPCOM,CTCP Xi măng Quán Triều VVMI,VVMI Quan Trieu Cement Joint Stock Company
+CSC,HNX,CTCP Tập đoàn Cotana,Cotana Group Joint Stock Company
+CST,HNX,CTCP Than Cao Sơn - TKV,Cao Son Coal Joint Stock Company
+CTW,UPCOM,CTCP Cấp thoát nước Cần Thơ,Can Tho Water Supply - Sewerage Joint Stock Company
 CTX,UPCOM,Tổng Công ty cổ phần Đầu tư Xây dựng và Thương mại Việt Nam,Vietnam Investment Construction and Trading Joint Stock Corporation
 CVT,HOSE,CTCP CMC,CMC Joint Stock Company
-D2D,HOSE,CTCP Phát triển Đô thị Công nghiệp số 2,Industrial Urban Development JSC No. 2
-DAG,UPCOM,CTCP Tập đoàn Nhựa Đông Á,Dong A Plastic JSC
-DAH,HOSE,CTCP Tập đoàn Khách sạn Đông Á,Dong A Hotel Group JSC
+D2D,HOSE,CTCP Phát triển Đô thị Công nghiệp số 2,Industrial Urban Development Joint - Stock Company No 2
+DAH,HOSE,CTCP Tập đoàn Khách sạn Đông Á,Dong A Hotel Group Joint Stock Company
 DAN,UPCOM,CTCP Dược Danapha,Danapha Pharmaceutical Joint Stock Company
-DAT,HOSE,CTCP Đầu tư du lịch và Phát triển Thủy sản,Travel Investment And Seafood Development Corporation
-DBD,HOSE,CTCP Dược - Trang thiết bị Y tế Bình Định (Bidiphar),Binh Dinh Pharmaceutical and Medical Equipment JSC
-DCF,UPCOM,CTCP Xây dựng và Thiết kế Số 1,Design And Construction Joint Stock Company No.1
-DCS,UPCOM,CTCP Tập đoàn Đại Châu,Dai Chau Group JSC
-DCT,UPCOM,CTCP Tấm lợp Vật liệu Xây dựng Đồng Nai,Dong Nai Roofsheet And Construction Material JSC
-DFF,UPCOM,CTCP Tập đoàn Đua Fat,Dua Fat Group JSC
+DAT,HOSE,CTCP Đầu tư du lịch và Phát triển Thủy sản,Travel Investment and Seafood Development Corporation
+DBD,HOSE,CTCP Dược - Trang thiết bị Y tế Bình Định (Bidiphar),Binh Dinh Pharmaceutical and Medical Equipment Joint Stock Company
+DC2,HNX,CTCP Đầu tư Phát triển - Xây dựng (DIC) số 2,Development Investment Construction Number 2 Joint Stock Company
+DCF,UPCOM,CTCP Xây dựng và Thiết kế Số 1,Design and Construction Joint Stock Company No.1
+DCS,UPCOM,CTCP Tập đoàn EDX,EDX Holding Joint Stock Company
+DCT,UPCOM,CTCP Tấm lợp Vật liệu Xây dựng Đồng Nai,Dong Nai Roofsheet & Construction Material Joint Stock Company
+DFF,UPCOM,CTCP Tập đoàn Đua Fat,Dua Fat Group Joint Stock Company
 DGT,UPCOM,CTCP Công trình Giao thông Đồng Nai,DONA Transportation Construction Joint Stock Company
-DHD,UPCOM,CTCP Dược Vật tư Y tế Hải Dương,Hai Duong Pharmaceutical Medical Material JSC
+DHA,HOSE,CTCP Hóa An,Hoa An Joint Stock Company
+DHD,UPCOM,CTCP Dược Vật tư Y tế Hải Dương,Hai Duong Pharmaceutical Medical Materials Joint Stock Company
 DHG,HOSE,CTCP Dược Hậu Giang,DHG Pharmaceutical Joint Stock Company
 DHT,HNX,CTCP Dược phẩm Hà Tây,Ha Tay Pharmaceutical Joint Stock Company
-DIC,UPCOM,CTCP Đầu tư và Thương mại DIC,DIC Investment & Trading Joint Stock Company
-DL1,HNX,CTCP Tập đoàn Alpha Seven,Alpha Seven Group JSC
-DMC,HOSE,CTCP Xuất nhập khẩu Y Tế Domesco,Domesco Medical Import Export Joint Stock Corporation
-DNA,UPCOM,CTCP Điện Nước An Giang,An Giang Power And Water Supply Joint Stock Company
+DIC,UPCOM,CTCP Đầu tư và Thương mại DIC,DIC Investment and Trading Joint Stock Company
+DL1,HNX,CTCP Tập đoàn Alpha Seven,Alpha Seven Group Joint Stock Company
+DMC,HOSE,CTCP Xuất nhập khẩu Y Tế DOMESCO,DOMESCO Medical Import-Export Joint Stock Corporation
+DMX,HOSE,CTCP Đầu tư Điện máy Xanh,Dien May Xanh Investment Joint Stock Company
+DNA,UPCOM,CTCP Điện Nước An Giang,An Giang Power and Water Supply Joint Stock Company
 DNH,UPCOM,CTCP Thủy điện Đa Nhim - Hàm Thuận - Đa Mi,Da Nhim - Ham Thuan - Da Mi Hydro Power Joint Stock Company
+DNM,UPCOM,Tổng Công ty cổ phần Y tế DANAMECO,Danameco Medical Joint Stock Corporation
 DNN,UPCOM,CTCP Cấp nước Đà Nẵng,Da Nang Water Supply Joint Stock Company
 DNP,HNX,CTCP DNP Holding,DNP Holding Joint Stock Company
 DNW,UPCOM,CTCP Cấp nước Đồng Nai,Dong Nai Water Joint Stock Company
-DP1,UPCOM,CTCP Dược phẩm Trung ương CPC1,Central Pharmaceutical Company No.1 JSC
-DP3,HNX,CTCP Dược phẩm Trung ương 3,Central Phamaceutical Joint Stock Company No3
+DP1,UPCOM,CTCP Dược phẩm Trung ương CPC1,Central Pharmaceutical CPC1. JSC
+DP3,HNX,CTCP Dược phẩm Trung ương 3,Central Pharmaceutical Joint Stock Company No 3
 DPR,HOSE,CTCP Cao su Đồng Phú,Dong Phu Rubber Joint Stock Company
-DPS,UPCOM,CTCP Đầu tư Phát triển Sóc Sơn,Soc Son Development Investment Joint Stock Company
 DQC,HOSE,CTCP Tập đoàn Điện Quang,Dien Quang Group Joint Stock Company
 DRH,HOSE,CTCP DRH Holdings,DRH Holdings JSC
 DSC,HOSE,CTCP Chứng khoán DSC,DSC Securities Corporation
 DSD,UPCOM,CTCP DHC Suối Đôi,DHC Suoi Doi Corporation
-DSG,UPCOM,CTCP Kính Đáp Cầu,Dap Cau Sheet Glass JSC
-DSP,UPCOM,CTCP Dịch vụ Du lịch Phú Thọ,Phu Tho Tourist Service JSC
-DTE,UPCOM,CTCP Đầu tư Năng lượng Đại Trường Thành Holdings,Dai Truong Thanh Holdings Energy Investment JSC
+DSG,UPCOM,CTCP Kính Đáp Cầu,Dap Cau Sheet Glass Joint Stock Company
+DSP,UPCOM,CTCP Dịch vụ Du lịch Phú Thọ,Phu Tho Tourist Service Joint Stock Company
+DTI,UPCOM,CTCP Đầu tư Đức Trung,Duc Trung Investment Joint Stock Company
 DTK,HNX,Tổng Công ty Điện lực TKV - CTCP,Vinacomin - Power Holding Corporation
 DTL,HOSE,CTCP Đại Thiên Lộc,Dai Thien Loc Corporation
 DTP,UPCOM,CTCP Dược phẩm CPC1 Hà Nội,Ha Noi CPC1 Pharmaceutical Joint Stock Company
 DVG,UPCOM,CTCP Đại Việt Group DVG,Dai Viet DVG Group Joint Stock Company
 DVM,HNX,CTCP Dược liệu Việt Nam,Vietnam Medicinal Materials Joint Stock Company
-DVN,UPCOM,Tổng Công ty Dược Việt Nam - CTCP,Vietnam Pharmaceutical Corporation - JSC
-DVP,HOSE,CTCP Đầu tư và Phát triển Cảng Đình Vũ,Dinh Vu Port Investment and Development JSC
-DWS,UPCOM,CTCP Cấp nước và Môi trường đô thị Đồng Tháp,Dong Thap Water Supply & Urban Environment Joint Stock Company
+DVN,UPCOM,Tổng Công ty Dược Việt Nam - CTCP,Vietnam Pharmaceutical Corporation - Joint Stock Company
+DVP,HOSE,CTCP Đầu tư và Phát triển Cảng Đình Vũ,DinhVu Port Investment & Development Joint Stock Company
+DWS,UPCOM,CTCP Cấp nước và Môi trường đô thị Đồng Tháp,Dong Thap Water Supply & Urban Environment Joint - Stock Company
+EFI,UPCOM,CTCP Đầu tư Tài chính Giáo dục,Education Financial Investment Joint Stock Company
 EIC,UPCOM,CTCP EVN Quốc tế,EVN International Joint Stock Company
 EIN,UPCOM,CTCP Đầu tư - Thương mại - Dịch vụ Điện Lực,Electricity Investment - Service - Trade Joint Stock Company
-EMS,UPCOM,Tổng Công ty Chuyển phát nhanh Bưu Điện - CTCP,VNPost Express Joint Stock Company
-EVE,HOSE,CTCP Everpia,Everpia JSC
+EMS,UPCOM,Tổng Công ty Chuyển phát nhanh Bưu Điện - CTCP,VN Post Express Joint Stock Corporation
+EVE,HOSE,CTCP Everpia,Everpia Joint Stock Company
 FCM,HOSE,CTCP Bê tông Phan Vũ Hà Nam,Phan Vu Ha Nam Concrete Joint Stock Company
-FCS,UPCOM,CTCP Lương thực Thành phố Hồ Chí Minh,Ho Chi Minh City Food JSC
+FCS,UPCOM,CTCP Lương thực Thành phố Hồ Chí Minh,Ho Chi Minh City Food Joint Stock Company
 FDC,HOSE,CTCP Ngoại thương và Phát triển Đầu tư Thành phố Hồ Chí Minh,Foreign Trade Development & Investment Corporation of HCMC
 FIC,UPCOM,Tổng Công ty Vật liệu Xây dựng số 1 - CTCP,Fico Corporation JSC
-FID,HNX,CTCP Đầu tư và Phát triển Doanh nghiệp Việt Nam,Vietnam Enterprise Investment And Development JSC
+FID,HNX,CTCP Đầu tư và Phát triển Doanh nghiệp Việt Nam,Vietnam Enterprise Investment and Development Joint Stock Company
 FIR,HOSE,CTCP Địa ốc First Real,First Real Joint Stock Company
-FLC,UPCOM,CTCP Tập đoàn FLC,FLC Group JSC
-FMC,HOSE,CTCP Thực phẩm Sao Ta,Sao Ta Foods Joint Stock Company
+FMC,HOSE,CTCP Thực phẩm Sao Ta,Sao Ta Foods Joint Stock Company 
+FOC,UPCOM,CTCP Dịch vụ Trực tuyến FPT,FPT Online Service Joint Stock Company
 FTM,UPCOM,CTCP Đầu tư và Phát triển Đức Quân,Duc Quan Investment and Development Joint Stock Company
 G36,UPCOM,Tổng Công ty 36 - CTCP,36 Corporation
 GCF,UPCOM,CTCP Thực phẩm G.C,G.C Food Joint Stock Company
 GDA,UPCOM,CTCP Tôn Đông Á,Ton Dong A Corporation
 GDT,HOSE,CTCP Chế biến Gỗ Đức Thành,Duc Thanh Wood Processing Joint Stock Company
 GGG,UPCOM,CTCP Ô tô Giải Phóng,Giai Phong Motor Joint Stock Company
-GHC,UPCOM,CTCP Thủy điện Gia Lai,Gia Lai Hydropower JSC
+GHC,HOSE,CTCP Thủy điện Gia Lai,Gia Lai Hydropower Joint Stock Company
+GIC,HNX,CTCP VSC Green Logistics,VSC Green Logistics Joint Stock Company
 GKM,HNX,CTCP GKM Holdings,GKM Holdings Joint Stock Company
 GMC,UPCOM,CTCP Garmex Sài Gòn,Garmex Saigon Corporation
 GPC,UPCOM,CTCP Tập đoàn Green+,Green Plus Joint Stock Corporation
-GSM,UPCOM,CTCP Thủy điện Hương Sơn,Huong Son Hydro Power Joint Stocks Company
-GSP,HOSE,CTCP Vận tải Sản Phẩm Khí Quốc tế,International Gas Product Shipping JSC
+GSM,UPCOM,CTCP Thủy điện Hương Sơn,Huong Son Hydro Power Joint Stock Company
+GSP,HOSE,CTCP Vận tải Sản Phẩm Khí Quốc tế,International Gas Product Shipping Joint Stock Company
 GTS,UPCOM,CTCP Công trình Giao thông Sài Gòn,SaiGon Traffic Construction Joint Stock Company
-GTT,UPCOM,CTCP Thuận Thảo,Thuan Thao Corporation
 HAC,UPCOM,CTCP Chứng khoán Hải Phòng,Hai Phong Securities Joint Stock Company
-HAI,UPCOM,CTCP Nông dược H.A.I,HAI Agrochem Joint Stock Company
-HAN,UPCOM,Tổng Công ty Xây dựng Hà Nội - CTCP,Hanoi Construction Corporation ? JSC
-HAP,HOSE,CTCP Tập đoàn Hapaco,Hapaco Corporation
-HAR,HOSE,CTCP Đầu tư Thương mại Bất động sản An Dương Thảo Điền,An Duong Thao Dien JSC
-HBS,HNX,CTCP Chứng khoán Hòa Bình,Hoa Binh Securities JSC
-HCD,HOSE,CTCP Đầu tư Sản xuất và Thương mại HCD,HCD Investment Producing and Trading Joint Stock Company
+HAN,UPCOM,Tổng Công ty Xây dựng Hà Nội - CTCP,Hanoi Construction Corporation - Joint Stock Company
+HAP,HOSE,CTCP Tập đoàn Hapaco,Hapaco Group Joint Stock Company
+HAR,HOSE,CTCP Đầu tư Thương mại Bất động sản An Dương Thảo Điền,An Duong Thao Dien Real Estate Investment Joint Stock Company
+HAS,HOSE,CTCP Hacisco,Hacisco Joint Stock Company
+HBS,HNX,CTCP Chứng khoán Hòa Bình,Hoa Binh Securities Joint Stock Company
+HCD,HOSE,CTCP Đầu tư Sản xuất và Thương mại HCD,HCD Investment Producing and Trading Joint Stock Company 
 HDA,HNX,CTCP Hãng sơn Đông Á,Dong A Paint Joint Stock Company
 HDW,UPCOM,CTCP Kinh doanh Nước sạch Hải Dương,Hai Duong Water Joint Stock Company
+HEP,UPCOM,CTCP Môi trường và Công trình Đô thị Huế,Hue Urban Environment And Public Works Joint Stock Company
 HHG,UPCOM,CTCP Hoàng Hà,Hoang Ha Joint Stock Company
-HID,HOSE,CTCP Halcom Việt Nam,Halcom Vietnam JSC
+HID,HOSE,CTCP Halcom Việt Nam,Halcom Vietnam Joint Stock Company
 HIO,UPCOM,CTCP Helio Energy,Helio Energy Joint Stock Company
-HJS,HNX,CTCP Thủy điện Nậm Mu,Nam Mu Hydropower JSC
-HKB,UPCOM,CTCP Nông nghiệp và Thực phẩm Hà Nội - Kinh Bắc,Ha Noi ? Kinh Bac Agriculture and Food JSC
-HLA,UPCOM,CTCP Hữu Liên Á Châu,Huu Lien Asia Corporation
-HLC,HNX,CTCP Than Hà Lầm - Vinacomin,Vinacomin - Ha Lam Coal JSC
-HLD,HNX,CTCP Đầu tư và Phát triển Bất động sản Hudland,Hudland Real Estate Investmnet and Development JSC
-HMC,HOSE,CTCP Kim khí Thành phố Hồ Chí Minh - VNSTEEL,VNSTEEL - HOCHIMINH CITY METAL CORPORATION
+HJS,HNX,CTCP Thủy điện Nậm Mu,Nam Mu Hydropower Joint Stock Company
+HKB,UPCOM,CTCP Nông nghiệp và Thực phẩm Hà Nội - Kinh Bắc,Ha Noi - Kinh Bac Agriculture and Food Joint Stock Company
+HLC,HNX,CTCP Than Hà Lầm - Vinacomin,Vinacomin - Ha Lam Coal Joint Stock Company
+HLD,HNX,CTCP Đầu tư và Phát triển Bất động sản Hudland,HUDLAND Real Estate Investment and Development Joint Stock Company
+HMC,HOSE,CTCP Kim khí Thành phố Hồ Chí Minh - VNSTEEL,VNSTEEL - HoChiMinh City Metal Corporation
 HNA,HOSE,CTCP Thủy điện Hủa Na,Hua Na Hydropower Joint Stock Company
 HND,UPCOM,CTCP Nhiệt điện Hải Phòng,Hai Phong Thermal Power Joint Stock Company
 HNF,UPCOM,CTCP Thực phẩm Hữu Nghị,Huu Nghi Food Joint Stock Company
 HNI,UPCOM,CTCP May Hữu Nghị,Huu Nghi Garment Joint Stock Company
-HOM,HNX,CTCP Xi măng VICEM Hoàng Mai,Vicem Hoang Mai Cement JSC
+HOM,HNX,CTCP Xi măng VICEM Hoàng Mai,VICEM Hoang Mai Cement Joint Stock Company
 HPI,UPCOM,CTCP Khu công nghiệp Hiệp Phước,Hiep Phuoc Industrial Park Joint Stock Company
-HPW,UPCOM,CTCP Cấp nước Hải Phòng,Hai Phong Water JSC
+HPP,UPCOM,CTCP Sơn Hải Phòng,Hai Phong Paint Joint Stock Company
+HPW,UPCOM,CTCP Cấp nước Hải Phòng,Hai Phong Water Joint Stock Company
 HRC,HOSE,CTCP Cao su Hòa Bình,Hoa Binh Rubber Joint Stock Company
 HTE,UPCOM,CTCP Đầu tư Kinh doanh Điện lực Thành phố Hồ Chí Minh,Ho Chi Minh City Electric Power Trading Investment Corporation
-HTG,HOSE,Tổng Công ty cổ phần Dệt may Hòa Thọ,Hoa Tho Textile & Garment Joint Stock Corporation
+HTG,HOSE,Tổng Công ty cổ phần Dệt may Hòa Thọ,Hoa Tho Textile - Garment Joint Stock Corporation
 HTI,HOSE,CTCP Đầu tư Phát triển Hạ tầng IDICO,IDICO Infrastructure Development Investment Joint Stock Company
 HTM,UPCOM,Tổng Công ty Thương mại Hà Nội - CTCP,Hanoi Trade Joint Stock Corporation
-HTP,UPCOM,CTCP In Sách Giáo khoa Hòa Phát,HTINVEST JSC
+HTT,UPCOM,CTCP Thương mại Hà Tây,Ha Tay Trading Joint Stock Company
+HU3,UPCOM,CTCP Đầu tư và Xây dựng HUD3,HUD3 Investment and Construction Joint Stock Company
 HUB,HOSE,CTCP Xây lắp Thừa Thiên Huế,Thua Thien Hue Construction Joint Stock Corporation
-HVG,UPCOM,CTCP Hùng Vương,Hung Vuong Joint Stock Corporation
 HVT,HNX,CTCP Hóa chất Việt Trì,Viet Tri Chemical Joint Stock Company
-HVX,HOSE,CTCP Xi măng VICEM Hải Vân,Vicem Hai Van Cement Joint Stock Company
+HVX,UPCOM,CTCP Xi măng VICEM Hải Vân,Vicem Hai Van Cement Joint Stock Company
 HWS,UPCOM,CTCP Cấp nước Huế,Hue Water Supply Joint Stock Company
-IBC,UPCOM,CTCP Đầu tư Apax Holdings,Apax Holdings Joint Stock Company
-ICN,UPCOM,CTCP Đầu tư Xây dựng Dầu khí IDICO,IDICO Investment Construction Oil and Natural Gas JSC
-ICT,HOSE,CTCP Viễn thông - Tin học Bưu điện,Joint Stock Company For Telecom & Informatics
-IDP,UPCOM,CTCP Sữa Quốc tế Lof,Lof International Dairy Products Joint Stock Company
-IDV,HNX,CTCP Phát triển Hạ tầng Vĩnh Phúc,Vinh Phuc Infrastructure Development JSC
+ICN,UPCOM,CTCP Đầu tư Xây dựng Dầu khí IDICO,IDICO Investment Construction Oil and Natural Gas Joint Stock Company
+ICT,HOSE,CTCP Viễn thông - Tin học Bưu điện,Joint Stock Company for Telecom and Informatics
+IDV,HNX,CTCP Phát triển Hạ tầng Vĩnh Phúc,Vinh Phuc Infrastructure Development Joint Stock Company
 IFS,UPCOM,CTCP Thực phẩm Quốc tế,Interfood Shareholding Company
-ILB,HOSE,CTCP ICD Tân Cảng - Long Bình,ICD Tan Cang ? Long Binh JSC
-ILS,UPCOM,CTCP Đầu tư Thương mại và Dịch vụ Quốc tế,International Investment Trade and Service Group Company
+ILB,HOSE,CTCP ICD Tân Cảng - Long Bình,ICD Tan Cang - Long Binh Joint Stock Company
+ILS,UPCOM,CTCP Đầu tư Thương mại và Dịch vụ Quốc tế,International Investment Trade and Service Joint Stock Company
 IMP,HOSE,CTCP Dược phẩm Imexpharm,Imexpharm Corporation
-ING,UPCOM,CTCP Đầu tư và Phát triển Xây dựng,The Investment & Construction Development Corporation
+INN,HNX,CTCP Bao bì và In Nông nghiệp,Agriculture Printing and Packaging Joint Stock Company
 IPA,HNX,CTCP Tập đoàn Đầu tư I.P.A,I.P.A Investments Group Joint Stock Company
-ISH,UPCOM,CTCP Thủy điện Srok Phu Miêng IDICO,Idico Scrok Phu Mieng Hydro Power Joint Stock Company
-ITA,UPCOM,CTCP Đầu tư và Công nghiệp Tân Tạo,Tan Tao Investment and Industry Corporation
-ITC,HOSE,CTCP Đầu tư và Kinh doanh Nhà,Investment and Trading Of Real Estate JSC
+ISH,UPCOM,CTCP Thủy điện Srok Phu Miêng IDICO,IDICO Srok Phu Mieng Hydropower Joint Stock Company
+ITC,HOSE,CTCP Đầu tư và Kinh doanh Nhà,Investment and Trading of Real Estate Joint stock Company
 ITD,HOSE,CTCP Công nghệ ITD,ITD Technology Corporation
-ITQ,HNX,CTCP Tập đoàn Thiên Quang,Thien Quang Group JSC
-ITS,UPCOM,CTCP Đầu tư Thương mại và Dịch vụ - Vinacomin,"Vinacomin - Investment, Trading and Service JSC"
-IVS,HNX,CTCP Chứng khoán Guotai Junan (Việt Nam),Guotai Junan Securities (Vietnam) Corp.
-JVC,HOSE,CTCP Thiết bị Y tế Việt Nhật,Japan Vietnam Medical Instrument Joint Stock Company
+ITQ,HNX,CTCP Tập đoàn Thiên Quang,Thien Quang Group Joint Stock Company
+ITS,UPCOM,CTCP Đầu tư Thương mại và Dịch vụ - Vinacomin,"Vinacomin - Investment, Trading and Service Joint Stock Company"
+IVS,HNX,CTCP Chứng khoán Guotai Haitong (Việt Nam),Guotai Haitong Securities (Vietnam) Corp.
+JOS,UPCOM,CTCP Chế biến Thủy sản xuất khẩu Minh Hải,Minh Hai Export Frozen Seafood Processing Joint - Stock Company
+JVC,HOSE,CTCP Đầu tư và Phát triển Y tế Việt Nhật,Japan Vietnam Medical Investment and Development Joint Stock Company
 KDC,HOSE,CTCP Tập đoàn KIDO,KIDO Group Corporation
 KGM,UPCOM,CTCP Xuất nhập khẩu Kiên Giang,Kien Giang Import & Export Joint Stock Company
 KHP,HOSE,CTCP Điện lực Khánh Hòa,Khanh Hoa Power Joint Stock Company
-KHW,UPCOM,CTCP Cấp thoát nước Khánh Hòa,Khanh Hoa Water Supply And Sewerage JSC
-KLF,UPCOM,CTCP Đầu tư Thương mại và Xuất nhập khẩu CFS,CFS Investment And Import Export Trading JSC
-KMR,HOSE,CTCP Mirae,Mirae JSC
+KHW,UPCOM,CTCP Cấp thoát nước Khánh Hòa,Khanh Hoa Water Supply And Sewerage Joint Stock Company
+KMR,HOSE,CTCP Mirae,Mirae Joint Stock Company
 KOS,HOSE,CTCP KOSY,KOSY Joint Stock Company
-KPF,UPCOM,CTCP Đầu tư tài sản Koji,Koji Asset Investment Joint Stock Company
-KSH,UPCOM,CTCP DAMAC GLS,DAMAC GLS JSC
-KSQ,UPCOM,CTCP CNC Capital Việt Nam,CNC Capital Vietnam JSC
+KSQ,UPCOM,CTCP CNC Capital Việt Nam,CNC Capital Viet Nam Joint Stock Company
 KSV,HNX,Tổng Công ty Khoáng sản TKV - CTCP,Vinacomin - Minerals Holding Corporation
-KTC,UPCOM,CTCP Thương mại Kiên Giang,Kien Giang Trade and Tourism Company Limited
-KVC,UPCOM,CTCP Sản xuất Xuất nhập khẩu Inox Kim Vĩ,Kim Vi Inox Import Export Prodution Joint Stock Company
-L18,HNX,CTCP Đầu tư và Xây dựng Số 18,Investment And Construction JSC No.18
-LAI,UPCOM,CTCP Đầu Tư Xây dựng Long An IDICO,IDICO Long An Investment Construction Joint Stock Company
-LBM,HOSE,CTCP Khoáng sản và Vật liệu Xây dựng Lâm Đồng,Lam Dong Minerals & Building Materials Joint Stock Company
-LCM,UPCOM,CTCP Khai thác và Chế biến khoáng sản Lào Cai,Lao Cai Mineral Exploitation & Processing JSC
-LDW,UPCOM,CTCP Cấp thoát nước Lâm Đồng,Lam Dong Water Supply And Sewerage JSC
+KTL,UPCOM,CTCP Kim Khí Thăng Long,ThangLong Metal Wares Joint Stock Company
+KVC,UPCOM,CTCP Sản xuất Xuất nhập khẩu Inox Kim Vĩ,Kim Vi Inox Import Export Production Joint Stock Company
+L18,HNX,CTCP Đầu tư và Xây dựng Số 18,Construction and Investment Joint Stock Company No 18
+L35,UPCOM,CTCP Cơ khí Lắp máy Lilama,Lilama Erection Mechanical Joint Stock Company
+LAI,UPCOM,CTCP Đầu Tư Xây dựng Long An IDICO,IDICO-LongAn Investment Construction Joint Stock Company
+LBE,HNX,CTCP Thương mại và Dịch vụ LVA,LVA Trading and Services Joint Stock Company
+LBM,HOSE,CTCP Khoáng sản và Vật liệu Xây dựng Lâm Đồng,LamDong Minerals and Building Materials Joint Stock Company
+LCM,UPCOM,CTCP Khai thác và Chế biến khoáng sản Lào Cai,Lao Cai Mineral Exploitation and Processing Joint Stock Company
+LDP,HNX,CTCP Dược Lâm Đồng (Ladophar),Lam Dong Pharmaceutical Joint Stock Company
+LDW,UPCOM,CTCP Cấp thoát nước Lâm Đồng,Lam Dong Water Supply And Sewerage Joint Stock Company
 LEC,UPCOM,CTCP Bất động sản Điện lực Miền Trung,Central Power Real Estate Joint Stock Company
-LGC,HOSE,CTCP Đầu tư Cầu đường CII,CII Bridges & Roads Investment JSC
-LGL,HOSE,CTCP Đầu tư và Phát triển Đô thị Long Giang,Long Giang Investment & Urban Development JSC
+LGL,HOSE,CTCP Đầu tư và Phát triển Đô thị Long Giang,Long Giang Investment and Urban Development Joint-Stock Company
+LHC,HNX,CTCP Đầu tư và Xây dựng Thủy lợi Lâm Đồng,Lam Dong Investment and Hydraulic Construction Joint - Stock Company
 LHG,HOSE,CTCP Long Hậu,Long Hau Corporation
 LIC,UPCOM,Tổng Công ty LICOGI - CTCP,LICOGI Corporation - JSC
-LIG,HNX,CTCP Licogi 13,Licogi 13 JSC
+LIG,HNX,CTCP Licogi 13,Licogi 13 Joint Stock Company
 LIX,HOSE,CTCP Bột Giặt Lix,Lix Detergent Joint Stock Company
-LLM,UPCOM,Tổng Công ty Lắp máy Việt Nam - CTCP,Viet Nam Machinery Installation Corporation - JSC
+LLM,UPCOM,Tổng Công ty Lắp máy Việt Nam - CTCP,VietNam Machinery Installation Corporation - JSC
+LM8,HOSE,CTCP Lilama 18,Lilama 18 Joint Stock Company
 LMH,UPCOM,CTCP Quốc Tế Holding,Quoc Te Holding Joint Stock Company
 LSG,UPCOM,CTCP Bất động sản Sài Gòn Vina,Saigon Vina Land Joint Stock Company
 LSS,HOSE,CTCP Mía Đường Lam Sơn,Lam Son Sugar Joint Stock Corporation
-LTG,UPCOM,CTCP Tập đoàn Lộc Trời,Loc Troi Group Joint Stock Company
-M10,UPCOM,Tổng Công ty May 10 - CTCP,Garmant 10 Corporation - Joint Stock Company
+M10,UPCOM,Tổng Công ty May 10 - CTCP,Garment 10 Corporation - Joint Stock Company
 MAC,HNX,CTCP Tập đoàn Macstar,Macstar Group Corporation
-MCG,UPCOM,CTCP Năng lượng và Bất động sản MCG,MCG Energy and Real Estate JSC
-MCM,HOSE,CTCP Giống Bò sữa Mộc Châu,Seed Moc Chau Dairy Cattle Corporation JSC
-MDC,HNX,CTCP Than Mông Dương - Vinacomin,Vinacomin - Mong Duong Coal JSC
-MDF,UPCOM,CTCP Gỗ MDF VRG - Quảng Trị,MDF VRG Quang Tri Wood JSC
+MCG,UPCOM,CTCP Năng lượng và Bất động sản MCG,MCG Energy and Real Estate Joint Stock Company
+MCM,HOSE,CTCP Giống Bò sữa Mộc Châu,MocChau Dairy Cattle Breeding Joint Stock Company
+MDC,HNX,CTCP Than Mông Dương - Vinacomin,Vinacomin - Mong Duong Coal Joint Stock Company
+MDF,UPCOM,CTCP Gỗ MDF VRG - Quảng Trị,MDF VRG - Quang Tri Wood Joint Stock Company
+MFS,UPCOM,CTCP Dịch vụ Kỹ thuật Mobifone,Mobifone Technical Services Joint Stock Company
 MH3,UPCOM,CTCP Khu Công nghiệp Cao su Bình Long,Binh Long Rubber Industrial Park Corporation
 MHC,HOSE,CTCP MHC,MHC Joint Stock Company
 MIE,UPCOM,Tổng Công ty Máy và Thiết bị Công nghiệp - CTCP,Machines and Industrial Equipment Corporation
 MKP,UPCOM,CTCP Hoá - Dược phẩm Mekophar,Mekophar Chemical Pharmaceutical Joint Stock Company
 MML,UPCOM,CTCP Masan MeatLife,Masan MeatLife Corporation
-MPC,UPCOM,CTCP Tập đoàn Thủy sản Minh Phú,Minh Phu Seafood Corporation
+MPC,UPCOM,CTCP Tập đoàn Thủy sản Minh Phú,Minh Phu Seafood Joint Stock Company
 MSH,HOSE,CTCP May Sông Hồng,Song Hong Garment Joint Stock Company
 MTA,UPCOM,Tổng Công ty Khoáng sản và Thương mại Hà Tĩnh - CTCP,Ha Tinh Minerals and Trading Joint Stock Corporation
-MVB,HNX,Tổng Công ty Công nghiệp mỏ Việt Bắc TKV - CTCP,Vinacomin - Vietbac Mining Industry Holding Corporation
-MVC,UPCOM,CTCP Vật liệu và Xây dựng Bình Dương,Binh Duong Building Materials & Construction Corporation
+MVB,HNX,Tổng Công ty Công nghiệp mỏ Việt Bắc TKV - CTCP,Vinacomin - Viet Bac Mining Industry Holding Corporation
+MVC,UPCOM,CTCP Vật liệu và Xây dựng Bình Dương,Binh Duong Building Materials and Construction Corporation 
+MVN,UPCOM,Tổng Công ty Hàng hải Việt Nam - CTCP,Vietnam Maritime Corporation
 NAG,HNX,CTCP Tập đoàn Nagakawa,Nagakawa Group Joint Stock Company
-NAP,HNX,CTCP Cảng Nghệ Tĩnh,Nghetinh Port Holding Joint Stock Company
+NAP,HNX,CTCP Cảng Nghệ Tĩnh,Nghe Tinh Port Joint Stock Company
 NAW,UPCOM,CTCP Cấp nước Nghệ An,Nghe An Water Supply Joint Stock Company
 NBB,HOSE,CTCP Đầu tư Năm Bảy Bảy,577 Investment Corporation
-NBC,HNX,CTCP Than Núi Béo - Vinacomin,Vinacomin - Nui Beo Coal JSC
-NBT,UPCOM,CTCP Cấp thoát nước Bến Tre,Ben Tre Water Supply and Sewerage JSC
-NCG,UPCOM,CTCP Tập đoàn Nova Consumer,Nova Consumer Group Joint Stock Company
-NCT,HOSE,CTCP Dịch vụ Hàng hóa Nội Bài,Noi Bai Cargo Terminal Service Joint Stock Company
-ND2,UPCOM,CTCP Đầu tư và Phát triển Điện Miền Bắc 2,Northern Electricity Development & Investment JSC No.2
+NBC,HNX,CTCP Than Núi Béo - Vinacomin,Vinacomin NuiBeo Coal Joint Stock Company
+NBT,UPCOM,CTCP Cấp thoát nước Bến Tre,Ben Tre Water Supply and Sewerage Joint Stock Company
+NCG,UPCOM,CTCP Đầu tư Anova Agri,Anova Agri Investment Joint Stock Company
+NCT,HOSE,CTCP Dịch vụ Hàng hóa Nội Bài,NoiBai Cargo Terminal Services Joint Stock Company
+ND2,UPCOM,CTCP Đầu tư và Phát triển Điện Miền Bắc 2,Northern Electricity Development and Investment Joint Stock Company No. 2
 NDW,UPCOM,CTCP Cấp nước Nam Định,Nam Dinh Water Supply Joint Stock Company
-NED,UPCOM,CTCP Đầu tư và Phát triển Điện Tây Bắc,North - West Electric Investment and Development JSC
+NED,UPCOM,CTCP Đầu tư và Phát triển Điện Tây Bắc,North - West Electric Investment and Development Joint Stock Company
 NET,HNX,CTCP Bột giặt NET,NET Detergent Joint Stock Company
 NHA,HOSE,Tổng Công ty Đầu tư Phát triển Nhà và Đô thị Nam Hà Nội,Ha Noi South Housing and Urban Development Corporation
 NHH,HOSE,CTCP Nhựa Hà Nội,HaNoi Plastics Joint Stock Company
-NHP,UPCOM,CTCP Sản xuất Xuất nhập khẩu NHP,NHP Production Import - Export JSC
 NHT,HOSE,CTCP Sản xuất và Thương mại Nam Hoa,Nam Hoa Trading & Production Corporation
-NNC,HOSE,CTCP Đá Núi Nhỏ,Nui Nho Stone JSC
+NNC,HOSE,CTCP Đá Núi Nhỏ,Nui Nho Stone Joint Stock Company
 NO1,HOSE,CTCP Tập đoàn 911,911 Group Joint Stock Company
-NQN,UPCOM,CTCP Nước sạch Quảng Ninh,Quang Ninh Clean Water JSC
-NS2,UPCOM,CTCP Nước sạch Số 2 Hà Nội,Ha Noi Water Supply Number 2 JSC
-NTB,UPCOM,CTCP Đầu tư Xây dựng và Khai thác Công trình Giao thông 584,Transport Engineering Construction & Business Investment JSC 584
-NTC,UPCOM,CTCP Khu Công nghiệp Nam Tân Uyên,Nam Tan Uyen Joint Stock Company
-NTT,UPCOM,CTCP Dệt - May Nha Trang,Nha Trang Textile Garment Joint Stock Company
-NVT,HOSE,CTCP Bất động sản Du lịch Ninh Vân Bay,Ninh Van Bay Travel Real Estate JSC
+NQN,UPCOM,CTCP Nước sạch Quảng Ninh,Quang Ninh Clean Water Joint Stock Company
+NSC,HOSE,CTCP Tập đoàn Giống cây trồng Việt Nam,Vietnam National Seed Group Joint Stock Company
+NSH,HNX,CTCP Tập Đoàn Nhôm Sông Hồng Shalumi,Song Hong Aluminum Shalumi Group Joint Stock Company
+NTC,HOSE,CTCP Khu Công nghiệp Nam Tân Uyên,Nam Tan Uyen Joint Stock Company
+NTT,UPCOM,CTCP Dệt - May Nha Trang,Nha Trang Textile & Garment Joint Stock Company
+NVT,HOSE,CTCP Bất động sản Du lịch Ninh Vân Bay,Ninh Van Bay Travel Real Estate Joint Stock Company
 OCH,HNX,CTCP One Capital Hospitality,One Capital Hospitality Joint Stock Company
 OPC,HOSE,CTCP Dược phẩm OPC,OPC Pharmaceutical Joint Stock Company
-PAP,UPCOM,CTCP Dầu khí Đầu tư Khai thác Cảng Phước An,PetroVietnam Phuoc An Port Investment And Operation Joint Stock Company
-PAT,UPCOM,CTCP Phốt Pho Apatit Việt Nam,Vietnam Apatite ? Phosphorus Joint Stock Company
-PBC,UPCOM,CTCP Dược phẩm Trung Ương 1- Pharbaco,Pharbaco Central Pharmaceutical JSC No.1
-PCH,HNX,CTCP Nhựa Picomat,Picomat Plastic Joint Stock Company
+PAP,UPCOM,CTCP Dầu khí Đầu tư Khai thác Cảng Phước An,Petro Vietnam Phuoc An Port Investment  & Operation Joint Stock Company
+PAT,UPCOM,CTCP Phốt Pho Apatit Việt Nam,Viet Nam Apatite - Phosphorus Joint Stock Company
+PBC,UPCOM,CTCP Dược phẩm Trung ương I - Pharbaco,Pharbaco Central Pharmaceutical Joint Stock Company No1
+PBP,HNX,CTCP Bao bì Dầu khí Việt Nam,PetroVietnam Packaging Joint Stock Company
+PCH,HNX,CTCP Picomat Holding,Picomat Holding Joint Stock Company
 PCT,HNX,CTCP Vận tải biển Global Pacific,Global Pacific Shipping Joint Stock Company
-PDN,HOSE,CTCP Cảng Đồng Nai,Dong Nai Port JSC
-PDV,UPCOM,CTCP Vận Tải Và Tiếp Vận Phương Đông Việt,Phuong Dong Viet Shipping And Logistics Corporation
+PDN,HOSE,CTCP Cảng Đồng Nai,Dong Nai Port Joint Stock Company
+PDV,HOSE,CTCP Vận Tải Và Tiếp Vận Phương Đông Việt,Phuong Dong Viet Shipping And Logistics Corporation
 PEG,UPCOM,Tổng Công ty Thương mại Kỹ thuật và Đầu tư - CTCP,Petec Trading and Investment Corporation
 PFL,UPCOM,CTCP Dầu khí Đông Đô,Petroleum Dong Do Joint Stock Company
 PGB,UPCOM,Ngân hàng TMCP Thịnh vượng và Phát triển,Prosperity and Growth Commercial Joint Stock Bank
-PGC,HOSE,Tổng Công ty Gas Petrolimex - CTCP,Petrolimex Gas Corporation - JSC
-PGD,HOSE,CTCP Phân phối khí thấp áp Dầu khí Việt Nam,PetroVietNam Low Pressure Gas Distribution JSC
+PGC,HOSE,Tổng Công ty Gas Petrolimex - CTCP,Petrolimex Gas Corporation - Joint Stock Company
+PGD,HOSE,CTCP Phân phối khí thấp áp Dầu khí Việt Nam,PetroVietNam Low Pressure Gas Distribution Joint Stock Company
 PGI,HOSE,Tổng Công ty cổ phần Bảo hiểm Petrolimex,Petrolimex Insurance Corporation
+PGN,HNX,CTCP Phụ Gia Nhựa,Plastic Additives Joint Stock Company
 PGS,HNX,CTCP Kinh doanh Khí Miền Nam,Southern Gas Trading Joint Stock Company
 PGV,HOSE,Tổng Công ty Phát điện 3 - CTCP,Power Generation Joint Stock Corporation 3
-PHC,HOSE,CTCP Xây dựng Phục Hưng Holdings,Phuc Hung Holdings Construction JSC
+PHC,HOSE,CTCP Xây dựng Phục Hưng Holdings,Phuc Hung Holdings Construction Joint Stock Company
 PHS,UPCOM,CTCP Chứng khoán Phú Hưng,Phu Hung Securities Corporation
-PIC,HNX,CTCP Đầu tư Điện lực 3,PC3 - Investment Joint Stock Company
-PIS,UPCOM,Tổng Công ty Pisico Bình Định - CTCP,PISICO Binh Dinh Corporation JSC
+PIC,HNX,CTCP Đầu tư Điện lực 3,PC3 - Investment Joint Stock Company 
+PIS,UPCOM,Tổng Công ty Pisico Bình Định - CTCP,PISICO Binh Dinh Corporation Joint Stock Company
 PJT,HOSE,CTCP Vận tải Xăng dầu Đường Thủy Petrolimex,Petrolimex Joint Stock Tanker Company
 PLP,HOSE,CTCP Sản xuất và Công nghệ Nhựa Pha Lê,Pha Le Plastics Manufacturing and Technology Joint Stock Company
 PMG,HOSE,CTCP Đầu tư và Sản xuất Petro Miền Trung,Petro Center Corporation
@@ -308,237 +308,237 @@ PMW,UPCOM,CTCP Cấp nước Phú Mỹ,Phu My Water Supply Joint Stock Company
 POM,UPCOM,CTCP Thép Pomina,Pomina Steel Corporation
 POS,UPCOM,CTCP Vận hành và Xây lắp PTSC,PTSC Offshore Services Joint Stock Company
 PPH,UPCOM,Tổng Công ty cổ phần Phong Phú,Phong Phu Corporation
-PPI,UPCOM,CTCP Đầu tư và Phát triển Dự án Hạ tầng Thái Bình Dương,Pacific Infrastructure Project Development & Investment Corporation
-PQN,UPCOM,CTCP Dịch vụ Dầu khí Quảng Ngãi PTSC,PTSC Quang Ngai Joint Stock Company
 PRE,HNX,Tổng Công ty cổ phần Tái bảo hiểm Hà Nội,Hanoi Reinsurance Joint Stock Corporation
-PRT,UPCOM,Tổng Công ty Sản xuất - Xuất nhập khẩu Bình Dương - CTCP,B?nh D??ng Production and Trading Goods Corportation
-PSB,UPCOM,CTCP Đầu tư Dầu khí Sao Mai - Bến Đình,Sao Mai - Ben Dinh Petroleum Investment JSC
-PSD,HNX,CTCP Dịch vụ Phân phối Tổng hợp Dầu khí,Petroleum General Distribution Services JSC
-PSG,UPCOM,CTCP Đầu Tư và Xây lắp Dầu khí Sài Gòn,Petroleum Saigon Constrution And Investment JSC
-PSH,UPCOM,CTCP Thương mại Đầu tư Dầu khí Nam Sông Hậu,Nam Song Hau Trading Investing Petroleum Joint Stock Company
-PSI,HNX,CTCP Chứng khoán Dầu khí,Petrovietnam Securities Incorporated
+PRT,UPCOM,Tổng Công ty Sản xuất - Xuất nhập khẩu Bình Dương - CTCP,Binh Duong Producing and Trading Corporation
+PSB,UPCOM,CTCP Cảng Kỹ thuật PTSC Sao Mai,PTSC Sao Mai Technical Port Joint Stock Company
+PSD,HNX,CTCP Dịch vụ Phân phối Tổng hợp Dầu khí,Petroleum General Distribution Services Joint Stock Company
+PSI,HNX,CTCP Chứng khoán Dầu khí,PetroVietnam Securities Joint Stock Company
+PSL,UPCOM,CTCP Chăn nuôi Phú Sơn,Phu Son Livestock Joint Stock Company
 PSN,UPCOM,CTCP Dịch Vụ Kỹ Thuật PTSC Thanh Hóa,PTSC Thanh Hoa Technical Services Company
-PSP,UPCOM,CTCP Cảng Dịch vụ Dầu khí Đình Vũ,Dinh Vu Petroleum Service Port SJC
+PSP,UPCOM,CTCP Cảng Dịch vụ Dầu khí Đình Vũ,Dinh Vu Petroleum Service Port Joint Stock Company
 PTB,HOSE,CTCP Phú Tài,Phu Tai Joint Stock Company
 PTC,HOSE,CTCP Đầu Tư Icapital,Icapital Investment Joint Stock Company
 PTI,HNX,Tổng Công ty cổ phần Bảo hiểm Bưu điện,Post - Telecommunication Joint - Stock Insurance Corporation
 PTL,HOSE,CTCP Victory Group,Victory Group Joint Stock Company
 PTM,UPCOM,CTCP Sản xuất Thương mại và Dịch vụ Ô tô PTM,"PTM Automobile Service, Trading And Manufacturing Joint Stock Company"
-PV2,HNX,CTCP Đầu tư PV2,PV2 Investment JSC
-PVA,UPCOM,CTCP Tổng Công ty Xây lắp Dầu khí Nghệ An,PetroVietnam - Nghe An Construction JSC
-PVB,HNX,CTCP Bọc ống Dầu khí Việt Nam,PetroViet Nam Coating JSC
+PTV,UPCOM,CTCP Thương mại Dầu khí,Petroleum Trading Joint Stock Company
+PV2,HNX,CTCP Genea Capital,Genea Capital Joint Stock Company
+PVB,HNX,CTCP Bọc ống Dầu khí Việt Nam,PetroVietnam Coating Joint Stock Company
 PVD,HOSE,Tổng Công ty cổ phần Khoan và Dịch vụ khoan Dầu khí,PetroVietnam Drilling & Well Services Corporation
-PVE,UPCOM,Tổng Công ty Tư vấn thiết kế Dầu khí - CTCP,PetroVietnam Engineering Consultancy JSC
+PVE,UPCOM,Tổng Công ty Tư vấn thiết kế Dầu khí - CTCP,PetroVietnam Engineering Consultancy Joint Stock Company
 PVG,HNX,CTCP Kinh doanh LPG Việt Nam,Petro VietNam LPG Joint Stock Company
-PVH,UPCOM,CTCP Xây lắp Dầu khí Thanh Hóa,Thanh Hoa Petroleum Construction JSC
+PVH,UPCOM,CTCP Xây lắp Dầu khí Thanh Hóa,Thanh Hoa Petroleum Construction Joint Stock Company
 PVI,HNX,CTCP PVI,PVI Holdings
-PVL,UPCOM,CTCP Đầu tư Nhà Đất Việt,Viet Property Investment Joint Stock Company
-PVM,UPCOM,CTCP Máy - Thiết bị Dầu khí,PetroVietNam Machinery - Technology JSC
+PVL,UPCOM,CTCP Địa ốc Dầu khí,Petroleum Real Estate Joint Stock Company
+PVM,UPCOM,CTCP Máy - Thiết bị Dầu khí,PetroVietnam Machinery-Technology Joint Stock Company
 PVR,UPCOM,CTCP Đầu tư PVR Hà Nội,Ha Noi PVR Investment Joint Stock Company
-PVV,UPCOM,CTCP Vinaconex 39,Vinaconex 39 JSC
+PVV,UPCOM,CTCP Vinaconex 39,Vinaconex 39 Joint Stock Company
 PVX,UPCOM,Tổng Công ty cổ phần Xây lắp Dầu khí Việt Nam,Petro Vietnam Construction Joint Stock Corporation
-PVY,UPCOM,CTCP Chế tạo Giàn khoan Dầu khí,Petrovietnam Marine Shipyard JSC
+PVY,UPCOM,CTCP Chế tạo Giàn khoan Dầu khí,PetroVietnam Marine Shipyard Joint Stock Company
 PWS,UPCOM,CTCP Cấp thoát nước Phú Yên,Phu Yen Water Supply And Sewerage Joint Stock Company
-PXC,UPCOM,CTCP Phát triển Đô thị Dầu khí,PetroVietnam Urban Development JSC
-PXI,UPCOM,CTCP Xây dựng Công nghiệp và Dân dụng Dầu khí,Petroleum Industrial & Civil Construction JSC
-PXL,UPCOM,CTCP Đầu tư Khu Công nghiệp Dầu khí Long Sơn,Long Son Petroleum Industrial Zone Investment JSC
-PXS,UPCOM,CTCP Kết cấu Kim loại và Lắp máy Dầu khí,"Petroleum Equipment Assembly & Metal Structure .,JSC"
-QBS,UPCOM,CTCP Xuất nhập khẩu Quảng Bình,Quang Binh Import & Export JSC
-QNC,UPCOM,CTCP Xi măng và Xây dựng Quảng Ninh,Quang Ninh Construction & Cement Joint Stock Company
+PXI,UPCOM,CTCP Xây dựng Công nghiệp và Dân dụng Dầu khí,Petroleum Industrial and Civil Construction Joint Stock Company
+PXL,UPCOM,CTCP Đầu tư Khu Công nghiệp Dầu khí Long Sơn,Long Son Petroleum Industrial Zone Investment Joint Stock Company
+PXM,UPCOM,CTCP Xây lắp Dầu khí Miền Trung,Mien Trung Petroleum Construction Joint Stock Company
+PXS,UPCOM,CTCP Kết cấu Kim loại và Lắp máy Dầu khí,Petroleum Equipment Assembly and Metal Structure Joint Stock Company
+QBS,UPCOM,CTCP Xuất nhập khẩu Quảng Bình,Quang Binh Import and Export Joint Stock Company
+QNC,UPCOM,CTCP Xi măng và Xây dựng Quảng Ninh,Quang Ninh Construction and Cement Joint Stock Company
+QNP,HOSE,CTCP Cảng Quy Nhơn,Quy Nhon Port Joint Stock Company
 QNS,UPCOM,CTCP Đường Quảng Ngãi,Quang Ngai Sugar Joint Stock Company
-RAL,HOSE,CTCP Bóng đèn Phích nước Rạng Đông,Rangdong Light Source And Vacuum Flask JSC
-RCC,UPCOM,CTCP Tổng Công ty Công trình Đường sắt,Railway Construction Corporation Joint Stock Company
-RDP,UPCOM,CTCP Rạng Đông Holding,Rang Dong Holding Plastic JSC
-RIC,UPCOM,CTCP Quốc tế Hoàng Gia,The Royal International Corporation
-RTB,UPCOM,CTCP Cao su Tân Biên,Tan Bien Rubber JSC
+RAL,HOSE,CTCP Bóng đèn Phích nước Rạng Đông,Rang Dong Light Source and Vacuum Flask Joint Stock Company
+RCC,UPCOM,CTCP Tổng Công ty Công trình Đường sắt Việt Nam,Vietnam Railway Construction Corporation Joint Stock Company
+RCL,HNX,CTCP Địa ốc Chợ Lớn,Cho Lon Real Estate Joint Stock Company
+RIC,UPCOM,CTCP Quốc tế Hoàng Gia,Royal International Joint Stock Corporation
+RTB,UPCOM,CTCP Cao su Tân Biên,Tan Bien Rubber Joint Stock Company
 RYG,HOSE,CTCP Sản xuất và Đầu tư Hoàng Gia,Royal Manufacture and Investment Joint Stock Company
-S4A,HOSE,CTCP Thủy điện Sê San 4A,Se San 4A Hydro Power JSC
+S4A,HOSE,CTCP Thủy điện Sê San 4A,Se San 4A HydroPower Joint Stock Company
 S99,HNX,CTCP SCI,SCI Joint Stock Company
 SAM,HOSE,CTCP SAM Holdings,SAM Holdings Corporation
-SAS,UPCOM,CTCP Dịch vụ Hàng không Sân bay Tân Sơn Nhất,Southern Airports Services JSC
+SAS,UPCOM,CTCP Dịch vụ Hàng không Sân bay Tân Sơn Nhất,Southern Airports Services Joint Stock Company
 SAV,HOSE,CTCP Hợp tác Kinh tế và Xuất nhập khẩu Savimex,Savimex Corporation
-SBA,HOSE,CTCP Sông Ba,Song Ba JSC
+SBA,HOSE,CTCP Sông Ba,Song Ba Joint Stock Company
 SBB,UPCOM,CTCP Tập đoàn Bia Sài Gòn - Bình Tây,SaiGon Binh Tay Beer Group Joint Stock Company
 SBG,HOSE,CTCP Tập đoàn Cơ khí Công nghệ cao Siba,Siba High-Tech Mechanical Group Joint Stock Company
-SBH,UPCOM,CTCP Thủy điện Sông Ba Hạ,Song Ba Ha Hydro Power JSC
+SBH,UPCOM,CTCP Thủy điện Sông Ba Hạ,Song Ba Ha Hydro Power Joint Stock Company
 SBM,UPCOM,CTCP Đầu tư Phát triển Bắc Minh,Bac Minh Development Investment Joint Stock Company
 SBR,UPCOM,CTCP Cao su Sông Bé,Song Be Rubber Joint Stock Company
-SBV,HOSE,CTCP Siam Brothers Việt Nam,Siam Brothers Vietnam JSC
+SBV,HOSE,CTCP Siam Brothers Việt Nam,Siam Brothers Vietnam Joint Stock Company
 SCG,HNX,CTCP Tập đoàn Xây dựng SCG,SCG Construction Group Joint Stock Company
 SCI,HNX,CTCP SCI E&C,SCI E&C Joint Stock Company
 SCJ,UPCOM,CTCP Xi măng Sài Sơn,Sai Son Cement Joint Stock Company
-SD5,HNX,CTCP Sông Đà 5,Song Da No 5 JSC
-SD6,UPCOM,CTCP Sông Đà 6,Song Da 6 JSC
+SD5,HNX,CTCP Sông Đà 5,Song Da No5 Joint-Stock Company
+SD6,UPCOM,CTCP Sông Đà 6,Song Da 6 Joint Stock Company
 SD9,HNX,CTCP Sông Đà 9,Song Da No 9 Joint Stock Company
-SDA,HNX,CTCP Simco Sông Đà,Simco Song Da JSC
-SDT,UPCOM,CTCP Sông Đà 10,Song Da No 10 JSC
+SDA,UPCOM,CTCP Simco Sông Đà,SIMCO Song Da Joint Stock Company
+SDK,UPCOM,CTCP Cơ khí Luyện kim,Mechanical Engineering & Metallurgy Joint-Stock Company
+SDT,UPCOM,CTCP Sông Đà 10,Song Da No 10 Joint Stock Company
 SEA,UPCOM,Tổng Công ty Thủy sản Việt Nam - CTCP,Vietnam Seaproducts Joint Stock Corporation
-SEB,HNX,CTCP Đầu tư và Phát triển Điện Miền Trung,Mien Trung Power Investment & Development JSC
-SFG,HOSE,CTCP Phân Bón Miền Nam,The Southern Fertilizer JSC
+SEB,HNX,CTCP Đầu tư và Phát triển Điện Miền Trung,Mien Trung Power Investment and Development Joint Stock Company
+SFG,HOSE,CTCP Phân Bón Miền Nam,The Southern Fertilizer Joint Stock Company
 SFI,HOSE,CTCP Đại lý Vận tải SAFI,Sea & Air Freight International
-SGB,UPCOM,Ngân hàng TMCP Sài Gòn Công Thương,Saigon Bank For Industry And Trade
-SGI,UPCOM,CTCP Đầu tư Phát triển Sài Gòn 3 Group,Saigon3 Group Investment Development JSC
-SGN,HOSE,CTCP Phục vụ Mặt đất Sài Gòn,Saigon Ground Services JSC
-SGP,UPCOM,CTCP Cảng Sài Gòn,Saigon Port Join Stock Company
+SGB,UPCOM,Ngân hàng TMCP Sài Gòn Công Thương,Saigon Bank For Industry and Trade
+SGI,UPCOM,CTCP Đầu tư SGI Holdings,SGI Holdings Investment Joint Stock Company
+SGN,HOSE,CTCP Phục vụ Mặt đất Sài Gòn,Saigon Ground Services Joint Stock Company
+SGP,UPCOM,CTCP Cảng Sài Gòn,Saigon Port Joint Stock Company
 SGR,HOSE,CTCP Tổng CTCP Địa ốc Sài Gòn,Saigon Real Estate Group Joint Stock Company
-SGT,HOSE,CTCP Công nghệ Viễn Thông Sài Gòn,Sai Gon Telecommunication & Technologies Corporation
+SGT,HOSE,CTCP Công nghệ Viễn Thông Sài Gòn,SaiGon Telecommunication & Technologies Corporation
 SHA,HOSE,CTCP Sơn Hà Sài Gòn,Son Ha Sai Gon Joint Stock Company
-SHG,UPCOM,Tổng Công ty cổ phần Sông Hồng,Song Hong Joint Stock Corporation
-SHP,HOSE,CTCP Thủy điện Miền Nam,Southern Hydropower JSC
+SHP,HOSE,CTCP Thủy điện Miền Nam,Southern Hydropower Joint Stock Company
 SID,UPCOM,CTCP Đầu tư Phát triển Sài Gòn Co.op,Saigon Co.op Investment Development Joint Stock Company
 SII,UPCOM,CTCP Hạ tầng Nước Sài Gòn,Sai Gon Water Infrastructure Corporation
 SIP,HOSE,CTCP Đầu tư Sài Gòn VRG,Sai Gon VRG Investment Corporation
+SIV,UPCOM,CTCP SIVICO,SIVICO Joint Stock Company
 SJ1,HNX,CTCP Nông nghiệp Hùng Hậu,Hung Hau Agricultural Corporation
 SJD,HOSE,CTCP Thủy điện Cần Đơn,Candon HydroPower Joint Stock Company
-SJE,HNX,CTCP Sông Đà 11,Song Da No 11 JSC
-SJF,UPCOM,CTCP Đầu tư Sao Thái Dương,Sunstar Investment Joint Stock Company
-SJG,UPCOM,Tổng Công ty Sông Đà - CTCP,SONG DA CORPORATION - JSC
+SJE,HNX,CTCP Sông Đà 11,Song Da No 11 Joint Stock Company
+SJG,UPCOM,Tổng Công ty Sông Đà - CTCP,Song Da Corporation - JSC
 SJS,HOSE,CTCP SJ Group,SJ Group Joint Stock Company
-SKG,HOSE,CTCP Tàu cao tốc Superdong - Kiên Giang,Superdong Fast Ferry Kieng Giang JSC
-SKV,UPCOM,CTCP Nước giải khát Yến sào Khánh Hòa,Khanh Hoa Salanganest Nest Soft Drink Joint Stock Company
-SLD,UPCOM,CTCP Địa ốc Sacom,Sacom Land Corporation
-SMB,HOSE,CTCP Bia Sài Gòn - Miền Trung,Sai Gon - Mien Trung Beer JSC
+SKG,HOSE,CTCP Tàu cao tốc Superdong - Kiên Giang,Superdong Fast Ferry Kieng Giang Joint Stock Company
+SKH,UPCOM,CTCP Nước giải khát Sanest Khánh Hòa,Khanh Hoa Sanest Soft Drink Joint Stock Company
+SKV,UPCOM,CTCP Nước giải khát Yến sào Khánh Hòa,Khanh Hoa Salanganes Nest Soft Drink Joint Stock Company
+SLS,HNX,CTCP Mía Đường Sơn La,Son La Sugar Joint Stock Company
+SMB,HOSE,CTCP Bia Sài Gòn - Miền Trung,Sai Gon - Mien Trung Beer Joint Stock Company
 SMC,HOSE,CTCP Đầu tư Thương mại SMC,SMC Trading Investment Joint Stock Company
 SNZ,UPCOM,Tổng Công ty cổ phần Phát triển Khu Công nghiệp,Sonadezi Corporation
-SP2,UPCOM,CTCP Thủy điện Sử Pán 2,Su Pan 2 Hydroprwer JSC
-SRA,HNX,CTCP Sara Việt Nam,Sara Vietnam JSC
+SP2,UPCOM,CTCP Thủy điện Sử Pán 2,Su Pan 2 Hydroprwer Joint Stock Company
+SRA,HNX,CTCP Sara Việt Nam,Sara Vietnam Joint Stock Company
 SRC,HOSE,CTCP Cao su Sao Vàng,Sao Vang Rubber Joint Stock Company
-SRF,HOSE,CTCP SEAREFICO,SEAREFICO CORPORATION
+SRF,HOSE,CTCP SEAREFICO,Searefico Corporation
 SSB,HOSE,Ngân hàng TMCP Đông Nam Á,Southeast Asia Commercial Joint Stock Bank
-SSH,UPCOM,CTCP Phát triển Sunshine Homes,Sunshine Homes Development JSC
-SSN,UPCOM,CTCP Xuất nhập khẩu Thủy sản Sài Gòn,Saigon SeaProducts Import - Export JSC
+SSH,UPCOM,CTCP Phát triển Sunshine Homes,Sunshine Homes Development Joint Stock Company
 ST8,HOSE,CTCP Tập đoàn ST8,ST8 Holdings Joint Stock Company
 STG,HOSE,CTCP Kho vận Miền Nam,South Logistics Joint Stock Company
 STK,HOSE,CTCP Sợi Thế Kỷ,Century Synthetic Fiber Corporation
 SVC,HOSE,CTCP Dịch vụ Tổng hợp Sài Gòn,Saigon General Service Corporation
-SVD,HOSE,CTCP Đầu tư & Thương mại Vũ Đăng,Vu Dang Investment & Trading JSC
+SVD,HOSE,CTCP Đầu tư & Thương mại Vũ Đăng,Vu Dang Investment & Trading Joint Stock Company
 SVG,UPCOM,CTCP Hơi Kỹ nghệ Que hàn,Industrial Gas and Welding Electrode Joint Stock Company
 SWC,UPCOM,Tổng Công ty cổ phần Đường sông Miền Nam,Southern Waterborne Transport Corporation
-SZB,HNX,CTCP Sonadezi Long Bình,Sonadezi Long Binh Joint Stock Company
+SZB,HNX,CTCP Sonadezi Long Bình,Sonadezi Long Binh Share Holding Company
 SZE,UPCOM,CTCP Môi trường Sonadezi,Sonadezi Environment Joint Stock Company
-SZG,UPCOM,CTCP Sonadezi Giang Điền,Sonadezi Giang Dien Joint Stock Company
+SZG,UPCOM,CTCP Sonadezi Giang Điền,Sonadezi Giang Dien Shareholding Company
 SZL,HOSE,CTCP Sonadezi Long Thành,Sonadezi Long Thanh Shareholding Company
-TAR,UPCOM,CTCP Nông nghiệp Công nghệ cao Trung An,Trung An Hi-Tech Farming JSC
+TA9,HNX,CTCP Xây lắp Thành An 96,Thanh An 96 Installation and Construction Joint Stock Company
+TAR,UPCOM,CTCP Nông nghiệp Công nghệ cao Trung An,Trung An Hi-Tech Farming Joint Stock Company
 TBC,HOSE,CTCP Thủy điện Thác Bà,Thac Ba Hydro Power Joint Stock Company
-TBD,UPCOM,Tổng Công ty Thiết bị Điện Đông Anh - CTCP,Dong Anh Electrical Equiment Corporation - Joint Stock Company
-TBH,UPCOM,CTCP Tổng Bách Hóa,General Department Store Joint Stock Company
-TCD,HOSE,CTCP Tập đoàn Xây dựng TRACODI,TRACODI Construction Holdings Joint Stock Company
-TCI,HOSE,CTCP Chứng khoán Thành Công,Thanh Cong Securities Company
-TCK,UPCOM,Tổng Công ty Cơ khí Xây dựng - CTCP,Construction Machinery Corporation - JSC
-TCL,HOSE,CTCP Đại lý Giao nhận Vận tải Xếp dỡ Tân Cảng,Tan Cang Logistics & Stevedoring Joint Stock Company
-TCO,HOSE,CTCP TCO Holdings,TCO Holdings joint Stock Company
-TD6,HNX,CTCP Than Đèo Nai - Cọc Sáu - TKV,Deo Nai ? Coc Sau ? TKV Coal Joint Stock Company
-TDF,UPCOM,CTCP Trung Đô,TRUNG DO JOINT STOCK COMPANY
+TBD,UPCOM,Tổng Công ty Thiết bị Điện Đông Anh - CTCP,Dong Anh Electrical Equipment Corporation - Joint Stock Company
+TCD,UPCOM,CTCP Tập đoàn Xây dựng TRACODI,TRACODI Construction Holdings Joint Stock Company
+TCI,HOSE,CTCP Chứng khoán Thành Công,ThanhCong Securities Company
+TCL,HOSE,CTCP Đại lý Giao nhận Vận tải Xếp dỡ Tân Cảng,Tan Cang Logistics and Stevedoring Joint Stock Company
+TCO,HOSE,CTCP Janus Group,Janus Group Joint Stock Company
+TCT,HOSE,CTCP Cáp treo Núi Bà Tây Ninh,Tay Ninh Cable Car Tour Company
+TCW,UPCOM,CTCP Kho Vận Tân Cảng,Tan Cang Warehousing Joint Stock Company
+TD6,HNX,CTCP Than Đèo Nai - Cọc Sáu - TKV,Deo Nai - Coc Sau - TKV Coal Joint Stock Company
+TDB,UPCOM,CTCP Thủy điện Định Bình,Dinh Binh Hydro Power Joint Stock Company
+TDF,UPCOM,CTCP Trung Đô,Trung Do Joint Stock Company
 TDG,HOSE,CTCP Đầu tư TDG Global,TDG Global Investment Joint Stock Company
 TDH,HOSE,CTCP Phát triển Nhà Thủ Đức,Thu Duc Housing Development Corporation
 TDM,HOSE,CTCP Nước Thủ Dầu Một,Thu Dau Mot Water Joint Stock Company
 TDT,HNX,CTCP Đầu tư và Phát triển TDT,TDT Investment and Development Joint Stock Company
-TEG,HOSE,CTCP Năng lượng và Bất động sản Trường Thành,Truong Thanh Energy and Real Estate JSC
-TGG,UPCOM,CTCP The Golden Group,The Golden Group Joint Stock Company
+TEG,HOSE,CTCP Trường Thành Energy Group,Truong Thanh Energy Group Joint Stock Company
+TGP,UPCOM,CTCP Trường Phú,Truong Phu Corporation
 THD,HNX,CTCP Thaiholdings,Thaiholdings Joint Stock Company
-THG,HOSE,CTCP Đầu tư và Xây dựng Tiền Giang,Tien Giang Investment And Construction JSC
-THN,UPCOM,CTCP Cấp nước Thanh Hóa,Thanh Hoa Water Supply JSC
-THP,UPCOM,CTCP Thủy sản và Thương mại Thuận Phước,Thuan Phuoc Seafoods & Trading Corporation
-THT,HNX,CTCP Than Hà Tu - Vinacomin,Vinacomin - Ha Tu Coal JSC
+THG,HOSE,CTCP Đầu tư và Xây dựng Tiền Giang,Tien Giang Investment and Construction Joint Stock Company
+THN,UPCOM,CTCP Cấp nước Thanh Hóa,Thanh Hoa Water Supply Joint Stock Company
+THP,UPCOM,CTCP Thủy sản và Thương mại Thuận Phước,Thuan Phuoc Seafoods and Trading Corporation
+THT,HNX,CTCP Than Hà Tu - Vinacomin,Vinacomin - Ha Tu Coal Joint Stock Company
 TID,UPCOM,CTCP Tổng Công ty Tín Nghĩa,Tin Nghia Corporation
-TIN,UPCOM,Công Ty Tài chính Cổ phần Tín Việt,VietCredit Finance Joint Stock Company
-TIP,HOSE,CTCP Phát triển Khu Công nghiệp Tín Nghĩa,Tin Nghia Industrial Park Development JSC
-TIS,UPCOM,CTCP Gang thép Thái Nguyên,Thai Nguyen Iron And Steel JSC
-TIX,HOSE,CTCP Sản xuất Kinh doanh Xuất nhập khẩu Dịch vụ và Đầu tư Tân Bình,Tan Binh Import Export Joint Stock Corporation
-TLD,HOSE,CTCP Đầu tư Xây dựng và Phát triển Đô thị Thăng Long,Thang Long Urban Development And Construction Investment JSC
+TIN,UPCOM,Công Ty Tài chính tổng hợp cổ phần Tín Việt,VietCredit General Finance Joint Stock Company
+TIP,HOSE,CTCP Phát triển Khu Công nghiệp Tín Nghĩa,Tin Nghia Industrial Park Development Joint Stock Company
+TIS,UPCOM,CTCP Gang thép Thái Nguyên,Thai Nguyen Iron and Steel Joint Stock Corporation
+TIX,HOSE,CTCP Sản xuất Kinh doanh Xuất nhập khẩu Dịch vụ và Đầu tư Tân Bình,Tan Binh Import - Export Joint Stock Corporation
+TLD,HOSE,CTCP Đầu tư Xây dựng và Phát triển Đô thị Thăng Long,Thang Long Urban Development and Construction Investment Joint Stock Company
 TLG,HOSE,CTCP Tập đoàn Thiên Long,Thien Long Group Corporation
-TLH,HOSE,CTCP Tập đoàn Thép Tiến Lên,Tien Len Steel Group Joint Stock Company
-TLP,UPCOM,Tổng Công ty Thương mại Xuất nhập khẩu Thanh Lễ - CTCP,Thanh Le General Import-Export Trading Corporation
-TMP,HOSE,CTCP Thủy điện Thác Mơ,Thac Mo Hydro Power Joint Stock Company
+TLH,HOSE,CTCP Tập đoàn Thép Tiến Lên,Tien Len Steel Corporation Joint - Stock Company
+TLP,UPCOM,Tổng Công ty Thương mại Xuất nhập khẩu Thanh Lễ - CTCP,Thanh Le Corporation
+TMP,HOSE,CTCP Thủy điện Thác Mơ,Thac Mo Hydropower Joint Stock Company
 TMS,HOSE,CTCP Transimex,Transimex Corporation
 TMT,HOSE,CTCP Ô tô TMT,TMT Motors Corporation
 TN1,HOSE,CTCP Rox Key Holdings,Rox Key Holdings Joint Stock Company
-TNA,UPCOM,CTCP Thương mại Xuất nhập khẩu Thiên Nam,Thien Nam Trading Import Export JSC
 TNH,HOSE,CTCP Tập đoàn Bệnh viện TNH,TNH Hospital Group Joint Stock Company
-TNT,HOSE,CTCP Tập đoàn TNT,TNT Group JSC
-TNV,UPCOM,CTCP Thống Nhất Hà Nội,Thong Nhat Ha Noi Joint Stock Company
-TOP,UPCOM,CTCP Phân phối Top One,Top One Allot Joint Stock Company
+TNS,UPCOM,CTCP Thép tấm lá Thống Nhất,Thong Nhat Flat Steel Joint Stock Company
+TNT,HOSE,CTCP Tập đoàn TNT,TNT Group Joint Stock Company
 TPC,HOSE,CTCP Nhựa Tân Đại Hưng,Tan Dai Hung Plastic Joint Stock Company
 TPP,HNX,CTCP Tân Phú Việt Nam,Tan Phu Viet Nam Joint Stock Company
 TRA,HOSE,CTCP Traphaco,Traphaco Joint Stock Company
-TRC,HOSE,CTCP Cao su Tây Ninh,Tay Ninh Rubber Joint Stock Company
+TRC,HOSE,CTCP Cao su Tây Ninh,Tay Ninh Rubber Joint Stock Company 
 TRV,UPCOM,CTCP Vận tải Đường sắt,Railway Transport Joint Stock Company
-TSA,UPCOM,CTCP Đầu tư và Xây lắp Trường Sơn,Truong Son Investment And Construction Joint Stock Company
+TS3,UPCOM,CTCP Trường Sơn 532,Truong Son 532 Joint Stock Company
+TSA,HOSE,CTCP Đầu tư và Xây lắp Trường Sơn,Truong Son Investment And Construction Joint Stock Company
+TSB,HNX,CTCP Ắc quy Tia Sáng,Tia Sang Battery Joint Stock Company
 TSC,HOSE,CTCP Vật tư Kỹ thuật nông nghiệp Cần Thơ,Techno - Agricultural Supplying Joint Stock Company
 TSJ,UPCOM,CTCP Du lịch Dịch vụ Hà Nội,HaNoi Tourist Service Joint Stock Company
-TTA,HOSE,CTCP Đầu tư Xây dựng và Phát triển Trường Thành,Truong Thanh Development and Constrution Investment Joint Stock Company
-TTB,UPCOM,CTCP TTBGroup,TTBGroup Joint Stock Company
-TTE,HOSE,CTCP Đầu tư Năng lượng Trường Thịnh,Truong Thinh Energy Investment Joint Stock Company
+TTA,HOSE,CTCP Đầu tư Xây dựng và Phát triển Trường Thành,Truong Thanh Development and Construction Investment Joint Stock Company
 TTH,HNX,CTCP Thương mại và Dịch vụ Tiến Thành,Tien Thanh Service and Trading Joint Stock Company
 TTL,HNX,Tổng Công ty Thăng Long - CTCP,Thang Long Joint Stock Corporation
-TTN,UPCOM,CTCP Công nghệ & Truyền thông Việt Nam,Viet Nam Technology & Telecommunication JSC
-TTS,UPCOM,CTCP Cán Thép Thái Trung,Thai Trung Rooling JSC
+TTN,UPCOM,CTCP Công nghệ và Truyền thông Việt Nam,Viet Nam Technology and Telecommunication Joint Stock Company
+TTS,UPCOM,CTCP Cán Thép Thái Trung,Thai Trung Rooling Joint Stock Company
 TV1,UPCOM,CTCP Tư vấn Xây dựng Điện 1,Power Engineering Consulting Joint Stock Company 1
-TVB,HOSE,CTCP Chứng khoán T-Cap,T-Cap Securities Joint Stock Corporation
+TVB,HOSE,CTCP Chứng khoán T-Cap,T-Cap Securities Joint Stock Company
 TVC,HNX,CTCP Tập đoàn Quản lý tài sản T-Corp,T-Corp Asset Management Corporation Joint Stock Company
-TVD,HNX,CTCP Than Vàng Danh - Vinacomin,Vinacomin - Vang Danh Coal JSC
+TVD,HNX,CTCP Than Vàng Danh - Vinacomin,Vinacomin - Vang Danh Coal Joint Stock Company
 TVS,HOSE,CTCP Chứng khoán Thiên Việt,Thien Viet Securities Joint Stock Company
 TVT,HOSE,Tổng Công ty Việt Thắng - CTCP,Viet Thang Corporation
+TXM,HNX,CTCP VICEM Thạch cao Xi măng,VICEM Gypsum And Cement Joint Stock Company
 UDC,UPCOM,CTCP Đầu tư Xây dựng UDCons,UDCons Construction Investment Corporation
+ULG,UPCOM,CTCP Logistics U&I,U&I Logistics Corporation
 UNI,HNX,CTCP Đầu Tư Và Phát Triển Sao Mai Việt,Sao Mai Viet Investment And Development Joint Stock Company
-UXC,UPCOM,CTCP Chế biến Thủy sản Út Xi,Ut Xi Aquatic Products Processing Corporation
-VAF,HOSE,CTCP Phân lân Nung chảy Văn Điển,Van Dien Fused Magnesium Phosphate Fertilizer JSC
+VAF,UPCOM,CTCP Phân lân Nung chảy Văn Điển,Van Dien Fused Magnesium Phosphate Fertilizer Joint Stock Company
 VAV,UPCOM,CTCP VIWACO,VIWACO Joint Stock Company
-VBB,UPCOM,Ngân hàng TMCP Việt Nam Thương Tín,Vietnam Thuong Tin Commercial Joint Stock Bank
-VC2,HNX,CTCP Đầu tư và Xây dựng Vina2,Vina2 Invest And Construction Joint Stock Company No2
+VBB,HOSE,Ngân hàng TMCP Việt Nam Thương Tín,Vietnam Thuong Tin Commercial Joint Stock Bank
+VC2,HNX,CTCP Đầu tư và Xây dựng Vina2,VINA2 Investment and Construction Joint Stock Company
 VCC,HNX,CTCP Vinaconex 25,Vinaconex 25 Joint Stock Company
-VCF,HOSE,CTCP Vinacafé Biên Hòa,Vinacaf? Bienhoa Joint Stock Company
+VCF,HOSE,CTCP Vinacafé Biên Hòa,Vinacafé Bien Hoa Joint Stock Company
 VCP,UPCOM,CTCP Xây Dựng Và Năng Lượng VCP,VCP Power & Construction Joint Stock Company
-VCR,UPCOM,CTCP Đầu tư và Phát triển Du lịch Vinaconex,Vinaconex Investment And Tourism Development JSC
-VCS,HNX,CTCP Vicostone,Vicostone JSC
-VCW,UPCOM,CTCP Đầu tư Nước sạch Sông Đà,Song Da Water Investment JSC
-VCX,UPCOM,CTCP Xi măng Yên Bình,Yen Binh Cement JSC
-VDP,HOSE,CTCP Dược phẩm Trung ương VIDIPHA,Vidipha Central Pharmaceutical Joint Stock Company
+VCR,UPCOM,CTCP Đầu tư và Phát triển Du lịch ITC,ITC Investment and Tourism Development Joint Stock Company
+VCS,HNX,CTCP Vicostone,Vicostone Joint Stock Company
+VCX,UPCOM,CTCP Xi măng Yên Bình,YenBinh Cement Joint - Stock Company
+VDP,HOSE,CTCP Dược phẩm Trung ương VIDIPHA,VIDIPHA Central Pharmaceutical Joint - Stock Company
+VE3,HNX,CTCP Xây dựng Điện VNECO 3,VNECO 3 Electricity Construction Joint Stock Company
 VEC,UPCOM,Tổng Công ty cổ phần Điện tử và Tin học Việt Nam,Vietnam Electronics and Informatics Joint Stock Corporation
 VEF,UPCOM,CTCP Trung tâm Hội chợ Triển lãm Việt Nam,Vietnam Exhibition Fair Centre Joint Stock Company
-VFC,UPCOM,CTCP Vinafco,Vinafco Joint Stock Corporation
 VFG,HOSE,CTCP Khử trùng Việt Nam,Viet Nam Fumigation Joint Stock Company
 VGG,UPCOM,Tổng Công ty cổ phần May Việt Tiến,Viet Tien Garment Corporation
-VGR,UPCOM,CTCP Cảng Xanh Vip,Vip Greenport Joint Stock Company
-VGS,HNX,CTCP Ống thép Việt - Đức VG PIPE,Vietnam Germany Steel Pipe JSC
-VGV,UPCOM,Tổng Công ty Tư vấn Xây dựng Việt Nam - CTCP,VietNam National Construction Consultants Corporation - JSC
-VHD,UPCOM,CTCP Đầu tư Phát triển Nhà và Đô Thị VINAHUD,VINAHUD Urban And Housing Development Invesment Joint Stock Company
-VHF,UPCOM,CTCP Xây dựng và Chế biến Lương thực Vĩnh Hà,Vinh Ha Food Processing and Construction JSC
-VHL,HNX,CTCP Viglacera Hạ Long,Viglacera Ha Long JSC
+VGR,UPCOM,CTCP Cảng Xanh Vip, Vip Greenport Joint Stock Company 
+VGS,HNX,CTCP Ống thép Việt - Đức VG PIPE,Vietnam Germany Steel Pipe Joint Stock Company
+VGV,UPCOM,Tổng Công ty Tư vấn Xây dựng Việt Nam - CTCP,Vietnam National Construction Consultant Corporation - JSC
+VHD,UPCOM,CTCP Đầu tư Phát triển Nhà và Đô Thị VINAHUD,VINAHUD Urban and Housing Development Investment Joint Stock Company
+VHF,UPCOM,CTCP Xây dựng và Chế biến Lương thực Vĩnh Hà,Vinh Ha Food Processing and Construction Joint Stock Company
+VHL,HNX,CTCP Viglacera Hạ Long,Viglacera Ha Long Joint Stock Company
 VID,HOSE,CTCP Đầu tư Phát triển Thương mại Viễn Đông,Vien Dong Investment Development Trading Corporation
-VIF,HNX,Tổng Công ty Lâm nghiệp Việt Nam - CTCP,Vietnam Forestry Corporation - JSC
+VIF,HNX,Tổng Công ty Lâm nghiệp Việt Nam - CTCP,Viet Nam Forestry Corporation Joint Stock Company
 VIG,HNX,CTCP Chứng khoán Đầu tư tài chính Việt Nam,Viet Nam Financial Investment Securities Corporation
-VIN,UPCOM,CTCP Giao nhận Kho vận Ngoại Thương Việt Nam,Vinatrans International Freight Forwarders JSC
+VIM,UPCOM,CTCP Khoáng sản Viglacera,Viglacera Mineral Joint Stock Company
+VIN,UPCOM,CTCP Giao nhận Kho vận Ngoại Thương Việt Nam,Vinatrans
 VIP,HOSE,CTCP Vận tải Xăng dầu VIPCO,Vietnam Petroleum Transport Joint Stock Company
 VIT,HNX,CTCP Viglacera Tiên Sơn,Viglacera Tien Son Joint Stock Company
-VLB,UPCOM,CTCP Xây dựng và Sản xuất Vật liệu xây dựng Biên Hòa,Bien Hoa Building Materials Production and Construction JSC
-VLC,UPCOM,Tổng Công ty Chăn Nuôi Việt Nam - CTCP,Vietnam Livestock Corporation JSC
-VLW,UPCOM,CTCP Cấp nước Vĩnh Long,Vinh Long Water Supply Joint Stock Company Limited
-VMC,HNX,CTCP Vimeco,Vimeco JSC
+VLB,UPCOM,CTCP Xây dựng và Sản xuất Vật liệu xây dựng Biên Hòa,Bien Hoa Building Materials Production and Construction Joint Stock Company
+VLC,UPCOM,Tổng Công ty Chăn Nuôi Việt Nam - CTCP,Vietnam Livestock Corporation - Joint Stock Company
+VLS,UPCOM,CTCP Sản xuất Thép Việt Long,Viet Long Steel Production Joint Stock Company
+VLW,UPCOM,CTCP Cấp nước Vĩnh Long,Vinh Long Water Supply Joint Stock Company 
+VMC,HNX,CTCP Vimeco,Vimeco Joint Stock Company
 VNA,UPCOM,CTCP Vận tải Biển Vinaship,Vinaship Joint Stock Company
-VNB,UPCOM,CTCP Sách Việt Nam,Viet Nam Books JSC
+VNB,UPCOM,CTCP Sách Việt Nam,Vietnam Books Joint Stock Company
 VNC,HNX,CTCP Tập đoàn Vinacontrol,Vinacontrol Group Corporation
 VNF,HNX,CTCP Vinafreight,Vinafreight Joint Stock Company
 VNG,HOSE,CTCP Du lịch Thành Thành Công,Thanh Thanh Cong Tourist Joint Stock Company
 VNR,HNX,Tổng Công ty cổ phần Tái Bảo hiểm Quốc gia Việt Nam,Vietnam National Reinsurance Corporation
-VNS,HOSE,CTCP Ánh Dương Việt Nam,VietNam Sun Copporation
-VNZ,UPCOM,CTCP VNG,VNG CORPORATION
-VOC,UPCOM,Tổng Công ty Công Nghiệp Dầu Thực Vật Việt Nam - CTCP,Vietnam Vegetable Oils Industry Corporation
+VNS,HOSE,CTCP Ánh Dương Việt Nam,Vietnam Sun Corporation
+VNZ,UPCOM,CTCP Tập đoàn VNG ,VNG Group Joint Stock Company
 VPD,HOSE,CTCP Phát triển Điện lực Việt Nam,Vietnam Power Development Joint Stock Company
 VPH,HOSE,CTCP Vạn Phát Hưng,Van Phat Hung Corporation
-VPS,HOSE,CTCP Thuốc sát trùng Việt Nam,Vietnam Pesticide Joint Stock Company
-VRC,HOSE,CTCP Bất động sản và Đầu tư VRC,VRC Real Estate and Investment JSC
-VRG,UPCOM,CTCP Phát triển Đô thị và Khu công nghiệp Cao su Việt Nam,Viet Nam Rubber Industrial Zone and Urban Development JSC
-VSF,UPCOM,Tổng Công ty Lương thực Miền Nam - CTCP,Vietnam Southern Food Corporation - JSC
+VPS,HOSE,CTCP Thuốc sát trùng Việt Nam ,Vietnam Pesticide Joint Stock Company
+VRC,HOSE,CTCP Bất động sản và Đầu tư VRC,VRC Real Estate and Investment Joint Stock Company
+VRG,UPCOM,CTCP Phát triển Đô thị và Khu công nghiệp Cao su Việt Nam,Viet Nam Rubber Industrial Zone and Urban Development Joint Stock Company
+VSF,UPCOM,Tổng Công ty Lương thực Miền Nam - CTCP,Vietnam Southern Food Corporation - Joint Stock Company
 VSH,HOSE,CTCP Thủy điện Vĩnh Sơn - Sông Hinh,Vinh Son - Song Hinh Hydropower Joint Stock Company
 VSN,UPCOM,CTCP Việt Nam Kỹ nghệ Súc sản,Vissan Joint Stock Company
 VST,UPCOM,CTCP Vận tải và Thuê tàu biển Việt Nam,Vietnam Sea Transport and Chartering Joint Stock Company
 VTD,UPCOM,CTCP Vietourist Holdings,Vietourist Holdings Joint Stock Company
+VTK,UPCOM,CTCP Tư Vấn Và Dịch Vụ Viettel,Viettel Consultancy And Services Joint Stock Company
 VTR,UPCOM,CTCP Du lịch Vietravel,Vietravel Tourism Joint Stock Company
-VTX,UPCOM,CTCP Vận tải Đa Phương Thức Vietranstimex,Vietranstimex MultiModal Transport Holding Company
 VUA,UPCOM,CTCP Chứng khoán Stanley Brothers,Stanley Brothers Securities Incorporation
 VVN,UPCOM,Tổng Công ty cổ phần Xây dựng Công nghiệp Việt Nam,Vietnam Industrial Construction Corporation
 WSS,HNX,CTCP Chứng khoán Phố Wall,Wall Street Securities Company
-XDH,UPCOM,CTCP Đầu tư Xây dựng Dân dụng Hà Nội,Ha Noi Civil Construction Investment JSC
-XHC,UPCOM,CTCP Xuân Hòa Việt Nam,Xuan Hoa Viet Nam JSC
+XDH,UPCOM,CTCP Đầu tư Xây dựng Dân dụng Hà Nội,Hanoi Civil Construction Investment Joint Stock Company
+XHC,UPCOM,CTCP Xuân Hòa Việt Nam,Xuan Hoa Viet Nam Joint Stock Company
 XMC,UPCOM,CTCP Đầu tư và Xây dựng Xuân Mai,Xuan Mai Investment and Construction Corporation
+YBM,HOSE,CTCP YBM,YBM Joint Stock Company
