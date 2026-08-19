@@ -1,0 +1,39 @@
+name: Test 57 Candidate Symbols
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-57:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Test 57 candidates
+        env:
+          VNSTOCK_API_KEY: ${{ secrets.VNSTOCK_API_KEY }}
+        run: python -u tools/test_candidates_57.py
+
+      - name: Upload result
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: candidate-57-test-result
+          path: candidate_57_test_output/
