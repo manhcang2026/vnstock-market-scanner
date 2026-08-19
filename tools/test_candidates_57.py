@@ -22,7 +22,7 @@ CANDIDATES = [
     "BTW", "LDP", "DTI", "HPP", "VTK", "ALV", "HAS", "TS3",
     "TGP", "YBM", "TA9", "PBP", "VIM", "SIV", "DC2", "VLS",
     "C32", "SLS", "DHA", "NSC", "DNM", "PGN", "TCW", "TCT",
-    "SPD", "NSH", "SKH", "RCL", "LHC", "GIC", "TDB", "L35",
+    "ULG", "NSH", "SKH", "RCL", "LHC", "GIC", "TDB", "L35",
 ]
 
 MAX_AGE_DAYS = 31
