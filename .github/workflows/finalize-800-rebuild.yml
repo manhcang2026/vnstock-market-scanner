@@ -1,0 +1,93 @@
+name: Finalize 800 Universe + Rebuild Data
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: finalize-800-universe
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Build final watchlist from VNStock listing
+        run: python src/build_watchlist.py
+
+      - name: Validate final 800
+        run: |
+          python - <<'PY'
+          import pandas as pd
+          raw = pd.read_csv("config/watchlist_raw.csv")
+          clean = pd.read_csv("config/watchlist.csv")
+          removed = set("""AMD ART AVF BT6 CLG DAG DPS DTE FLC GTT HAI HLA HVG IBC ITA KLF KPF KSH NHP NTB PPI PQN PSG PSH PVA PXC RDP SJF SSN TBH TGG TNA TOP TTB BCG BII CMP ING KTC NS2 TCK VCW VOC CCT LGC ARM BCR HTP IDP LTG SHG SLD TNV TTE UXC VFC VTX""".split())
+          added = set("""MVN DMX HTT HU3 VE3 FOC TNS CMN PXM AAM LBE TSB TXM JOS HEP MFS PSL PTV QNP SDK LM8 EFI INN KTL CDR BTW LDP DTI HPP VTK ALV HAS TS3 TGP YBM TA9 PBP VIM SIV DC2 VLS C32 SLS DHA NSC DNM PGN TCW TCT ULG NSH SKH RCL LHC GIC TDB L35""".split())
+
+          rs = raw["symbol"].astype(str).str.strip().str.upper()
+          cs = clean["symbol"].astype(str).str.strip().str.upper()
+
+          assert len(rs) == 800 and rs.nunique() == 800, f"raw invalid: {len(rs)}/{rs.nunique()}"
+          assert len(cs) == 800 and cs.nunique() == 800, f"clean invalid: {len(cs)}/{cs.nunique()}"
+          assert not removed.intersection(set(cs)), f"still contains removed: {sorted(removed.intersection(set(cs)))}"
+          missing_added = added.difference(set(cs))
+          assert not missing_added, f"missing added symbols: {sorted(missing_added)}"
+          assert "ULG" in set(cs)
+          print("FINAL 800 VALIDATED OK")
+          print(clean.groupby("exchange")["symbol"].nunique().to_string())
+          PY
+
+      - name: Commit generated watchlist.csv
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add config/watchlist.csv
+          if git diff --cached --quiet; then
+            echo "watchlist.csv unchanged"
+          else
+            git commit -m "Finalize 800-symbol scanner universe"
+            git push origin HEAD:main
+          fi
+
+      - name: Force rebuild Daily Baseline for final 800
+        env:
+          VNSTOCK_API_KEY: ${{ secrets.VNSTOCK_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: python -u src/daily_baseline.py
+
+      - name: Refresh RVOL30 baseline
+        if: always()
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: python -u src/refresh_rvol_baseline.py
+
+      - name: Intraday validation outside market
+        env:
+          VNSTOCK_API_KEY: ${{ secrets.VNSTOCK_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          FORCE_RUN: "true"
+        run: python -u src/intraday_scan_optimized.py
