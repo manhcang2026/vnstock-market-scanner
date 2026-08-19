@@ -14,6 +14,21 @@ from common import now_vn, records
 AFTER_MARKET_CLOSE = time(15, 5)
 
 
+def disable_sheet_backup() -> None:
+    """
+    Hard-disable Google Sheet backup for Daily Baseline.
+
+    Supabase is the only storage target for scanner data.
+    GAS may still be used externally as a trigger, but Daily Baseline
+    never POSTs scanner rows to Google Sheet anymore.
+    """
+    def _disabled(*_args, **_kwargs):
+        return True, "Google Sheet backup disabled; Supabase is the only data store."
+
+    base.backup_sheet_best_effort = _disabled
+
+
+
 def history_exclusive_date(run_at):
     """
     Ngay cat DU LIEU theo kieu exclusive (< date).
@@ -89,6 +104,7 @@ def load_resume_checkpoints(run_at):
 
 
 def main() -> None:
+    disable_sheet_backup()
     base.verify_vnstock_api_access()
     base.verify_supabase_config()
 
@@ -242,17 +258,9 @@ def main() -> None:
     }
     base.upsert_scan_run(run_log)
 
-    # Daily Sheet backup van giu tam thoi; Intraday da ngat Sheet.
-    sheet_ok, sheet_message = base.backup_sheet_best_effort(
-        records(pd.DataFrame(sheet_rows)),
-        run_log,
-    )
-    print(sheet_message)
-
-    if not sheet_ok:
-        run_log["finished_at"] = now_vn().isoformat()
-        run_log["message"] = f"{message}; {sheet_message}"[:1000]
-        base.upsert_scan_run(run_log)
+    # Google Sheet đã ngắt hoàn toàn khỏi pipeline dữ liệu scanner.
+    # Không POST rows sang GAS/Sheet nữa. Supabase là nguồn lưu trữ duy nhất.
+    print("Google Sheet backup: DISABLED. Supabase is the only data store.")
 
     if final_failed:
         raise RuntimeError(
@@ -264,7 +272,7 @@ def main() -> None:
     print(
         f"DONE: {success_count}/{len(watchlist_map)} ma OK; "
         f"history_exclusive_date={history_cutoff.isoformat()}; "
-        f"Supabase primary; Sheet backup={'OK' if sheet_ok else 'WARNING'}."
+        "Supabase only; Google Sheet disabled."
     )
 
 
