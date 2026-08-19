@@ -38,8 +38,7 @@ jobs:
 
       - name: Scan and push
         env:
-          GAS_WEB_APP_URL: ${{ secrets.GAS_WEB_APP_URL }}
-          GAS_API_SECRET: ${{ secrets.GAS_API_SECRET }}
+          VNSTOCK_API_KEY: ${{ secrets.VNSTOCK_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
