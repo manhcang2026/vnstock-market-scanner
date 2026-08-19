@@ -24,7 +24,7 @@ COMMON={
 }
 NORMAL={"income_bil_vnd":["Doanh thu thuần về bán hàng và cung cấp dịch vụ","Doanh thu thuần"],"gross_profit_bil_vnd":["Lợi nhuận gộp về bán hàng và cung cấp dịch vụ","Lợi nhuận gộp"],"pbt_bil_vnd":["Tổng lợi nhuận kế toán trước thuế","Tổng lợi nhuận kế toán","Lợi nhuận trước thuế"],"net_profit_bil_vnd":["Lợi nhuận sau thuế thu nhập doanh nghiệp","Lợi nhuận sau thuế"],"parent_net_profit_bil_vnd":["Lợi nhuận sau thuế của cổ đông Công ty mẹ"],"liabilities_bil_vnd":["Nợ phải trả"],"gross_margin_pct":["Tỷ suất lợi nhuận gộp biên"],"net_margin_pct":["Tỷ suất sinh lợi trên doanh thu thuần"],"debt_assets_pct":["Tỷ số Nợ trên Tổng tài sản"],"debt_equity_pct":["Tỷ số Nợ vay trên Vốn chủ sở hữu"]}
 BANK={"income_bil_vnd":["Thu nhập lãi thuần","Tổng thu nhập hoạt động","Thu nhập hoạt động"],"gross_profit_bil_vnd":["Tổng thu nhập hoạt động","Thu nhập hoạt động"],"pbt_bil_vnd":["Tổng lợi nhuận trước thuế","Lợi nhuận trước thuế"],"net_profit_bil_vnd":["Lợi nhuận sau thuế"],"parent_net_profit_bil_vnd":["Lợi nhuận sau thuế của cổ đông của Ngân hàng mẹ","Lợi nhuận sau thuế của cổ đông Ngân hàng mẹ","Lợi nhuận sau thuế của cổ đông công ty mẹ"],"liabilities_bil_vnd":["Nợ phải trả","Tổng nợ phải trả"]}
-SEC={"income_bil_vnd":["Doanh thu hoạt động","Doanh thu"],"gross_profit_bil_vnd":["Lợi nhuận từ hoạt động kinh doanh","Kết quả hoạt động kinh doanh"],"pbt_bil_vnd":["Lợi nhuận kế toán trước thuế","Lợi nhuận trước thuế"],"net_profit_bil_vnd":["Lợi nhuận kế toán sau thuế","Lợi nhuận sau thuế"],"parent_net_profit_bil_vnd":["Lợi nhuận sau thuế của cổ đông công ty mẹ","Lợi nhuận sau thuế thuộc về cổ đông công ty mẹ"],"liabilities_bil_vnd":["Nợ phải trả"]}
+SEC={"income_bil_vnd":["Doanh thu thuần về hoạt động kinh doanh","Doanh thu hoạt động"],"gross_profit_bil_vnd":["Kết quả hoạt động kinh doanh","Lợi nhuận từ hoạt động kinh doanh"],"pbt_bil_vnd":["Lợi nhuận kế toán trước thuế","Tổng lợi nhuận kế toán trước thuế"],"net_profit_bil_vnd":["Lợi nhuận sau thuế TNDN","Lợi nhuận kế toán sau thuế"],"parent_net_profit_bil_vnd":["Lợi nhuận sau thuế của cổ đông Công ty mẹ","Lợi nhuận sau thuế thuộc về cổ đông công ty mẹ"],"liabilities_bil_vnd":["Nợ phải trả"]}
 INS={"income_bil_vnd":["Doanh thu thuần hoạt động kinh doanh bảo hiểm","Doanh thu phí bảo hiểm","Doanh thu hoạt động kinh doanh bảo hiểm","Doanh thu thuần"],"gross_profit_bil_vnd":["Lợi nhuận gộp hoạt động kinh doanh bảo hiểm","Lợi nhuận gộp"],"pbt_bil_vnd":["Tổng lợi nhuận kế toán trước thuế","Tổng lợi nhuận kế toán","Lợi nhuận trước thuế"],"net_profit_bil_vnd":["Lợi nhuận sau thuế thu nhập doanh nghiệp","Lợi nhuận sau thuế"],"parent_net_profit_bil_vnd":["Lợi nhuận sau thuế của cổ đông công ty mẹ"],"liabilities_bil_vnd":["Nợ phải trả"]}
 
 def norm(t):
@@ -175,6 +175,7 @@ def main():
     ap=argparse.ArgumentParser()
     ap.add_argument("--master",default="tools/financial/output/industry_new_current_final.csv")
     ap.add_argument("--out-dir",default="tools/financial/output/fundamental_current")
+    ap.add_argument("--force-model",choices=["BANK","SECURITIES","INSURANCE","NORMAL"],default=None,help="Chạy lại riêng một financial_model dù đã checkpoint")
     args=ap.parse_args()
     mp=Path(args.master)
     if not mp.exists():raise FileNotFoundError(f"Không thấy {mp}; phải duyệt STEP 1 trước.")
@@ -187,7 +188,11 @@ def main():
     if raw_json.exists():
         try:raw=json.loads(raw_json.read_text(encoding="utf-8"))
         except:raw={}
-    pending=[s for s in symbols if s not in completed]
+    if args.force_model:
+        pending=[s for s in symbols if (master[s].get("financial_model") or "NORMAL").upper()==args.force_model]
+        print(f"FORCE MODEL {args.force_model}: chạy lại {len(pending)} mã, bỏ qua checkpoint cho nhóm này.")
+    else:
+        pending=[s for s in symbols if s not in completed]
     print(f"=== VIETSTOCK FUNDAMENTAL CURRENT ===\nMaster {len(symbols)} | done {len(completed)} | pending {len(pending)}")
     for idx,symbol in enumerate(pending,1):
         meta=master[symbol];print(f"[{idx}/{len(pending)}] {symbol} | {meta.get('website_group')} | {meta.get('financial_model')}")
