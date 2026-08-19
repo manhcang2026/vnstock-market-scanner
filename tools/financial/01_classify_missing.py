@@ -6,6 +6,7 @@ import requests
 from bs4 import BeautifulSoup
 
 BASE = "https://finance.vietstock.vn"
+CLASSIFIER_VERSION = "v2_20260820"
 DELAY = 0.70
 TIMEOUT = 30
 MAX_ATTEMPTS = 3
@@ -28,32 +29,32 @@ GROUP_RULES = [
     ("Ngân hàng",["ngan hang","banks","credit institutions"]),
     ("Chứng khoán",["chung khoan","securities","thi truong von","capital markets"]),
     ("Bảo hiểm",["bao hiem","insurance"]),("Bất động sản",["bat dong san","real estate"]),
-    ("Thép",["thep","steel","sat va thep"]),("Dầu khí",["dau khi","oil & gas","oil and gas","petroleum","gas distribution"]),
+    ("Thép",["thep","steel","sat va thep"]),("Dầu khí",["dau khi","oil & gas","oil and gas","petroleum","gas distribution","gas sinh hoat","khi dot","khi thien nhien"]),
     ("Bán lẻ",["ban le","retail"]),("Công nghệ",["cong nghe thong tin","phan mem","information technology","software"]),
     ("Phân bón",["phan bon","fertilizer"]),("Thủy sản",["thuy san","hai san","seafood","aquaculture"]),
     ("Dệt may",["det may","textile","apparel","may mac"]),
-    ("Cảng & Logistics",["cang","logistics","van tai bien","hang hai","kho bai","transportation infrastructure"]),
+    ("Cảng & Logistics",["cang","logistics","van tai bien","hang hai","kho bai","transportation infrastructure","ha tang giao thong","van tai mat dat","van tai duong bo"]),
     ("Hàng không",["hang khong","airlines","airport","aviation"]),
     ("Vật liệu xây dựng",["vat lieu xay dung","xi mang","cement","gach","construction materials"]),
     ("Xây dựng",["ky thuat xay dung","xay dung","construction & engineering","construction"]),
     ("Thực phẩm & đồ uống",["thuc pham","do uong","food","beverage","bia","sua"]),
     ("Dược & Y tế",["duoc","y te","cham soc suc khoe","health care","pharmaceutical"]),
     ("Ô tô & Phụ tùng",["o to","phu tung","automobile","auto components"]),("Cao su",["cao su","rubber"]),
-    ("Nông nghiệp",["nong nghiep","chan nuoi","agriculture","farming"]),("Nước",["cap nuoc","nuoc sach","water utilities","water"]),
+    ("Nông nghiệp",["nong nghiep","chan nuoi","agriculture","farming"]),("Nước",["cap nuoc","nuoc sach","cap thoat nuoc","nuoc","water utilities","water"]),
     ("Viễn thông",["vien thong","telecommunication"]),("Gỗ & Nội thất",["noi that","furnishings","home furnishings"]),
-    ("Gỗ & Giấy",["go va giay","go & giay","giay","paper","forest products"]),("Du lịch & Giải trí",["du lich","giai tri","hotels","resorts","leisure"]),
-    ("Truyền thông",["truyen thong","media","publishing"]),("Thiết bị điện",["thiet bi dien","electrical components","electrical equipment"]),
+    ("Gỗ & Giấy",["go va giay","go & giay","giay","paper","forest products"]),("Truyền thông",["truyen thong","media","publishing"]),
+    ("Du lịch & Giải trí",["du lich","giai tri","hotels","resorts","leisure"]),("Thiết bị điện",["thiet bi dien","electrical components","electrical equipment"]),
     ("Máy móc & Thiết bị",["may moc","machinery","industrial machinery"]),("Bao bì",["bao bi","packaging"]),
     ("Kim loại & Khoáng sản",["khai khoang","luyen kim","kim loai","khoang san","metals & mining","mining"]),
-    ("Thương mại & Phân phối",["nha phan phoi","phan phoi","trading companies","distributors"]),
+    ("Thương mại & Phân phối",["nha phan phoi","phan phoi","thuong mai hang thiet yeu","trading companies","distributors"]),
     ("Dịch vụ công nghiệp",["dich vu chuyen nghiep","professional services","commercial services"]),
     ("Dịch vụ tiêu dùng",["dich vu tieu dung","consumer services"]),("Hàng tiêu dùng lâu bền",["hang tieu dung lau ben","consumer durables"]),
     ("Đa ngành",["tap doan da nganh","conglomerates","multi-sector holdings"]),
     ("Tài chính khác",["tin dung phi ngan hang","consumer finance","specialized finance"]),
-    ("Hóa chất",["hoa chat","chemical"]),("Điện",["dien luc","san xuat dien","power generation","electric utilities","independent power"]),
+    ("Hóa chất",["hoa chat","chemical"]),("Điện",["dien luc","san xuat dien","phat dien","thuy dien","nhiet dien","dien tai tao","dien","power generation","electric utilities","independent power"]),
 ]
 FIELDS = [
-    "symbol","exchange","company_name","display_name","en_company_name","vietstock_company_name","name_match_status",
+    "classifier_version","symbol","exchange","company_name","display_name","en_company_name","vietstock_company_name","name_match_status",
     "watchlist_sector_l1","watchlist_sector_l2","watchlist_sector_l3","vietstock_sector_l1","vietstock_sector_l2","vietstock_sector_l3",
     "website_group","financial_model","website_group_order","matched_keyword","mapping_confidence","suggestion_source",
     "source_url","vietstock_financial_url","status","needs_review","review_reason",
@@ -61,7 +62,10 @@ FIELDS = [
 
 def strip_accents(text):
     text = unicodedata.normalize("NFD", str(text or ""))
-    return "".join(c for c in text if unicodedata.category(c)!="Mn").lower().strip()
+    text = "".join(c for c in text if unicodedata.category(c)!="Mn")
+    # NFD không tách ký tự đ/Đ, phải đổi thủ công.
+    text = text.replace("đ", "d").replace("Đ", "D")
+    return text.lower().strip()
 
 def canonical_company(text):
     x = strip_accents(text)
@@ -111,10 +115,14 @@ def extract_company_name(html, symbol):
     return title if 3 < len(title) < 180 else ""
 
 def classify_group(levels):
-    h=strip_accents(" | ".join(levels))
-    for group,kws in GROUP_RULES:
-        for kw in kws:
-            if strip_accents(kw) in h: return group,kw
+    # Ưu tiên ngành chi tiết nhất (L3 -> L2 -> L1), tránh việc
+    # "Truyền thông và giải trí" bị bắt nhầm bởi từ "giải trí".
+    normalized = [strip_accents(x) for x in levels if str(x or "").strip()]
+    for level in reversed(normalized):
+        for group, kws in GROUP_RULES:
+            for kw in kws:
+                if strip_accents(kw) in level:
+                    return group, kw
     return "Khác / cần duyệt",""
 
 def financial_model(group):
@@ -148,9 +156,14 @@ def main():
 
     outp=Path(args.out); previous={}
     if outp.exists():
-        for r in read_csv(outp):
-            s=(r.get("symbol") or "").upper()
-            if s: previous[s]=r
+        old_rows = read_csv(outp)
+        versions = {str(r.get("classifier_version") or "").strip() for r in old_rows}
+        if versions == {CLASSIFIER_VERSION}:
+            for r in old_rows:
+                s=(r.get("symbol") or "").upper()
+                if s: previous[s]=r
+        else:
+            print(f"Classifier đổi sang {CLASSIFIER_VERSION}: rebuild toàn bộ {len(targets)} mã.")
     done={s for s,r in previous.items() if str(r.get("status","")).startswith(("OK","NO_INDUSTRY"))}
     result=dict(previous); session=requests.Session()
     pending=[s for s in targets if s not in done]
@@ -185,7 +198,7 @@ def main():
             if not levels:
                 review="YES"; reasons.append("Vietstock không trả ngành")
             row={
-                "symbol":symbol,"exchange":wr.get("exchange",""),"company_name":wr.get("organ_name",""),
+                "classifier_version":CLASSIFIER_VERSION,"symbol":symbol,"exchange":wr.get("exchange",""),"company_name":wr.get("organ_name",""),
                 "display_name":wr.get("organ_name",""),"en_company_name":wr.get("en_organ_name",""),
                 "vietstock_company_name":vs_name,"name_match_status":nmatch,
                 "watchlist_sector_l1":watch_levels[0],"watchlist_sector_l2":watch_levels[1],"watchlist_sector_l3":watch_levels[2],
@@ -199,7 +212,7 @@ def main():
             print(f"{group} | name={nmatch}")
         except Exception as exc:
             row={
-                "symbol":symbol,"exchange":wr.get("exchange",""),"company_name":wr.get("organ_name",""),
+                "classifier_version":CLASSIFIER_VERSION,"symbol":symbol,"exchange":wr.get("exchange",""),"company_name":wr.get("organ_name",""),
                 "display_name":wr.get("organ_name",""),"en_company_name":wr.get("en_organ_name",""),
                 "vietstock_company_name":"","name_match_status":"ERROR","website_group":watch_group,
                 "financial_model":financial_model(watch_group),"website_group_order":GROUP_ORDER.get(watch_group,99),
