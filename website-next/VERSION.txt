@@ -1,4 +1,4 @@
-v19.0-alpha.2
+v19.0-alpha.3
 STAGING — không phải production.
 Baseline: website/ v18.5-final800-near-ma.
-UI Foundation: brand, app shell, Data Trust, semantic Light/Dark tokens và readability.
+Overview: market aggregate, staging Watchlist, entitlement discovery và Plus preview.
