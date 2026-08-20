@@ -1,0 +1,9 @@
+v18.5-final800-near-ma
+- Universe LIVE: đọc trực tiếp stock_snapshot từ Supabase; hiện đủ 800 mã final khi database có đủ 800.
+- 57 mã mới tự xuất hiện vì frontend không dùng danh sách mã hard-code.
+- Sắp xếp MA: bỏ 4 nút cao nhất/thấp nhất; còn Gần MA10 nhất và Gần MA200 nhất.
+- "Gần" = trị tuyệt đối của % cách MA, không phân biệt âm/dương; thiếu dữ liệu đẩy xuống cuối.
+- Giá trị hiển thị vẫn giữ dấu +/- để biết đang trên/dưới MA.
+- Cache key mới v18.5 để không giữ universe cũ trong localStorage.
+- Nút BCTC mở đúng trang tài chính Vietstock: /tai-chinh.htm?tab=BCTT.
+- Không kèm assets/logos/*.jpg; giữ nguyên thư mục logo đang có trên HawkHost.
