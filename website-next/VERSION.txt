@@ -1,0 +1,4 @@
+v19.0-alpha.1
+STAGING — không phải production.
+Baseline: website/ v18.5-final800-near-ma.
+Static vanilla JS/CSS clone; chưa redesign UI.

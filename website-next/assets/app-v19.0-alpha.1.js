@@ -1,0 +1,655 @@
+(function () {
+  "use strict";
+
+  var SUPABASE_URL = "https://wevtlkowpbmpdggcfbvn.supabase.co";
+  var SUPABASE_KEY = "sb_publishable_qN__TQuoNBRUFhxuY5CtNw_88WZDdJw";
+  var API_URL = SUPABASE_URL + "/rest/v1/stock_snapshot?select=*&order=symbol.asc";
+  var FINANCIAL_API_URL = SUPABASE_URL + "/rest/v1/financial_latest?select=*&order=symbol.asc";
+  var METADATA_API_URL = SUPABASE_URL + "/rest/v1/stock_metadata?select=*&order=symbol.asc";
+  var CACHE_KEY = "vnstock_dashboard_raw_v19_0_alpha_1_staging_supabase_800";
+  var LEGACY_CACHE_KEY = "vnstock_dashboard_cache_v1";
+  var THEME_KEY = "vnstock_dashboard_theme_v17";
+  var LATEST_API_URL = SUPABASE_URL + "/rest/v1/stock_snapshot?select=updated_at&order=updated_at.desc&limit=1";
+  var EXPECTED_UNIVERSE_COUNT = 800;
+  var AUTO_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+  var VERSION_POLL_INTERVAL_MS = 15 * 1000;
+  var LOGO_BASE_URL = "/assets/logos/";
+  var LOGO_ASSET_VERSION = "1741";
+  var app = document.getElementById("app");
+  var savedTheme = null;
+  try { savedTheme = localStorage.getItem(THEME_KEY); } catch (_) {}
+  var initialTheme = savedTheme === "light" || savedTheme === "dark" ? savedTheme : "dark";
+  document.documentElement.setAttribute("data-theme", initialTheme);
+  var pageSize = window.matchMedia && window.matchMedia("(max-width: 767px)").matches ? 20 : 50;
+  var state = {
+    rows: [], meta: null, error: "", fetching: false,
+    route: location.pathname === "/danh-sach" ? "list" : location.pathname === "/so-sanh-theo-nganh" ? "industry" : location.pathname === "/sang-loc-co-ban" ? "fundamental" : "overview",
+    query: "", exchange: "all", signal: new URLSearchParams(location.search).get("signal") || "",
+    sort: "signal", page: 1, selected: null, nextRefresh: null, theme: initialTheme,
+    latestUpdateMs: null, waitingForNewData: false, lastVersionPollAt: 0, versionPolling: false,
+    financialRows: [], financialBySymbol: {}, financialLoaded: false, financialError: "",
+    metadataRows: [], metadataBySymbol: {}, metadataLoaded: false, metadataError: "",
+    industryGroup: new URLSearchParams(location.search).get("group") || "",
+    fundamentalMinScore: 0, fundamentalProfitGrowth: "all", fundamentalRoe: "all",
+    quarterlyBySymbol: {}, quarterlyLoading: {}, quarterlyError: {}
+  };
+
+  function esc(value) {
+    return String(value == null ? "" : value).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+  function num(value) {
+    if (value === null || value === undefined || value === "") return null;
+    var n = typeof value === "number" ? value : Number(String(value).replace(/[,%\s]/g, ""));
+    return Number.isFinite(n) ? n : null;
+  }
+  function bool(value) {
+    if (typeof value === "boolean") return value;
+    if (typeof value === "number") return value === 1;
+    return ["TRUE", "1", "YES", "X", "ĐẠT"].indexOf(String(value || "").trim().toUpperCase()) >= 0;
+  }
+  function ratio(a, b) { return a !== null && b !== null && b !== 0 ? a / b * 100 : null; }
+  function normalize(row) {
+    var current = num(row.current_price != null ? row.current_price : row.currentPrice);
+    var previous = num(row.previous_close != null ? row.previous_close : row.prevClose);
+    var ma10 = num(row.ma10);
+    var ma200 = num(row.ma200);
+    var volume = num(row.volume_accumulated != null ? row.volume_accumulated : row.cumVolume);
+    var avg10 = num(row.avg_volume_10 != null ? row.avg_volume_10 : row.avgVolume10);
+    var sessions30 = num(row.rvol30_sessions != null ? row.rvol30_sessions : row.rvol30Sessions) || 0;
+    var change = num(row.price_change_pct != null ? row.price_change_pct : row.changePct);
+    var dayVolume = num(row.daily_volume_pct != null ? row.daily_volume_pct : row.dayVolumeRatioPct);
+    var rvol = num(row.rvol30_pct != null ? row.rvol30_pct : row.rvol30Pct);
+    var ma10Distance = num(row.ma10_distance_pct != null ? row.ma10_distance_pct : row.ma10DistancePct);
+    var ma200Distance = num(row.ma200_distance_pct != null ? row.ma200_distance_pct : row.ma200DistancePct);
+    if (change === null) change = ratio(current !== null && previous !== null ? current - previous : null, previous);
+    if (dayVolume === null) dayVolume = ratio(volume, avg10);
+    if (ma10Distance === null) ma10Distance = ratio(current !== null && ma10 !== null ? current - ma10 : null, ma10);
+    if (ma200Distance === null) ma200Distance = ratio(current !== null && ma200 !== null ? current - ma200 : null, ma200);
+    if (sessions30 <= 0) rvol = null;
+    var sPrice = row.signal_price_3pct != null ? bool(row.signal_price_3pct) : !!row.signalPrice3pct;
+    var sVolume = row.signal_daily_volume_200pct != null ? bool(row.signal_daily_volume_200pct) : !!row.signalVolume200pct;
+    var sMa200 = row.signal_above_ma200 != null ? bool(row.signal_above_ma200) : !!row.signalAboveMa200;
+    var sRvol = sessions30 > 0 && (row.signal_rvol30_200pct != null ? bool(row.signal_rvol30_200pct) : !!row.signalRvol30_200pct);
+    var calculated = [sPrice, sVolume, sMa200, sRvol].filter(Boolean).length;
+    var signalCount = num(row.signal_count != null ? row.signal_count : row.signalCount);
+    if (signalCount === null) signalCount = calculated;
+    signalCount = Math.max(0, Math.min(4, Math.round(signalCount)));
+    var missing = current === null || previous === null || ma200 === null || volume === null || avg10 === null || ["MISSING_MARKET_DATA", "MISSING", "ERROR"].indexOf(row.data_status || row.dataStatus) >= 0;
+    return {
+      symbol: String(row.symbol || "—").toUpperCase(), exchange: String(row.exchange || "—").toUpperCase(),
+      currentPrice: current, prevClose: previous, changePct: change, ma10: ma10, ma10DistancePct: ma10Distance,
+      ma10Sessions: num(row.ma10_sessions != null ? row.ma10_sessions : row.ma10Sessions), ma200: ma200,
+      ma200DistancePct: ma200Distance, ma200Sessions: num(row.ma200_sessions != null ? row.ma200_sessions : row.ma200Sessions),
+      cumVolume: volume, avgVolume10: avg10, avgVolume10Sessions: num(row.avg_volume_sessions != null ? row.avg_volume_sessions : row.avgVolume10Sessions),
+      dayVolumeRatioPct: dayVolume, volume30m: num(row.volume_30m != null ? row.volume_30m : row.volume30m),
+      avgVolume30mSameSlot: num(row.avg_volume_30m_10 != null ? row.avg_volume_30m_10 : row.avgVolume30mSameSlot),
+      rvol30Pct: rvol, rvol30Sessions: sessions30, signalPrice3pct: sPrice, signalVolume200pct: sVolume,
+      signalAboveMa200: sMa200, signalRvol30_200pct: sRvol, signalCount: signalCount, hasMissingData: missing,
+      tradingDate: row.trading_date || row.tradingDate || "—", timeSlot: row.time_slot || row.timeSlot || "—",
+      updatedAt: row.updated_at || row.updatedAt || "—", dataStatus: row.data_status || row.dataStatus || "OK",
+      dataSource: row.data_source || row.dataSource || "Supabase", note: row.note || ""
+    };
+  }
+  function formatNumber(v, digits) {
+    if (v === null || !Number.isFinite(v)) return "—";
+    return v.toLocaleString("vi-VN", { minimumFractionDigits: digits || 0, maximumFractionDigits: digits || 0 });
+  }
+  function formatPrice(v) { return formatNumber(v, 0); }
+  function logoHtml(symbol, extraClass) {
+    var safe = String(symbol || "?").toUpperCase().replace(/[^A-Z0-9]/g, "");
+    var label = safe.slice(0, 3) || "?";
+    var cls = "company-logo" + (extraClass ? " " + extraClass : "");
+    return '<span class="' + cls + '"><img class="company-logo-img" decoding="async" src="' + LOGO_BASE_URL + esc(safe) + '.jpg?v=' + LOGO_ASSET_VERSION + '" alt="Logo ' + esc(safe) + '"><span class="company-logo-fallback">' + esc(label) + '</span></span>';
+  }
+  function pct(v, digits) { return v === null || !Number.isFinite(v) ? "—" : (v > 0 ? "+" : "") + formatNumber(v, digits == null ? 2 : digits) + "%"; }
+  function plainPct(v, digits) { return v === null || !Number.isFinite(v) ? "—" : formatNumber(v, digits == null ? 0 : digits) + "%"; }
+  function shortVolume(v) {
+    if (v === null || !Number.isFinite(v)) return "—";
+    if (v >= 1000000) return formatNumber(v / 1000000, 2) + " triệu";
+    if (v >= 1000) return formatNumber(v / 1000, 1) + " nghìn";
+    return formatNumber(v, 0);
+  }
+  function metricClass(v) { return v > 0 ? "positive" : v < 0 ? "negative" : ""; }
+  function signalClass(n) { return "sig" + n; }
+  function signalTone(n) { return "tone" + n; }
+  function signalItems(r) {
+    return [
+      ["Giá ≥ 3%", r.signalPrice3pct],
+      ["KL ngày ≥ 200%", r.signalVolume200pct],
+      ["Trên MA200", r.signalAboveMa200],
+      ["RVOL30 ≥ 200%", r.signalRvol30_200pct]
+    ];
+  }
+  function signalPass(row, key) {
+    if (!key) return true;
+    if (key === "4of4") return row.signalCount === 4;
+    if (key === "3plus") return row.signalCount >= 3;
+    if (key === "2plus") return row.signalCount >= 2;
+    if (key === "exactly2") return row.signalCount === 2;
+    if (key === "exactly1") return row.signalCount === 1;
+    if (key === "rvol30") return row.signalRvol30_200pct;
+    if (key === "price3") return row.signalPrice3pct;
+    if (key === "vol200") return row.signalVolume200pct;
+    if (key === "abovema200") return row.signalAboveMa200;
+    if (key === "missing") return row.hasMissingData;
+    return true;
+  }
+  function priority(a, b) {
+    return Number(b.signalRvol30_200pct) - Number(a.signalRvol30_200pct) || b.signalCount - a.signalCount || value(b.rvol30Pct, -Infinity) - value(a.rvol30Pct, -Infinity) || value(b.changePct, -Infinity) - value(a.changePct, -Infinity) || a.symbol.localeCompare(b.symbol);
+  }
+  function value(v, missing) { return v === null || !Number.isFinite(v) ? missing : v; }
+  function metricSort(key, ascending) {
+    return function (a, b) {
+      var av = value(a[key], ascending ? Infinity : -Infinity);
+      var bv = value(b[key], ascending ? Infinity : -Infinity);
+      return (ascending ? av - bv : bv - av) || priority(a, b);
+    };
+  }
+  function absoluteMetricSort(key) {
+    return function (a, b) {
+      var av = a[key] === null || !Number.isFinite(a[key]) ? Infinity : Math.abs(a[key]);
+      var bv = b[key] === null || !Number.isFinite(b[key]) ? Infinity : Math.abs(b[key]);
+      return av - bv || priority(a, b);
+    };
+  }
+  function filteredRows() {
+    var q = state.query.trim().toUpperCase();
+    var rows = state.rows.filter(function (r) {
+      return (!q || r.symbol.indexOf(q) >= 0) && (state.exchange === "all" || r.exchange.toLowerCase() === state.exchange) && signalPass(r, state.signal);
+    });
+    var sorters = {
+      rvol30: metricSort("rvol30Pct", false), rvol30Asc: metricSort("rvol30Pct", true),
+      change: metricSort("changePct", false), changeAsc: metricSort("changePct", true),
+      volume: metricSort("dayVolumeRatioPct", false), volumeAsc: metricSort("dayVolumeRatioPct", true),
+      ma10Near: absoluteMetricSort("ma10DistancePct"),
+      ma200Near: absoluteMetricSort("ma200DistancePct"),
+      symbol: function (a, b) { return a.symbol.localeCompare(b.symbol); }, signal: priority
+    };
+    return rows.sort(sorters[state.sort] || priority);
+  }
+  function parseTime(value) {
+    if (!value || value === "—") return "—";
+    var d = new Date(value);
+    if (!Number.isNaN(d.getTime())) return new Intl.DateTimeFormat("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(d);
+    return String(value);
+  }
+  function getMeta(raw, rows) {
+    var m = raw.meta || {};
+    var newest = rows.reduce(function (best, r) { return !best || new Date(r.updatedAt) > new Date(best.updatedAt) ? r : best; }, null);
+    return {
+      systemStatus: m.systemStatus || (m.status === "SUCCESS" ? "OK" : m.status) || "OK",
+      marketUpdatedAt: parseTime(m.marketUpdatedAt || m.updated_at || (newest && newest.updatedAt)),
+      dashboardCheckedAt: parseTime(m.dashboardCheckedAt || m.checked_at || new Date()),
+      totalSymbols: m.totalSymbols || rows.length,
+      dataSource: m.dataSource || "Supabase",
+      mode: "LIVE"
+    };
+  }
+
+  function median(values) {
+    var xs = values.filter(function(v){return v !== null && Number.isFinite(v);}).sort(function(a,b){return a-b;});
+    if (!xs.length) return null;
+    var mid = Math.floor(xs.length/2);
+    return xs.length % 2 ? xs[mid] : (xs[mid-1]+xs[mid])/2;
+  }
+  function scoreBand(value, bands) {
+    if (value === null || !Number.isFinite(value)) return null;
+    for (var i=0;i<bands.length;i++) if (bands[i][0](value)) return bands[i][1];
+    return bands.length ? bands[bands.length-1][1] : 0;
+  }
+  function valuationScore(value, med, maxPoint) {
+    if (value === null || med === null || value <= 0 || med <= 0) return null;
+    var r = value / med;
+    if (r <= .8) return maxPoint;
+    if (r <= 1) return Math.round(maxPoint*.8);
+    if (r <= 1.2) return Math.round(maxPoint*.6);
+    if (r <= 1.5) return Math.round(maxPoint*.35);
+    return Math.max(1, Math.round(maxPoint*.15));
+  }
+  function financialScore(row) {
+    if (!row || row.data_status === "NO_FINANCIAL_DATA") return {earned:0,available:0,coverage:0,label:"Chưa có dữ liệu",parts:[],badges:["Chưa có BCTC"]};
+    var parts=[], earned=0, available=0;
+    function add(name,max,value,detail){ if(value===null || value===undefined || !Number.isFinite(value)) return; available+=max; earned+=value; parts.push({name:name,earned:value,max:max,detail:detail}); }
+    var py=num(row.profit_yoy_pct), iy=num(row.income_yoy_pct), pq=num(row.profit_qoq_pct), roe=num(row.roea_pct), roa=num(row.roaa_pct), de=num(row.debt_equity_pct), da=num(row.debt_assets_pct), pe=num(row.pe), pb=num(row.pb);
+    add("Lợi nhuận sau thuế so với cùng kỳ",20,scoreBand(py,[[function(v){return v>=30},20],[function(v){return v>=20},16],[function(v){return v>=10},12],[function(v){return v>=0},7],[function(){return true},0]]),py===null?"—":pct(py));
+    add("Doanh thu / thu nhập so với cùng kỳ",10,scoreBand(iy,[[function(v){return v>=20},10],[function(v){return v>=10},8],[function(v){return v>=5},5],[function(v){return v>=0},3],[function(){return true},0]]),iy===null?"—":pct(iy));
+    add("Lợi nhuận sau thuế so với quý trước",5,scoreBand(pq,[[function(v){return v>=20},5],[function(v){return v>=10},4],[function(v){return v>=0},3],[function(v){return v>=-10},1],[function(){return true},0]]),pq===null?"—":pct(pq));
+    add("ROE – Lợi nhuận trên vốn chủ sở hữu",20,scoreBand(roe,[[function(v){return v>=20},20],[function(v){return v>=15},16],[function(v){return v>=10},11],[function(v){return v>=5},6],[function(v){return v>=0},2],[function(){return true},0]]),roe===null?"—":pct(roe));
+    add("ROA – Lợi nhuận trên tổng tài sản",10,scoreBand(roa,[[function(v){return v>=10},10],[function(v){return v>=7},8],[function(v){return v>=5},6],[function(v){return v>=2},3],[function(v){return v>=0},1],[function(){return true},0]]),roa===null?"—":pct(roa));
+    if (row.financial_model === "NORMAL") {
+      add("Nợ vay trên vốn chủ sở hữu",10,scoreBand(de,[[function(v){return v<30},10],[function(v){return v<60},8],[function(v){return v<100},5],[function(v){return v<150},2],[function(){return true},0]]),de===null?"—":plainPct(de));
+      add("Nợ trên tổng tài sản",10,scoreBand(da,[[function(v){return v<30},10],[function(v){return v<45},8],[function(v){return v<60},5],[function(v){return v<75},2],[function(){return true},0]]),da===null?"—":plainPct(da));
+    }
+    var peers=state.financialRows.filter(function(x){return x.website_group===row.website_group;});
+    var medPe=median(peers.map(function(x){return num(x.pe);})), medPb=median(peers.map(function(x){return num(x.pb);}));
+    var peScore=valuationScore(pe,medPe,8), pbScore=valuationScore(pb,medPb,7);
+    add("P/E – Giá so với lợi nhuận, so cùng ngành",8,peScore,pe===null?"—":pe.toFixed(2)+"x"+(medPe?" · trung vị "+medPe.toFixed(2)+"x":""));
+    add("P/B – Giá so với giá trị sổ sách, so cùng ngành",7,pbScore,pb===null?"—":pb.toFixed(2)+"x"+(medPb?" · trung vị "+medPb.toFixed(2)+"x":""));
+    var coverage=available;
+    var badges=[];
+    if(py!==null){if(py>=30)badges.push("Tăng trưởng mạnh");else if(py>=10)badges.push("Tăng trưởng tốt");else if(py<0)badges.push("LNST suy giảm");}
+    if(roe!==null){if(roe>=20)badges.push("Hiệu quả vốn chủ sở hữu cao");else if(roe>=15)badges.push("Hiệu quả vốn chủ sở hữu khá");}
+    if(peScore!==null && peScore>=6)badges.push("Định giá P/E hấp dẫn so với ngành");
+    if(pbScore!==null && pbScore>=5)badges.push("Định giá P/B hấp dẫn so với ngành");
+    if(row.financial_model !== "NORMAL") badges.push("Chưa đủ chỉ tiêu chuyên biệt để chấm sức khỏe tài chính ngành");
+    if(available<100) badges.push("Chưa đủ dữ liệu để chấm trọn 100 điểm");
+    return {earned:earned,available:available,coverage:coverage,label:available?earned+"/"+available:"Chưa đủ dữ liệu",parts:parts,badges:badges};
+  }
+  function scoreClass(s){ if(!s.available)return "score-na"; var r=s.earned/s.available*100; return r>=75?"score-good":r>=55?"score-mid":"score-low"; }
+  function financialBySymbol(symbol){return state.financialBySymbol[String(symbol||"").toUpperCase()]||null;}
+  function moneyBil(v){var n=num(v);return n===null?"—":new Intl.NumberFormat("vi-VN",{maximumFractionDigits:0}).format(n)+" tỷ";}
+  function scoreBadgeHtml(row){var s=financialScore(row);return '<span class="fund-score '+scoreClass(s)+'" title="Điểm đạt '+esc(s.earned)+' trên '+esc(s.available)+' điểm có thể chấm">'+esc(s.label)+'</span>';}
+  function freshnessLabel(value){
+    var v=String(value||"").toUpperCase();
+    if(v==="CURRENT") return "Mới nhất";
+    if(v==="LAGGING") return "Chậm 1 kỳ";
+    if(v==="STALE") return "Dữ liệu cũ";
+    if(v==="NO_DATA") return "Chưa có dữ liệu";
+    return value||"—";
+  }
+  function scoreCoverageText(row){
+    var s=financialScore(row);
+    if(!s.available) return "Chưa đủ dữ liệu để chấm";
+    return "Chấm được "+s.available+"/100 điểm tối đa";
+  }
+  function metricHead(title,sub){return '<span class="th-main">'+esc(title)+'</span>'+(sub?'<span class="th-sub">'+esc(sub)+'</span>':'');}
+  function groupList(){
+    var map={}; state.financialRows.forEach(function(r){var g=r.website_group||"Khác";map[g]=(map[g]||0)+1;});
+    return Object.keys(map).sort(function(a,b){return map[b]-map[a]||a.localeCompare(b,"vi");}).map(function(g){return [g,map[g]];});
+  }
+  function financialCard(row){
+    var s=financialScore(row); var market=state.rows.find(function(x){return x.symbol===row.symbol;});
+    return '<article class="fund-card" data-symbol="'+esc(row.symbol)+'">'+
+      '<div class="fund-card-top"><div><b class="fund-symbol">'+esc(row.symbol)+'</b><span>'+esc(row.website_group||'—')+'</span></div>'+scoreBadgeHtml(row)+'</div>'+
+      '<div class="fund-card-grid">'+
+        '<div><small>Lợi nhuận sau thuế<br>so với cùng kỳ</small><b class="'+metricClass(num(row.profit_yoy_pct))+'">'+pct(num(row.profit_yoy_pct))+'</b></div>'+
+        '<div><small>ROE<br>Lợi nhuận / vốn chủ</small><b>'+pct(num(row.roea_pct))+'</b></div>'+
+        '<div><small>P/E<br>Giá / lợi nhuận</small><b>'+(num(row.pe)===null?'—':num(row.pe).toFixed(2)+'x')+'</b></div>'+
+        '<div><small>P/B<br>Giá / giá trị sổ sách</small><b>'+(num(row.pb)===null?'—':num(row.pb).toFixed(2)+'x')+'</b></div>'+
+      '</div>'+
+      '<div class="fund-card-foot"><span>'+(market?'Tín hiệu kỹ thuật '+market.signalCount+'/4':'Chưa có dữ liệu kỹ thuật')+'</span><span>'+esc(scoreCoverageText(row))+'</span></div>'+
+    '</article>';
+  }
+  function scoreMethodHtml(){
+    return '<section class="score-method panel">'+
+      '<div class="score-method-head"><div><h2>Cách tính Điểm cơ bản</h2><p>Mỗi điểm đều xuất phát từ chỉ tiêu tài chính cụ thể. Mã thiếu dữ liệu sẽ chỉ được chấm trên phần có dữ liệu và <b>không tự quy đổi thành 100 điểm</b>.</p></div><span class="method-total">Tối đa 100 điểm</span></div>'+
+      '<div class="method-grid">'+
+        '<div class="method-card"><b>1. Tăng trưởng · tối đa 35 điểm</b><p><strong>20đ</strong> Lợi nhuận sau thuế so với cùng kỳ năm trước.<br><strong>10đ</strong> Doanh thu hoặc thu nhập so với cùng kỳ.<br><strong>5đ</strong> Lợi nhuận sau thuế so với quý trước.</p></div>'+
+        '<div class="method-card"><b>2. Hiệu quả sinh lời · tối đa 30 điểm</b><p><strong>20đ</strong> ROE – lợi nhuận tạo ra trên vốn chủ sở hữu.<br><strong>10đ</strong> ROA – lợi nhuận tạo ra trên tổng tài sản.</p></div>'+
+        '<div class="method-card"><b>3. Sức khỏe tài chính · tối đa 20 điểm</b><p>Với doanh nghiệp thông thường: <strong>10đ</strong> Nợ vay trên vốn chủ sở hữu và <strong>10đ</strong> Nợ trên tổng tài sản.<br>Ngân hàng, chứng khoán và bảo hiểm chưa có đủ chỉ tiêu chuyên ngành nên phần này có thể chưa được chấm.</p></div>'+
+        '<div class="method-card"><b>4. Định giá · tối đa 15 điểm</b><p><strong>8đ</strong> P/E – giá cổ phiếu so với lợi nhuận.<br><strong>7đ</strong> P/B – giá cổ phiếu so với giá trị sổ sách.<br>Hai chỉ số được so tương đối với trung vị của các doanh nghiệp cùng ngành.</p></div>'+
+      '</div>'+
+      '<div class="term-glossary"><div><b>ROE là gì?</b><span>Cho biết 100 đồng vốn chủ sở hữu tạo ra bao nhiêu đồng lợi nhuận.</span></div><div><b>ROA là gì?</b><span>Cho biết doanh nghiệp sử dụng toàn bộ tài sản hiệu quả đến mức nào.</span></div><div><b>P/E là gì?</b><span>So sánh giá cổ phiếu với lợi nhuận doanh nghiệp tạo ra.</span></div><div><b>P/B là gì?</b><span>So sánh giá cổ phiếu với giá trị sổ sách trên mỗi cổ phần.</span></div></div>'+
+      '<details class="score-rules"><summary>Xem toàn bộ ngưỡng chấm điểm chi tiết</summary><div class="rule-grid">'+
+        '<p><b>Lợi nhuận sau thuế so cùng kỳ · 20đ:</b><br>≥30%: 20đ · 20–29,99%: 16đ · 10–19,99%: 12đ · 0–9,99%: 7đ · giảm so cùng kỳ: 0đ.</p>'+
+        '<p><b>Doanh thu / thu nhập so cùng kỳ · 10đ:</b><br>≥20%: 10đ · 10–19,99%: 8đ · 5–9,99%: 5đ · 0–4,99%: 3đ · giảm: 0đ.</p>'+
+        '<p><b>Lợi nhuận sau thuế so quý trước · 5đ:</b><br>≥20%: 5đ · 10–19,99%: 4đ · 0–9,99%: 3đ · giảm dưới 10%: 1đ · giảm từ 10% trở lên: 0đ.</p>'+
+        '<p><b>ROE · 20đ:</b><br>≥20%: 20đ · 15–19,99%: 16đ · 10–14,99%: 11đ · 5–9,99%: 6đ · 0–4,99%: 2đ · âm: 0đ.</p>'+
+        '<p><b>ROA · 10đ:</b><br>≥10%: 10đ · 7–9,99%: 8đ · 5–6,99%: 6đ · 2–4,99%: 3đ · 0–1,99%: 1đ · âm: 0đ.</p>'+
+        '<p><b>Nợ vay / vốn chủ sở hữu · 10đ:</b><br>&lt;30%: 10đ · 30–59,99%: 8đ · 60–99,99%: 5đ · 100–149,99%: 2đ · ≥150%: 0đ.</p>'+
+        '<p><b>Nợ / tổng tài sản · 10đ:</b><br>&lt;30%: 10đ · 30–44,99%: 8đ · 45–59,99%: 5đ · 60–74,99%: 2đ · ≥75%: 0đ.</p>'+
+        '<p><b>P/E và P/B · 15đ:</b><br>≤80% trung vị ngành: điểm tối đa · 80–100%: khoảng 80% điểm · 100–120%: khoảng 60% · 120–150%: khoảng 35% · trên 150%: khoảng 15% điểm.</p>'+
+      '</div></details>'+
+      '<p class="score-note"><b>Lưu ý:</b> Điểm số dùng để học và sàng lọc ban đầu. Cần đọc thêm báo cáo tài chính, chất lượng lợi nhuận và đặc thù ngành trước khi đưa ra quyết định.</p>'+
+    '</section>';
+  }
+  function industryHtml(){
+    var groups=groupList(); if(!state.industryGroup && groups.length) state.industryGroup=groups[0][0];
+    var selected=state.financialRows.filter(function(r){return r.website_group===state.industryGroup;}).sort(function(a,b){var sa=financialScore(a),sb=financialScore(b);return (sb.available?sb.earned/sb.available:0)-(sa.available?sa.earned/sa.available:0);});
+    var groupButtons=groups.map(function(g){return '<button class="industry-chip '+(state.industryGroup===g[0]?'active':'')+'" data-industry="'+esc(g[0])+'"><span>'+esc(g[0])+'</span><b>'+g[1]+' mã</b></button>';}).join('');
+    var rows=selected.map(function(r){
+      var m=state.rows.find(function(x){return x.symbol===r.symbol;}); var s=financialScore(r);
+      return '<tr data-symbol="'+esc(r.symbol)+'">'+
+        '<td class="center symbol"><b>'+esc(r.symbol)+'</b></td>'+
+        '<td class="center"><div>'+scoreBadgeHtml(r)+'</div><small class="score-coverage">'+esc(scoreCoverageText(r))+'</small></td>'+
+        '<td class="center '+metricClass(num(r.profit_yoy_pct))+'">'+pct(num(r.profit_yoy_pct))+'</td>'+
+        '<td class="center">'+pct(num(r.roea_pct))+'</td>'+
+        '<td class="center">'+(num(r.pe)===null?'—':num(r.pe).toFixed(2)+'x')+'</td>'+
+        '<td class="center">'+(num(r.pb)===null?'—':num(r.pb).toFixed(2)+'x')+'</td>'+
+        '<td class="center">'+(m?'<span class="signal-pill '+signalClass(m.signalCount)+'">'+m.signalCount+'/4</span>':'—')+'</td>'+
+        '<td class="center"><span class="freshness-tag freshness-'+String(r.freshness_status||'').toLowerCase()+'">'+esc(freshnessLabel(r.freshness_status))+'</span></td>'+
+      '</tr>';
+    }).join('');
+    return '<main class="wrap fund-main"><section class="page-intro"><span class="eyebrow">SO SÁNH DOANH NGHIỆP CÙNG NGÀNH</span><h1>So sánh theo ngành</h1><p>Chọn một ngành để đặt các doanh nghiệp cạnh nhau. Bảng ưu tiên các chỉ tiêu dễ so sánh: tăng trưởng lợi nhuận, khả năng sinh lời, định giá và tín hiệu kỹ thuật.</p></section><section class="industry-picker">'+groupButtons+'</section><section class="panel industry-panel"><div class="section-title"><div><h2>'+esc(state.industryGroup||'Ngành')+'</h2><p>'+selected.length+' mã · sắp xếp theo Điểm cơ bản trên phần dữ liệu có thể chấm.</p></div></div><div class="desktop-table"><div class="table-shell fund-table-shell"><table class="fundamental-table industry-table"><thead><tr><th>'+metricHead('Mã cổ phiếu','')+'</th><th>'+metricHead('Điểm cơ bản','Điểm đạt / điểm có thể chấm')+'</th><th>'+metricHead('Tăng trưởng lợi nhuận','So với cùng kỳ năm trước')+'</th><th>'+metricHead('ROE','Lợi nhuận / vốn chủ sở hữu')+'</th><th>'+metricHead('P/E','Giá / lợi nhuận')+'</th><th>'+metricHead('P/B','Giá / giá trị sổ sách')+'</th><th>'+metricHead('Tín hiệu kỹ thuật','Số tín hiệu đang đạt')+'</th><th>'+metricHead('Dữ liệu','Mức độ cập nhật')+'</th></tr></thead><tbody>'+rows+'</tbody></table></div></div><div class="mobile-list fund-mobile-list">'+selected.map(financialCard).join('')+'</div></section><p class="disclaimer">Điểm số hỗ trợ sàng lọc và học phân tích, không phải khuyến nghị mua/bán.</p></main>';
+  }
+  function fundamentalHtml(){
+    var rows=state.financialRows.slice().filter(function(r){var s=financialScore(r);if(state.fundamentalMinScore && (!s.available || s.earned/s.available*100<state.fundamentalMinScore))return false;var py=num(r.profit_yoy_pct),roe=num(r.roea_pct);if(state.fundamentalProfitGrowth==='positive' && !(py!==null&&py>0))return false;if(state.fundamentalProfitGrowth==='20plus' && !(py!==null&&py>=20))return false;if(state.fundamentalRoe==='15plus' && !(roe!==null&&roe>=15))return false;if(state.fundamentalRoe==='20plus' && !(roe!==null&&roe>=20))return false;return true;}).sort(function(a,b){var sa=financialScore(a),sb=financialScore(b);return (sb.available?sb.earned/sb.available:0)-(sa.available?sa.earned/sa.available:0);});
+    var scoreBtns=[[0,'Tất cả'],[55,'Từ 55% mức điểm có thể chấm'],[70,'Từ 70% mức điểm có thể chấm'],[80,'Từ 80% mức điểm có thể chấm']].map(function(x){return '<button class="chip '+(state.fundamentalMinScore===x[0]?'active':'')+'" data-fund-filter="score" data-value="'+x[0]+'">'+x[1]+'</button>';}).join('');
+    var growthBtns=[['all','Tất cả'],['positive','Lợi nhuận tăng so cùng kỳ'],['20plus','Lợi nhuận tăng từ 20% so cùng kỳ']].map(function(x){return '<button class="chip '+(state.fundamentalProfitGrowth===x[0]?'active':'')+'" data-fund-filter="growth" data-value="'+x[0]+'">'+x[1]+'</button>';}).join('');
+    var roeBtns=[['all','Tất cả'],['15plus','ROE từ 15%'],['20plus','ROE từ 20%']].map(function(x){return '<button class="chip '+(state.fundamentalRoe===x[0]?'active':'')+'" data-fund-filter="roe" data-value="'+x[0]+'">'+x[1]+'</button>';}).join('');
+    var tableRows=rows.map(function(r){
+      var m=state.rows.find(function(x){return x.symbol===r.symbol;});
+      return '<tr data-symbol="'+esc(r.symbol)+'">'+
+        '<td class="center symbol"><b>'+esc(r.symbol)+'</b></td>'+
+        '<td class="center"><span class="industry-name-cell">'+esc(r.website_group||'—')+'</span></td>'+
+        '<td class="center"><div>'+scoreBadgeHtml(r)+'</div><small class="score-coverage">'+esc(scoreCoverageText(r))+'</small></td>'+
+        '<td class="center '+metricClass(num(r.profit_yoy_pct))+'">'+pct(num(r.profit_yoy_pct))+'</td>'+
+        '<td class="center">'+pct(num(r.roea_pct))+'</td>'+
+        '<td class="center">'+(num(r.pe)===null?'—':num(r.pe).toFixed(2)+'x')+'</td>'+
+        '<td class="center">'+(num(r.pb)===null?'—':num(r.pb).toFixed(2)+'x')+'</td>'+
+        '<td class="center">'+(m?'<span class="signal-pill '+signalClass(m.signalCount)+'">'+m.signalCount+'/4</span>':'—')+'</td>'+
+        '<td class="center"><span class="freshness-tag freshness-'+String(r.freshness_status||'').toLowerCase()+'">'+esc(freshnessLabel(r.freshness_status))+'</span></td>'+
+      '</tr>';
+    }).join('');
+    return '<main class="wrap fund-main"><section class="page-intro"><span class="eyebrow">SÀNG LỌC NỀN TẢNG DOANH NGHIỆP</span><h1>Sàng lọc cơ bản</h1><p>Dùng các chỉ tiêu tài chính để tìm doanh nghiệp phù hợp với tiêu chí của bạn. Mỗi mã vẫn được giữ nếu thiếu dữ liệu và website ghi rõ phần nào chưa thể chấm.</p></section>'+scoreMethodHtml()+'<section class="panel fund-filters"><div class="filter-block"><p class="filter-label">Mức Điểm cơ bản</p><div class="filter-help">Ví dụ 70% nghĩa là doanh nghiệp đạt ít nhất 70% số điểm trên những chỉ tiêu hiện có.</div><div class="chips">'+scoreBtns+'</div></div><div class="filter-block"><p class="filter-label">Tăng trưởng lợi nhuận sau thuế</p><div class="chips">'+growthBtns+'</div></div><div class="filter-block"><p class="filter-label">ROE – lợi nhuận trên vốn chủ sở hữu</p><div class="chips">'+roeBtns+'</div></div></section><p class="result-info">Đang hiển thị <strong>'+rows.length+'</strong> / '+state.financialRows.length+' mã trong danh sách theo dõi. Mã thiếu dữ liệu vẫn được giữ để bạn nhận biết.</p><section class="panel screener-table-panel"><div class="desktop-table"><div class="table-shell screener-table-shell"><table class="fundamental-table screener-table"><thead><tr><th>'+metricHead('Mã cổ phiếu','')+'</th><th>'+metricHead('Ngành','Nhóm hoạt động chính')+'</th><th>'+metricHead('Điểm cơ bản','Điểm đạt / điểm có thể chấm')+'</th><th>'+metricHead('Tăng trưởng lợi nhuận','So với cùng kỳ năm trước')+'</th><th>'+metricHead('ROE','Lợi nhuận / vốn chủ sở hữu')+'</th><th>'+metricHead('P/E','Giá / lợi nhuận')+'</th><th>'+metricHead('P/B','Giá / giá trị sổ sách')+'</th><th>'+metricHead('Tín hiệu kỹ thuật','Số tín hiệu đang đạt')+'</th><th>'+metricHead('Dữ liệu','Mức độ cập nhật')+'</th></tr></thead><tbody>'+tableRows+'</tbody></table></div></div><div class="mobile-list fund-mobile-list">'+rows.map(financialCard).join('')+'</div></section><p class="disclaimer">Điểm số hỗ trợ sàng lọc và học phân tích, không phải khuyến nghị mua/bán.</p></main>';
+  }
+  function headerHtml() {
+    var m = state.meta || {};
+    var good = !state.error && (!m.systemStatus || m.systemStatus === "OK");
+    var liveText = state.fetching && !state.rows.length ? "ĐANG TẢI" : "LIVE";
+    return '<aside class="side-nav">' +
+      '<a class="brand" href="/" aria-label="VNStock Market Scanner"><span class="brand-mark"><i></i><i></i><i></i><b>↗</b></span><span><strong>VNStock</strong><small>Market Scanner</small></span></a>' +
+      '<nav class="side-links"><a href="/" class="' + (state.route === 'overview' ? 'active' : '') + '"><span class="nav-ico">⌂</span><span>Tổng quan</span></a><a href="/danh-sach" class="' + (state.route === 'list' ? 'active' : '') + '"><span class="nav-ico">▦</span><span>Danh sách cổ phiếu</span></a><a href="/so-sanh-theo-nganh" class="' + (state.route === 'industry' ? 'active' : '') + '"><span class="nav-ico">◫</span><span>So sánh theo ngành</span></a><a href="/sang-loc-co-ban" class="' + (state.route === 'fundamental' ? 'active' : '') + '"><span class="nav-ico">◎</span><span>Sàng lọc cơ bản</span></a></nav>' +
+      '<div class="side-live"><div class="side-live-title">LIVE SCAN <span>⚡</span></div><p>Quét theo chu kỳ thị trường</p><b><i></i>Cập nhật liên tục</b></div>' +
+      '<div class="side-foot"><small>Cập nhật gần nhất</small><strong>' + esc(m.marketUpdatedAt || '—') + '</strong><small>Phiên giao dịch</small><span class="market-badge">' + (good ? 'HỆ THỐNG ỔN ĐỊNH' : 'CẦN KIỂM TRA') + '</span></div>' +
+      '</aside>' +
+      '<header class="header"><div class="wrap header-inner">' +
+      '<div class="topbar"><div class="mobile-brand"><span class="mobile-brand-mark">↗</span><div><strong>VNStock</strong><small>Market Scanner</small></div></div>' +
+      '<div class="market-status"><i class="dot"></i>' + (state.error ? 'DỮ LIỆU TẠM GIÁN ĐOẠN' : good ? 'HỆ THỐNG ĐANG HOẠT ĐỘNG' : 'HỆ THỐNG CÓ CẢNH BÁO') + '</div>' +
+      '<div class="top-actions"><span class="refresh-caption">Hệ thống tự động cập nhật sau: <b id="countdown">—</b></span><button id="theme-toggle" class="theme-toggle" type="button" aria-label="Đổi giao diện" title="Đổi Light / Dark"><span class="theme-icon">' + (state.theme === 'light' ? '☾' : '☀') + '</span><span class="theme-label">' + (state.theme === 'light' ? 'Dark' : 'Light') + '</span></button><button id="refresh-btn" class="refresh-btn" type="button" ' + (state.fetching ? 'disabled' : '') + '><span class="refresh-icon">↻</span><span>Làm mới</span></button></div></div>' +
+      '<section class="meta-grid"><div class="meta-item purple"><span class="meta-icon">◉</span><div><p class="meta-label">Dữ liệu thị trường</p><p class="meta-value">' + esc(m.marketUpdatedAt || '—') + '</p></div></div><div class="meta-item blue"><span class="meta-icon">◇</span><div><p class="meta-label">Dashboard kiểm tra</p><p class="meta-value">' + esc(m.dashboardCheckedAt || '—') + '</p></div></div><div class="meta-item orange"><span class="meta-icon">▱</span><div><p class="meta-label">Tổng mã theo dõi</p><p class="meta-value">' + esc(m.totalSymbols || state.rows.length || '—') + ' mã</p></div></div><div class="meta-item green"><span class="meta-icon">◫</span><div><p class="meta-label">Nguồn dữ liệu</p><p class="meta-value">Chuyện Chợ Chứng</p></div></div></section>' +
+      '<div class="auto-refresh-mobile">Hệ thống tự động cập nhật sau: <b id="mobile-countdown">—</b></div>' +
+      (state.error ? '<div class="error-banner">' + esc(state.error) + (state.rows.length ? ' — đang giữ dữ liệu gần nhất.' : '') + '</div>' : '') +
+      '</div></header>' +
+      '<nav class="mobile-bottom"><a href="/" class="' + (state.route === 'overview' ? 'active' : '') + '"><span>⌂</span><small>Tổng quan</small></a><a href="/danh-sach" class="' + (state.route === 'list' ? 'active' : '') + '"><span>☷</span><small>Danh sách</small></a><a href="/so-sanh-theo-nganh" class="' + (state.route === 'industry' ? 'active' : '') + '"><span>◫</span><small>Theo ngành</small></a><a href="/sang-loc-co-ban" class="' + (state.route === 'fundamental' ? 'active' : '') + '"><span>◎</span><small>Cơ bản</small></a></nav>';
+  }
+  var signals = [
+    ["", "Tất cả tín hiệu"], ["4of4", "Đủ 4/4"], ["3plus", "Từ 3 tín hiệu"], ["2plus", "Từ 2 tín hiệu"],
+    ["rvol30", "RVOL30 ≥ 200%"], ["price3", "Giá tăng ≥ 3%"], ["vol200", "KL ngày ≥ 200%"], ["abovema200", "Trên MA200"], ["missing", "Thiếu dữ liệu"]
+  ];
+  var sorts = [
+    ["signal", "Ưu tiên tín hiệu"], ["rvol30", "RVOL30 cao nhất"], ["rvol30Asc", "RVOL30 thấp nhất"],
+    ["change", "% tăng cao nhất"], ["changeAsc", "% tăng thấp nhất"], ["volume", "KL ngày cao nhất"], ["volumeAsc", "KL ngày thấp nhất"],
+    ["ma10Near", "Gần MA10 nhất"], ["ma200Near", "Gần MA200 nhất"], ["symbol", "Mã A–Z"]
+  ];
+  function stockCard(r) {
+    var tags = signalItems(r).map(function(item) {
+      return '<span class="signal-tag ' + (item[1] ? 'passed' : 'missed') + '">' + esc(item[0]) + '</span>';
+    }).join('');
+    return '<article class="stock-card ' + signalTone(r.signalCount) + (r.signalRvol30_200pct ? ' early-card' : '') + '" data-symbol="' + esc(r.symbol) + '">' +
+      '<div class="stock-top"><div class="stock-heading"><div class="stock-name-row">' + logoHtml(r.symbol, 'card-logo') + '<div><div class="stock-name"><b>' + esc(r.symbol) + '</b><span class="stock-exchange">' + esc(r.exchange) + '</span></div></div></div>' +
+      '<p class="stock-price">' + formatPrice(r.currentPrice) + ' <span class="' + metricClass(r.changePct) + '">' + pct(r.changePct) + '</span></p>' +
+      '<p class="stock-ma10">MA10 tham khảo: <span class="' + metricClass(r.ma10DistancePct) + '">' + pct(r.ma10DistancePct) + '</span></p></div>' +
+      '<span class="signal-pill ' + signalClass(r.signalCount) + '">' + r.signalCount + '/4</span></div>' +
+      '<div class="stock-grid"><div><small>KL ngày</small><b>' + plainPct(r.dayVolumeRatioPct) + '</b></div><div><small>Cách MA200</small><b class="' + metricClass(r.ma200DistancePct) + '">' + pct(r.ma200DistancePct) + '</b></div><div><small>RVOL30</small><b class="' + (r.signalRvol30_200pct ? 'early-text' : '') + '">' + plainPct(r.rvol30Pct) + '</b></div><div><small>Phiên RVOL30</small><b>' + r.rvol30Sessions + '/10</b></div></div>' +
+      '<div class="signal-tags">' + tags + '</div>' +
+      (r.hasMissingData ? '<p class="missing-note">' + esc(r.note || 'Thiếu dữ liệu') + '</p>' : '') + '</article>';
+  }
+  function listHtml() {
+    var all = filteredRows();
+    var pages = Math.max(1, Math.ceil(all.length / pageSize));
+    if (state.page > pages) state.page = pages;
+    var shown = all.slice((state.page - 1) * pageSize, state.page * pageSize);
+    var chips = signals.map(function (s) { return '<button type="button" class="chip ' + (state.signal === s[0] ? 'active' : '') + '" data-filter="signal" data-value="' + esc(s[0]) + '">' + esc(s[1]) + '</button>'; }).join('');
+    var exchanges = [["all","Tất cả"],["hose","HOSE"],["hnx","HNX"],["upcom","UPCoM"]].map(function (x) { return '<button type="button" class="chip ' + (state.exchange === x[0] ? 'active' : '') + '" data-filter="exchange" data-value="' + x[0] + '">' + x[1] + '</button>'; }).join('');
+    var sortChips = sorts.map(function (s) { return '<button type="button" class="chip ' + (state.sort === s[0] ? 'active' : '') + '" data-filter="sort" data-value="' + s[0] + '">' + esc(s[1]) + '</button>'; }).join('');
+    var rows = shown.map(function (r) { return '<tr data-symbol="' + esc(r.symbol) + '"><td class="symbol"><div class="table-symbol-cell">' + logoHtml(r.symbol, 'table-logo') + '<b>' + esc(r.symbol) + '</b></div></td><td class="muted">' + esc(r.exchange) + '</td><td class="num">' + formatPrice(r.currentPrice) + '</td><td class="num ' + metricClass(r.changePct) + '">' + pct(r.changePct) + '</td><td class="num">' + plainPct(r.dayVolumeRatioPct) + '</td><td class="num ' + metricClass(r.ma10DistancePct) + '">' + pct(r.ma10DistancePct) + '</td><td class="num ' + metricClass(r.ma200DistancePct) + '">' + pct(r.ma200DistancePct) + '</td><td class="num">' + plainPct(r.rvol30Pct) + '</td><td class="num muted">' + r.rvol30Sessions + '/10</td><td class="center"><span class="signal-pill ' + signalClass(r.signalCount) + '">' + r.signalCount + '/4</span></td><td class="muted">' + (r.hasMissingData ? 'Thiếu dữ liệu' : 'Đầy đủ') + '</td></tr>'; }).join('');
+    var results = shown.length ? '<div class="desktop-table panel"><div class="table-shell"><table class="scanner-table"><thead><tr><th>Mã</th><th>Sàn</th><th class="num">Giá</th><th class="num">% thay đổi</th><th class="num">KL ngày</th><th class="num">Cách MA10</th><th class="num">Cách MA200</th><th class="num">RVOL30</th><th class="num">Phiên RVOL30</th><th class="center">Tín hiệu</th><th>Trạng thái dữ liệu</th></tr></thead><tbody>' + rows + '</tbody></table></div></div><div class="mobile-list">' + shown.map(stockCard).join('') + '</div>' : '<div class="empty">Không tìm thấy mã phù hợp với bộ lọc hiện tại.</div>';
+    return '<main class="wrap"><section class="panel filters"><div class="search-row"><div class="search-box"><span class="search-icon">⌕</span><input id="stock-search" type="text" inputmode="search" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" aria-label="Tìm theo mã cổ phiếu" placeholder="Tìm theo mã cổ phiếu…" value="' + esc(state.query) + '"></div><button id="search-btn" class="search-btn" type="button">Tìm</button><button id="clear-btn" class="clear-btn" type="button">Xóa tìm kiếm</button></div>' +
+      '<div class="filter-block"><p class="filter-label">Sàn giao dịch</p><div class="chips">' + exchanges + '</div></div><div class="filter-block"><p class="filter-label">Bộ lọc tín hiệu</p><div class="chips">' + chips + '</div></div><div class="filter-block"><p class="filter-label">Sắp xếp</p><div class="chips sort-chips">' + sortChips + '</div></div></section>' +
+      '<p class="result-info">Hiển thị <strong>' + all.length + '</strong> / ' + state.rows.length + ' mã theo dõi.</p>' + results +
+      (pages > 1 ? '<div class="pager"><button id="prev-page" type="button" ' + (state.page === 1 ? 'disabled' : '') + '>Trang trước</button><span>Trang ' + state.page + '/' + pages + '</span><button id="next-page" type="button" ' + (state.page === pages ? 'disabled' : '') + '>Trang sau</button></div>' : '') +
+      '<p class="disclaimer">Công cụ quét dữ liệu, không đưa ra khuyến nghị mua/bán.</p></main>';
+  }
+  function overviewHtml() {
+    var total = state.rows.length;
+    var counts = [4,3,2,1].map(function (n) { return state.rows.filter(function (r) { return r.signalCount === n; }).length; });
+    var early = state.rows.filter(function (r) { return r.signalRvol30_200pct; }).sort(priority);
+    var kpis = [
+      ["Cảnh báo sớm RVOL30", "RVOL30 ≥ 200%", early.length, "rvol30", "kpi-early", "⚡"],
+      ["Đủ 4/4 tín hiệu", "Tín hiệu rất mạnh", counts[0], "4of4", "kpi-sig4", "4/4"],
+      ["Từ 3 tín hiệu trở lên", "Bao gồm nhóm 4/4", counts[0] + counts[1], "3plus", "kpi-sig3", "≥3"],
+      ["Từ 2 tín hiệu trở lên", "Bao gồm nhóm 3/4 và 4/4", counts[0] + counts[1] + counts[2], "2plus", "kpi-sig2", "≥2"]
+    ].map(function (k) { return '<a class="kpi ' + k[4] + '" href="/danh-sach?signal=' + k[3] + '"><div class="kpi-top"><small>' + k[0] + '</small><i>ⓘ</i></div><div class="kpi-main"><strong>' + k[2] + '</strong><span class="kpi-semantic">' + k[5] + '</span></div><span class="kpi-note">' + k[1] + '</span></a>'; }).join('');
+    var groups = [
+      [4, "4/4 — Tín hiệu rất mạnh", "Hội tụ đủ 4 điều kiện quét", "group4"],
+      [3, "3/4 — Tín hiệu mạnh", "Thiếu một điều kiện", "group3"],
+      [2, "2/4 — Đang hình thành", "Cần theo dõi thêm", "group2"],
+      [1, "1/4 — Tín hiệu ban đầu", "Mới xuất hiện một điều kiện", "group1"]
+    ];
+    var earlyHtml = '<section class="group-section early-section"><div class="group-head"><div><h2><span class="section-icon">⚡</span>Cảnh báo dòng tiền sớm <span class="count-badge early-count">' + early.length + ' mã</span></h2><p>Mã có RVOL30 ≥ 200% — khối lượng 30 phút gần nhất vượt trung bình cùng khung giờ.</p></div><a href="/danh-sach?signal=rvol30">Xem tất cả <span>›</span></a></div>' +
+      (early.length ? '<div class="group-grid">' + early.map(stockCard).join('') + '</div>' : '<div class="empty">Chưa có mã nào đạt RVOL30 ≥ 200%.</div>') + '</section>';
+    var html = groups.map(function (g) {
+      var rows = state.rows.filter(function(r){ return r.signalCount === g[0]; }).sort(priority);
+      var items = g[0] === 1 ? rows.slice(0, 6) : rows;
+      return '<section class="group-section ' + g[3] + '"><div class="group-head"><div><h2><i class="group-dot"></i>' + esc(g[1]) + ' <span class="count-badge">' + rows.length + ' mã</span></h2><p>' + esc(g[2]) + '</p></div>' + (g[0] === 1 && rows.length > 6 ? '<a href="/danh-sach?signal=exactly1">Xem tất cả</a>' : '') + '</div>' +
+        (items.length ? '<div class="group-grid">' + items.map(stockCard).join('') + '</div>' : '<div class="empty">Không có mã nào trong nhóm này.</div>') + '</section>';
+    }).join('');
+    return '<main class="wrap overview-main"><section aria-label="Tổng hợp tín hiệu dòng tiền" class="kpis">' + kpis + '</section>' + earlyHtml + html + '<p class="disclaimer">Công cụ quét dữ liệu, không đưa ra khuyến nghị mua/bán.</p></main>';
+  }
+  function dialogHtml() {
+    var r = state.selected;
+    if (!r) return '<div id="dialog" class="dialog-backdrop" hidden></div>';
+    var f=financialBySymbol(r.symbol), score=f?financialScore(f):null;
+    var details = [["Sàn",r.exchange],["Giá hiện tại",formatPrice(r.currentPrice)],["% thay đổi",pct(r.changePct)],["KL lũy kế",shortVolume(r.cumVolume)],["KLTB10",shortVolume(r.avgVolume10)],["KL ngày / KLTB10",plainPct(r.dayVolumeRatioPct)],["MA10",formatPrice(r.ma10)],["Cách MA10",pct(r.ma10DistancePct)],["MA200",formatPrice(r.ma200)],["Cách MA200",pct(r.ma200DistancePct)],["RVOL30",plainPct(r.rvol30Pct)],["Số phiên RVOL30",r.rvol30Sessions + '/10']];
+    var fund='';
+    if(f){
+      var parts=score.parts.map(function(p){return '<div class="score-part"><span><b>'+esc(p.name)+'</b><small>'+esc(p.detail||'')+'</small></span><strong>'+p.earned+'/'+p.max+'</strong></div>';}).join('');
+      var badges=score.badges.map(function(x){return '<span class="analysis-badge">'+esc(x)+'</span>';}).join('');
+      var qs=state.quarterlyBySymbol[r.symbol]||[];
+      var qhtml=state.quarterlyLoading[r.symbol]?'<div class="quarter-loading">Đang tải lịch sử quý…</div>':state.quarterlyError[r.symbol]?'<div class="quarter-loading">'+esc(state.quarterlyError[r.symbol])+'</div>':qs.length?'<div class="quarter-table"><table><thead><tr><th>Kỳ</th><th class="num">Doanh thu / thu nhập</th><th class="num">Lợi nhuận sau thuế</th><th class="num">Tăng so cùng kỳ</th><th class="num">ROE</th></tr></thead><tbody>'+qs.slice(0,9).map(function(q){return '<tr><td>'+esc(q.period)+'</td><td class="num">'+moneyBil(q.income_bil_vnd)+'</td><td class="num">'+moneyBil(q.parent_net_profit_bil_vnd||q.net_profit_bil_vnd)+'</td><td class="num '+metricClass(num(q.profit_yoy_pct))+'">'+pct(num(q.profit_yoy_pct))+'</td><td class="num">'+pct(num(q.roea_pct))+'</td></tr>';}).join('')+'</tbody></table></div>':'<div class="quarter-loading">Chưa có lịch sử quý.</div>';
+      fund='<section class="dialog-section"><div class="fund-summary"><div><span class="eyebrow">ĐIỂM CƠ BẢN</span><div class="big-score '+scoreClass(score)+'">'+esc(score.label)+'</div><p>Độ phủ chấm điểm: '+score.coverage+'% · '+esc(f.website_group||'—')+'</p></div><div class="fund-kpis"><div><small>Lợi nhuận sau thuế<br>so với cùng kỳ</small><b class="'+metricClass(num(f.profit_yoy_pct))+'">'+pct(num(f.profit_yoy_pct))+'</b></div><div><small>ROE<br>Lợi nhuận / vốn chủ</small><b>'+pct(num(f.roea_pct))+'</b></div><div><small>P/E<br>Giá / lợi nhuận</small><b>'+(num(f.pe)===null?'—':num(f.pe).toFixed(2)+'x')+'</b></div><div><small>P/B<br>Giá / giá trị sổ sách</small><b>'+(num(f.pb)===null?'—':num(f.pb).toFixed(2)+'x')+'</b></div></div></div><div class="analysis-badges">'+badges+'</div><div class="score-parts">'+parts+'</div></section><section class="dialog-section"><div class="section-title"><div><h3>Lịch sử tài chính theo quý</h3><p>Lịch sử tài chính theo quý đã lưu trong hệ thống.</p></div></div>'+qhtml+'</section>';
+    } else fund='<section class="dialog-section"><div class="quarter-loading">Mã này chưa có dữ liệu cơ bản trong financial_latest.</div></section>';
+    var m=state.metadataBySymbol[r.symbol]||{};
+    var companyFull=m.company_name||"";
+    var companyShort=m.display_name||companyFull||"";
+    var groupName=(f&&f.website_group)||m.website_group||"";
+    var companyHeader=(companyFull||companyShort)?'<div class="dialog-company"><span class="company-full">'+esc(companyFull||companyShort)+'</span><span class="company-short">'+esc(companyShort||companyFull)+'</span>'+(groupName?'<small>'+esc(groupName)+'</small>':'')+'</div>':(groupName?'<div class="dialog-company"><small>'+esc(groupName)+'</small></div>':'');
+    var vietstockBctcUrl='https://finance.vietstock.vn/'+encodeURIComponent(String(r.symbol||'').toUpperCase())+'/tai-chinh.htm?tab=BCTT';
+    var bctc='<section class="dialog-section bctc-access bctc-vietstock"><div class="bctc-copy"><span class="eyebrow">BÁO CÁO TÀI CHÍNH</span><h3>Tài liệu của '+esc(r.symbol)+'</h3><p>Xem Báo cáo tài chính và các tài liệu công bố doanh nghiệp trên VietstockFinance.</p><div class="bctc-source">Nguồn tài liệu: <strong>VietstockFinance</strong></div></div><a class="bctc-open" href="'+esc(vietstockBctcUrl)+'" target="_blank" rel="noopener noreferrer">Xem BCTC trên Vietstock ↗</a></section>';
+    return '<div id="dialog" class="dialog-backdrop"><section class="dialog dialog-wide" role="dialog" aria-modal="true" aria-label="Chi tiết ' + esc(r.symbol) + '"><div class="dialog-head"><div class="dialog-symbol">' + logoHtml(r.symbol, 'dialog-logo') + '<div class="dialog-title-block"><div class="dialog-title-row"><h2>' + esc(r.symbol) + ' · <span class="signal-pill ' + signalClass(r.signalCount) + '">' + r.signalCount + '/4</span></h2>'+companyHeader+'</div></div></div><button id="dialog-close" class="dialog-close" type="button" aria-label="Đóng">×</button></div><div class="dialog-body"><section class="dialog-section"><div class="section-title"><div><h3>Tín hiệu kỹ thuật</h3><p>Snapshot gần nhất của hệ thống scanner.</p></div></div><div class="detail-grid">' + details.map(function(d){return '<div class="detail"><small>'+esc(d[0])+'</small><b>'+esc(d[1])+'</b></div>';}).join('') + '</div></section>'+fund+bctc+'</div></section></div>';
+  }
+  function render() {
+    var body = state.route === "list" ? listHtml() : state.route === "industry" ? industryHtml() : state.route === "fundamental" ? fundamentalHtml() : overviewHtml();
+    app.innerHTML = headerHtml() + body + dialogHtml();
+    bind();
+    updateClock();
+  }
+  function bind() {
+    document.querySelectorAll(".company-logo-img").forEach(function (img) {
+      img.addEventListener("load", function () { img.parentElement.classList.add("has-logo"); });
+      img.addEventListener("error", function () { img.remove(); });
+      if (img.complete && img.naturalWidth > 0) img.parentElement.classList.add("has-logo");
+    });
+    var themeToggle = document.getElementById("theme-toggle");
+    if (themeToggle) themeToggle.addEventListener("click", function () {
+      state.theme = state.theme === "light" ? "dark" : "light";
+      document.documentElement.setAttribute("data-theme", state.theme);
+      try { localStorage.setItem(THEME_KEY, state.theme); } catch (_) {}
+      render();
+    });
+    var refresh = document.getElementById("refresh-btn");
+    if (refresh) refresh.addEventListener("click", function () { fetchData(true); });
+    var mobileRefresh = document.getElementById("mobile-refresh");
+    if (mobileRefresh) mobileRefresh.addEventListener("click", function () { fetchData(true); });
+    document.querySelectorAll("[data-symbol]").forEach(function (el) { el.addEventListener("click", function () { openSymbol(el.getAttribute("data-symbol")); }); });
+    document.querySelectorAll("[data-industry]").forEach(function(el){el.addEventListener("click",function(){state.industryGroup=el.getAttribute("data-industry")||"";render();window.scrollTo(0,0);});});
+    document.querySelectorAll("[data-fund-filter]").forEach(function(el){el.addEventListener("click",function(){var t=el.getAttribute("data-fund-filter"),v=el.getAttribute("data-value");if(t==="score")state.fundamentalMinScore=Number(v)||0;if(t==="growth")state.fundamentalProfitGrowth=v;if(t==="roe")state.fundamentalRoe=v;render();});});
+    var close = document.getElementById("dialog-close");
+    if (close) close.addEventListener("click", closeDialog);
+    var backdrop = document.getElementById("dialog");
+    if (backdrop && !backdrop.hidden) backdrop.addEventListener("click", function(e){ if(e.target===backdrop) closeDialog(); });
+    if (state.route !== "list") return;
+    var input = document.getElementById("stock-search");
+    var submit = function () { state.query = input.value; state.page = 1; render(); };
+    document.getElementById("search-btn").addEventListener("click", submit);
+    input.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); submit(); } });
+    document.getElementById("clear-btn").addEventListener("click", function () { state.query = ""; state.page = 1; render(); });
+    document.querySelectorAll("[data-filter]").forEach(function (button) { button.addEventListener("click", function () { state[button.getAttribute("data-filter")] = button.getAttribute("data-value"); state.page = 1; render(); }); });
+    var prev = document.getElementById("prev-page"); if (prev) prev.addEventListener("click", function(){state.page--;render();window.scrollTo(0,0);});
+    var next = document.getElementById("next-page"); if (next) next.addEventListener("click", function(){state.page++;render();window.scrollTo(0,0);});
+  }
+  function openSymbol(symbol) {
+    state.selected = state.rows.find(function(r){return r.symbol===symbol;}) || {symbol:String(symbol||"").toUpperCase(),exchange:"—",signalCount:0,currentPrice:null,changePct:null,cumVolume:null,avgVolume10:null,dayVolumeRatioPct:null,ma10:null,ma10DistancePct:null,ma200:null,ma200DistancePct:null,rvol30Pct:null,rvol30Sessions:0};
+    render();
+    if (!state.quarterlyBySymbol[symbol] && !state.quarterlyLoading[symbol]) fetchQuarterly(symbol);
+  }
+  async function fetchQuarterly(symbol) {
+    state.quarterlyLoading[symbol]=true; state.quarterlyError[symbol]=""; render();
+    try {
+      var url=SUPABASE_URL+"/rest/v1/financial_quarterly?select=*&symbol=eq."+encodeURIComponent(symbol)+"&order=year.desc,quarter.desc";
+      var res=await fetch(url,{cache:"no-store",headers:{"apikey":SUPABASE_KEY,"Accept":"application/json"}});
+      if(!res.ok)throw new Error("HTTP "+res.status);
+      var data=await res.json(); state.quarterlyBySymbol[symbol]=Array.isArray(data)?data:[];
+    } catch(e){state.quarterlyError[symbol]="Không tải được lịch sử quý: "+(e&&e.message?e.message:"Lỗi dữ liệu");}
+    state.quarterlyLoading[symbol]=false; render();
+  }
+  function closeDialog() { state.selected = null; render(); }
+  function extractCached() {
+    try {
+      var own = JSON.parse(localStorage.getItem(CACHE_KEY) || "null");
+      if (own && Array.isArray(own.rows) && own.rows.length >= EXPECTED_UNIVERSE_COUNT) return own;
+      var legacy = JSON.parse(localStorage.getItem(LEGACY_CACHE_KEY) || "null");
+      if (legacy && legacy.data && Array.isArray(legacy.data.rows) && legacy.data.rows.length >= EXPECTED_UNIVERSE_COUNT) {
+        return { rows: legacy.data.rows, meta: legacy.data.meta || {}, savedAt: legacy.savedAt };
+      }
+    } catch (_) {}
+    return null;
+  }
+  function applyData(raw) {
+    var rows = (raw.rows || []).map(normalize);
+    state.rows = rows;
+    state.meta = getMeta(raw, rows);
+    state.error = "";
+    var latest = rows.reduce(function (best, r) {
+      var ms = Date.parse(r.updatedAt);
+      return Number.isFinite(ms) && ms > best ? ms : best;
+    }, 0);
+    state.latestUpdateMs = latest || null;
+    state.nextRefresh = state.latestUpdateMs ? state.latestUpdateMs + AUTO_REFRESH_INTERVAL_MS : null;
+    state.waitingForNewData = false;
+  }
+  async function fetchFinancial() {
+    try {
+      var response=await fetch(FINANCIAL_API_URL,{method:"GET",cache:"no-store",headers:{"apikey":SUPABASE_KEY,"Accept":"application/json"}});
+      if(!response.ok)throw new Error("HTTP "+response.status);
+      var data=await response.json();
+      state.financialRows=Array.isArray(data)?data:[];
+      state.financialBySymbol={}; state.financialRows.forEach(function(r){state.financialBySymbol[String(r.symbol||"").toUpperCase()]=r;});
+      state.financialLoaded=true; state.financialError="";
+    } catch(e){state.financialError="Không tải được dữ liệu cơ bản.";}
+  }
+  async function fetchMetadata() {
+    try {
+      var response=await fetch(METADATA_API_URL,{method:"GET",cache:"no-store",headers:{"apikey":SUPABASE_KEY,"Accept":"application/json"}});
+      if(!response.ok)throw new Error("HTTP "+response.status);
+      var data=await response.json();
+      state.metadataRows=Array.isArray(data)?data:[];
+      state.metadataBySymbol={}; state.metadataRows.forEach(function(r){state.metadataBySymbol[String(r.symbol||"").toUpperCase()]=r;});
+      state.metadataLoaded=true; state.metadataError="";
+    } catch(e){state.metadataError="Không tải được tên công ty.";}
+  }
+  async function fetchData(manual) {
+    if (state.fetching) return;
+    state.fetching = true;
+    render();
+    var controller = new AbortController();
+    var timeout = setTimeout(function(){ controller.abort(); }, 30000);
+    try {
+      var response = await fetch(API_URL, {
+        method: "GET",
+        cache: "no-store",
+        signal: controller.signal,
+        headers: {
+          "apikey": SUPABASE_KEY,
+          "Accept": "application/json"
+        }
+      });
+      if (!response.ok) throw new Error("HTTP " + response.status);
+      var rows = await response.json();
+      if (!Array.isArray(rows)) throw new Error("Supabase trả về dữ liệu không hợp lệ");
+      if (rows.length < EXPECTED_UNIVERSE_COUNT) throw new Error("Supabase chỉ trả " + rows.length + "/" + EXPECTED_UNIVERSE_COUNT + " mã; giữ dữ liệu đủ gần nhất");
+      var raw = {
+        ok: true,
+        rows: rows,
+        meta: {
+          systemStatus: rows.some(function(r){ return ["MISSING_MARKET_DATA", "ERROR"].indexOf(r.data_status) >= 0; }) ? "DEGRADED" : "OK",
+          totalSymbols: rows.length,
+          dataSource: "Supabase"
+        }
+      };
+      applyData(raw);
+      try { localStorage.setItem(CACHE_KEY, JSON.stringify({ rows: raw.rows, meta: raw.meta || {}, savedAt: Date.now() })); } catch (_) {}
+    } catch (error) {
+      state.error = error && error.name === "AbortError" ? "Nguồn dữ liệu phản hồi quá 30 giây" : "Không thể tải dữ liệu: " + (error && error.message ? error.message : "Lỗi không xác định");
+    } finally {
+      clearTimeout(timeout);
+      state.fetching = false;
+      render();
+    }
+  }
+  function vietnamParts(ms) {
+    var parts = new Intl.DateTimeFormat("en-GB", { timeZone:"Asia/Ho_Chi_Minh", year:"numeric", month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit", second:"2-digit", hour12:false }).formatToParts(new Date(ms));
+    var out = {}; parts.forEach(function(p){out[p.type]=Number(p.value);}); return out;
+  }
+  function inAutoRefreshWindow(ms) {
+    var p=vietnamParts(ms);
+    var day=new Date(Date.UTC(p.year,p.month-1,p.day)).getUTCDay();
+    var n=p.hour*60+p.minute+p.second/60;
+    if(day===0||day===6) return false;
+    // Cho phep them it phut sau cuoi phien de nhan ket qua run 11:30 / 15:00.
+    return (n>=540&&n<696)||(n>=780&&n<906);
+  }
+  function setCountdownText(text, mode) {
+    [document.getElementById("countdown"), document.getElementById("mobile-countdown")].forEach(function(el){
+      if(!el) return;
+      el.textContent=text;
+      el.classList.toggle("waiting", mode==="waiting");
+      el.classList.toggle("outside", mode==="outside");
+    });
+  }
+  async function pollLatestVersion() {
+    if(state.versionPolling || state.fetching) return;
+    state.versionPolling=true;
+    state.lastVersionPollAt=Date.now();
+    var controller=new AbortController();
+    var timeout=setTimeout(function(){controller.abort();},10000);
+    try{
+      var response=await fetch(LATEST_API_URL,{method:"GET",cache:"no-store",signal:controller.signal,headers:{"apikey":SUPABASE_KEY,"Accept":"application/json"}});
+      if(!response.ok) throw new Error("HTTP "+response.status);
+      var rows=await response.json();
+      var latest=rows&&rows[0] ? Date.parse(rows[0].updated_at) : NaN;
+      if(Number.isFinite(latest) && (!state.latestUpdateMs || latest>state.latestUpdateMs+500)){
+        await fetchData(false);
+      }
+    }catch(_){
+      // Loi poll tam thoi khong lam mat du lieu dang hien thi.
+    }finally{
+      clearTimeout(timeout);
+      state.versionPolling=false;
+    }
+  }
+  function updateClock() {
+    var now=Date.now();
+    if(!inAutoRefreshWindow(now)){
+      state.waitingForNewData=false;
+      setCountdownText("Ngoài giờ hoạt động","outside");
+      return;
+    }
+    if(!state.latestUpdateMs){
+      state.waitingForNewData=true;
+      setCountdownText("Đang chờ dữ liệu mới…","waiting");
+    }else{
+      state.nextRefresh=state.latestUpdateMs+AUTO_REFRESH_INTERVAL_MS;
+      if(now<state.nextRefresh){
+        state.waitingForNewData=false;
+        var seconds=Math.max(0,Math.ceil((state.nextRefresh-now)/1000));
+        setCountdownText(String(Math.floor(seconds/60)).padStart(2,"0")+":"+String(seconds%60).padStart(2,"0"),"countdown");
+      }else{
+        state.waitingForNewData=true;
+        setCountdownText("Đang chờ dữ liệu mới…","waiting");
+      }
+    }
+    if(state.waitingForNewData && now-state.lastVersionPollAt>=VERSION_POLL_INTERVAL_MS) pollLatestVersion();
+  }
+  setInterval(updateClock,1000);
+  document.addEventListener("keydown", function(e){if(e.key==="Escape"&&state.selected)closeDialog();});
+  var cached = extractCached();
+  if (cached) applyData(cached);
+  render();
+  fetchFinancial().then(function(){ render(); });
+  fetchMetadata().then(function(){ render(); });
+  fetchData(false);
+})();
