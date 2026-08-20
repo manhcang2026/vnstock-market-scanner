@@ -1,4 +1,4 @@
-v19.0-alpha.3
+v19.0-alpha.4
 STAGING — không phải production.
 Baseline: website/ v18.5-final800-near-ma.
-Overview: market aggregate, staging Watchlist, entitlement discovery và Plus preview.
+Scanner: locked membership UX, exact public search, Watchlist và market aggregate staging mock.

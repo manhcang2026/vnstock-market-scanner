@@ -6,7 +6,7 @@
   var API_URL = SUPABASE_URL + "/rest/v1/stock_snapshot?select=*&order=symbol.asc";
   var FINANCIAL_API_URL = SUPABASE_URL + "/rest/v1/financial_latest?select=*&order=symbol.asc";
   var METADATA_API_URL = SUPABASE_URL + "/rest/v1/stock_metadata?select=*&order=symbol.asc";
-  var CACHE_KEY = "vnstock_dashboard_raw_v19_0_alpha_3_staging_supabase_800";
+  var CACHE_KEY = "vnstock_dashboard_raw_v19_0_alpha_4_staging_supabase_800";
   var LEGACY_CACHE_KEY = "vnstock_dashboard_cache_v1";
   var THEME_KEY = "vnstock_dashboard_theme_v17";
   var LATEST_API_URL = SUPABASE_URL + "/rest/v1/stock_snapshot?select=updated_at&order=updated_at.desc&limit=1";
@@ -41,7 +41,8 @@
     industryGroup: new URLSearchParams(location.search).get("group") || "",
     fundamentalMinScore: 0, fundamentalProfitGrowth: "all", fundamentalRoe: "all",
     quarterlyBySymbol: {}, quarterlyLoading: {}, quarterlyError: {},
-    mockPlan: "FREE", mockChangeUsed: 3, discoveryGroup: "", upsellOpen: false
+    mockPlan: "FREE", mockChangeUsed: 3, discoveryGroup: "", upsellOpen: false,
+    scannerMode: "market", scannerFiltersOpen: false, scannerDialog: "", scannerDialogSymbol: ""
   };
 
   function esc(value) {
@@ -168,6 +169,18 @@
     var limit = plan.fullMarket ? Math.min(10, state.rows.length) : plan.watchlistLimit;
     return state.rows.slice().sort(priority).slice(0, limit);
   }
+  // STAGING MOCK ONLY — NOT A SECURITY BOUNDARY.
+  // Production must enforce entitlement before returning protected rows. This
+  // renderer only proves that locked market identities are not enumerated in DOM.
+  function isMockEntitled(row) {
+    if (mockPlan().fullMarket) return true;
+    return mockWatchlistRows().some(function (item) { return item.symbol === row.symbol; });
+  }
+  function exactSearchRow() {
+    var q = state.query.trim().toUpperCase();
+    if (!q) return null;
+    return state.rows.find(function (row) { return row.symbol === q; }) || null;
+  }
   function discoveryRows(key) {
     if (key === "4of4") return state.rows.filter(function(row){return row.signalCount === 4;}).sort(priority);
     if (key === "3plus") return state.rows.filter(function(row){return row.signalCount >= 3;}).sort(priority);
@@ -217,9 +230,9 @@
       return av - bv || priority(a, b);
     };
   }
-  function filteredRows() {
-    var q = state.query.trim().toUpperCase();
-    var rows = state.rows.filter(function (r) {
+  function filteredRows(sourceRows, includeQuery) {
+    var q = includeQuery ? state.query.trim().toUpperCase() : "";
+    var rows = (sourceRows || state.rows).filter(function (r) {
       return (!q || r.symbol.indexOf(q) >= 0) && (state.exchange === "all" || r.exchange.toLowerCase() === state.exchange) && signalPass(r, state.signal);
     });
     var sorters = {
@@ -471,7 +484,7 @@
     return '<aside class="side-nav">' +
       '<a class="brand" href="/" aria-label="Chuyện Chợ Chứng — Trang tổng quan"><span class="brand-mark">' + iconSvg('trend') + '</span><span class="brand-copy"><strong>CHUYỆN CHỢ CHỨNG</strong><small>Bộ quét cổ phiếu</small></span></a>' +
       '<nav class="side-links" aria-label="Điều hướng chính">' + navLink('/', 'overview', 'home', 'Tổng quan') + navLink('/danh-sach', 'list', 'list', 'Danh sách cổ phiếu') + navLink('/so-sanh-theo-nganh', 'industry', 'industry', 'So sánh theo ngành') + navLink('/sang-loc-co-ban', 'fundamental', 'fundamental', 'Sàng lọc cơ bản') + '</nav>' +
-      '<div class="side-foot"><span class="staging-badge">STAGING</span><strong>v19.0-alpha.3</strong><small>Không phải production</small></div>' +
+      '<div class="side-foot"><span class="staging-badge">STAGING</span><strong>v19.0-alpha.4</strong><small>Không phải production</small></div>' +
       '</aside>' +
       '<header class="header"><div class="wrap header-inner">' +
       '<div class="topbar"><div class="mobile-brand"><span class="mobile-brand-mark">' + iconSvg('trend') + '</span><div><strong>CHUYỆN CHỢ CHỨNG</strong><small>Bộ quét cổ phiếu</small></div></div>' +
@@ -496,34 +509,58 @@
     ["change", "% tăng cao nhất"], ["changeAsc", "% tăng thấp nhất"], ["volume", "KL ngày cao nhất"], ["volumeAsc", "KL ngày thấp nhất"],
     ["ma10Near", "Gần MA10 nhất"], ["ma200Near", "Gần MA200 nhất"], ["symbol", "Mã A–Z"]
   ];
-  function stockCard(r) {
-    var tags = signalItems(r).map(function(item) {
-      return '<span class="signal-tag ' + (item[1] ? 'passed' : 'missed') + '">' + esc(item[0]) + '</span>';
-    }).join('');
-    return '<article class="stock-card ' + signalTone(r.signalCount) + (r.signalRvol30_200pct ? ' early-card' : '') + '" data-symbol="' + esc(r.symbol) + '">' +
-      '<div class="stock-top"><div class="stock-heading"><div class="stock-name-row">' + logoHtml(r.symbol, 'card-logo') + '<div><div class="stock-name"><b>' + esc(r.symbol) + '</b><span class="stock-exchange">' + esc(r.exchange) + '</span></div></div></div>' +
-      '<p class="stock-price">' + formatPrice(r.currentPrice) + ' <span class="' + metricClass(r.changePct) + '">' + pct(r.changePct) + '</span></p>' +
-      '<p class="stock-ma10">MA10 tham khảo: <span class="' + metricClass(r.ma10DistancePct) + '">' + pct(r.ma10DistancePct) + '</span></p></div>' +
-      '<span class="signal-pill ' + signalClass(r.signalCount) + '">' + r.signalCount + '/4</span></div>' +
-      '<div class="stock-grid"><div><small>KL ngày</small><b>' + plainPct(r.dayVolumeRatioPct) + '</b></div><div><small>Cách MA200</small><b class="' + metricClass(r.ma200DistancePct) + '">' + pct(r.ma200DistancePct) + '</b></div><div><small>RVOL30</small><b class="' + (r.signalRvol30_200pct ? 'early-text' : '') + '">' + plainPct(r.rvol30Pct) + '</b></div><div><small>Phiên RVOL30</small><b>' + r.rvol30Sessions + '/10</b></div></div>' +
-      '<div class="signal-tags">' + tags + '</div>' +
-      (r.hasMissingData ? '<p class="missing-note">' + esc(r.note || 'Thiếu dữ liệu') + '</p>' : '') + '</article>';
+  function scannerStockCard(r) {
+    var company = companyDisplayName(r.symbol);
+    return '<article class="scanner-stock-card" data-symbol="' + esc(r.symbol) + '">' +
+      '<div class="scanner-card-head">' + logoHtml(r.symbol, 'card-logo') + '<div class="scanner-card-id"><div><b>' + esc(r.symbol) + '</b><span>' + esc(r.exchange) + '</span></div><p>' + esc(company || 'Tên công ty đang cập nhật') + '</p></div>' + signalRailHtml(r) + '</div>' +
+      '<div class="scanner-card-price"><strong>' + formatPrice(r.currentPrice) + '</strong><span class="' + metricClass(r.changePct) + '">' + pct(r.changePct) + '</span></div>' +
+      '<div class="scanner-card-metrics"><div><small>KL ngày / KLTB10</small><b>' + plainPct(r.dayVolumeRatioPct) + '</b></div><div><small>Cách MA200</small><b class="' + metricClass(r.ma200DistancePct) + '">' + pct(r.ma200DistancePct) + '</b></div><div><small>RVOL30</small><b>' + plainPct(r.rvol30Pct) + '</b></div></div>' +
+      '<div class="scanner-card-status"><span>' + (r.hasMissingData ? 'Thiếu dữ liệu' : 'Dữ liệu đầy đủ') + '</span><span>MA10 tham khảo ' + pct(r.ma10DistancePct) + '</span></div></article>';
+  }
+  function selectOptions(items, selected) {
+    return items.map(function (item) { return '<option value="' + esc(item[0]) + '" ' + (selected === item[0] ? 'selected' : '') + '>' + esc(item[1]) + '</option>'; }).join('');
+  }
+  function exactSearchHtml() {
+    var q = state.query.trim().toUpperCase();
+    if (!q) return "";
+    var row = exactSearchRow();
+    if (!row) return '<section class="exact-search-result empty"><strong>Không tìm thấy mã ' + esc(q) + '</strong><span>Hãy kiểm tra lại mã cổ phiếu rồi tìm lại.</span></section>';
+    var company = companyDisplayName(row.symbol) || "Tên công ty đang cập nhật";
+    if (isMockEntitled(row)) {
+      return '<section class="exact-search-result exact-entitled"><div class="public-identity">' + logoHtml(row.symbol, 'card-logo') + '<div><span>Đúng mã bạn tìm</span><h2>' + esc(row.symbol) + '</h2><p>' + esc(company) + ' · ' + esc(row.exchange) + '</p></div></div><button type="button" class="primary-action" data-symbol="' + esc(row.symbol) + '">Mở chi tiết</button></section>';
+    }
+    return '<section class="exact-search-result exact-locked" data-public-symbol="' + esc(row.symbol) + '"><div class="public-identity"><span class="identity-lock">' + iconSvg('lock') + '</span><div><span>Kết quả thư mục công khai</span><h2>' + esc(row.symbol) + '</h2><p>' + esc(company) + ' · ' + esc(row.exchange) + '</p></div></div><div class="locked-search-copy"><strong>Mã này chưa nằm trong quyền xem của bạn</strong><p>Chi tiết giá, tín hiệu, MA, RVOL và dữ liệu cơ bản không được hiển thị.</p></div><div class="locked-actions"><button type="button" class="secondary-action scanner-replace-trigger" data-target-symbol="' + esc(row.symbol) + '">Thay một mã</button><button type="button" class="primary-action scanner-upgrade-trigger">Xem gói nâng cấp</button></div></section>';
   }
   function listHtml() {
-    var all = filteredRows();
-    var pages = Math.max(1, Math.ceil(all.length / pageSize));
+    var plan = mockPlan();
+    var watchlist = mockWatchlistRows();
+    var marketMatches = filteredRows(state.rows, false);
+    var visibleMatches = plan.fullMarket ? marketMatches : filteredRows(watchlist, false);
+    if (state.scannerMode === "watchlist") {
+      marketMatches = filteredRows(watchlist, false);
+      visibleMatches = marketMatches;
+    }
+    var lockedCount = state.scannerMode === "market" ? Math.max(0, marketMatches.length - visibleMatches.length) : 0;
+    var pages = Math.max(1, Math.ceil(visibleMatches.length / pageSize));
     if (state.page > pages) state.page = pages;
-    var shown = all.slice((state.page - 1) * pageSize, state.page * pageSize);
-    var chips = signals.map(function (s) { return '<button type="button" class="chip ' + (state.signal === s[0] ? 'active' : '') + '" data-filter="signal" data-value="' + esc(s[0]) + '">' + esc(s[1]) + '</button>'; }).join('');
-    var exchanges = [["all","Tất cả"],["hose","HOSE"],["hnx","HNX"],["upcom","UPCoM"]].map(function (x) { return '<button type="button" class="chip ' + (state.exchange === x[0] ? 'active' : '') + '" data-filter="exchange" data-value="' + x[0] + '">' + x[1] + '</button>'; }).join('');
-    var sortChips = sorts.map(function (s) { return '<button type="button" class="chip ' + (state.sort === s[0] ? 'active' : '') + '" data-filter="sort" data-value="' + s[0] + '">' + esc(s[1]) + '</button>'; }).join('');
-    var rows = shown.map(function (r) { return '<tr data-symbol="' + esc(r.symbol) + '"><td class="symbol"><div class="table-symbol-cell">' + logoHtml(r.symbol, 'table-logo') + '<b>' + esc(r.symbol) + '</b></div></td><td class="muted">' + esc(r.exchange) + '</td><td class="num">' + formatPrice(r.currentPrice) + '</td><td class="num ' + metricClass(r.changePct) + '">' + pct(r.changePct) + '</td><td class="num">' + plainPct(r.dayVolumeRatioPct) + '</td><td class="num ' + metricClass(r.ma10DistancePct) + '">' + pct(r.ma10DistancePct) + '</td><td class="num ' + metricClass(r.ma200DistancePct) + '">' + pct(r.ma200DistancePct) + '</td><td class="num">' + plainPct(r.rvol30Pct) + '</td><td class="num muted">' + r.rvol30Sessions + '/10</td><td class="center"><span class="signal-pill ' + signalClass(r.signalCount) + '">' + r.signalCount + '/4</span></td><td class="muted">' + (r.hasMissingData ? 'Thiếu dữ liệu' : 'Đầy đủ') + '</td></tr>'; }).join('');
-    var results = shown.length ? '<div class="desktop-table panel"><div class="table-shell"><table class="scanner-table"><thead><tr><th>Mã</th><th>Sàn</th><th class="num">Giá</th><th class="num">% thay đổi</th><th class="num">KL ngày</th><th class="num">Cách MA10</th><th class="num">Cách MA200</th><th class="num">RVOL30</th><th class="num">Phiên RVOL30</th><th class="center">Tín hiệu</th><th>Trạng thái dữ liệu</th></tr></thead><tbody>' + rows + '</tbody></table></div></div><div class="mobile-list">' + shown.map(stockCard).join('') + '</div>' : '<div class="empty">Không tìm thấy mã phù hợp với bộ lọc hiện tại.</div>';
-    return '<main class="wrap"><section class="panel filters"><div class="search-row"><div class="search-box"><span class="search-icon">⌕</span><input id="stock-search" type="text" inputmode="search" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" aria-label="Tìm theo mã cổ phiếu" placeholder="Tìm theo mã cổ phiếu…" value="' + esc(state.query) + '"></div><button id="search-btn" class="search-btn" type="button">Tìm</button><button id="clear-btn" class="clear-btn" type="button">Xóa tìm kiếm</button></div>' +
-      '<div class="filter-block"><p class="filter-label">Sàn giao dịch</p><div class="chips">' + exchanges + '</div></div><div class="filter-block"><p class="filter-label">Bộ lọc tín hiệu</p><div class="chips">' + chips + '</div></div><div class="filter-block"><p class="filter-label">Sắp xếp</p><div class="chips sort-chips">' + sortChips + '</div></div></section>' +
-      '<p class="result-info">Hiển thị <strong>' + all.length + '</strong> / ' + state.rows.length + ' mã theo dõi.</p>' + results +
-      (pages > 1 ? '<div class="pager"><button id="prev-page" type="button" ' + (state.page === 1 ? 'disabled' : '') + '>Trang trước</button><span>Trang ' + state.page + '/' + pages + '</span><button id="next-page" type="button" ' + (state.page === pages ? 'disabled' : '') + '>Trang sau</button></div>' : '') +
-      '<p class="disclaimer">Công cụ quét dữ liệu, không đưa ra khuyến nghị mua/bán.</p></main>';
+    var shown = visibleMatches.slice((state.page - 1) * pageSize, state.page * pageSize);
+    var remaining = plan.changeLimit === null ? null : Math.max(0, plan.changeLimit - state.mockChangeUsed);
+    var planOptions = Object.keys(MOCK_PLAN_CONFIG).map(function (code) { return '<option value="' + code + '" ' + (state.mockPlan === code ? 'selected' : '') + '>' + esc(MOCK_PLAN_CONFIG[code].label) + '</option>'; }).join('');
+    var exchanges = [["all","Tất cả sàn"],["hose","HOSE"],["hnx","HNX"],["upcom","UPCoM"]];
+    var quickSignals = [["","Toàn bộ"],["4of4","4/4"],["3plus","≥3"],["rvol30","RVOL30"]].map(function (item) { return '<button type="button" class="quick-filter ' + (state.signal === item[0] ? 'active' : '') + '" data-filter="signal" data-value="' + esc(item[0]) + '" aria-pressed="' + (state.signal === item[0]) + '">' + esc(item[1]) + '</button>'; }).join('');
+    var tableRows = shown.map(function (r) {
+      var company = companyDisplayName(r.symbol);
+      return '<tr data-symbol="' + esc(r.symbol) + '"><td class="scanner-identity"><div class="table-company">' + logoHtml(r.symbol, 'table-logo') + '<div><b>' + esc(r.symbol) + '</b><span title="' + esc(company) + '">' + esc(company || 'Tên công ty đang cập nhật') + '</span></div></div></td><td class="center muted">' + esc(r.exchange) + '</td><td class="num">' + formatPrice(r.currentPrice) + '</td><td class="num ' + metricClass(r.changePct) + '">' + pct(r.changePct) + '</td><td class="num">' + plainPct(r.dayVolumeRatioPct) + '</td><td class="num ' + metricClass(r.ma10DistancePct) + '">' + pct(r.ma10DistancePct) + '</td><td class="num ' + metricClass(r.ma200DistancePct) + '">' + pct(r.ma200DistancePct) + '</td><td class="num">' + plainPct(r.rvol30Pct) + '</td><td class="center">' + signalRailHtml(r) + '</td><td class="center"><span class="data-status ' + (r.hasMissingData ? 'is-warning' : '') + '">' + (r.hasMissingData ? 'Thiếu dữ liệu' : 'Đầy đủ') + '</span></td></tr>';
+    }).join('');
+    var results = shown.length ? '<div class="desktop-table panel scanner-table-panel"><div class="table-shell"><table class="scanner-table scanner-v19-table"><thead><tr><th class="scanner-identity">Công ty</th><th class="center">Sàn</th><th class="num">Giá</th><th class="num">% thay đổi</th><th class="num">KL ngày / KLTB10</th><th class="num">Cách MA10</th><th class="num">Cách MA200</th><th class="num">RVOL30</th><th class="center">Tín hiệu</th><th class="center">Dữ liệu</th></tr></thead><tbody>' + tableRows + '</tbody></table></div></div><div class="mobile-list scanner-mobile-list">' + shown.map(scannerStockCard).join('') + '</div>' : '<div class="empty scanner-empty"><strong>Chưa có mã trong quyền xem phù hợp</strong><span>Thử đổi bộ lọc hoặc chuyển sang Toàn bộ tín hiệu để xem aggregate thị trường.</span></div>';
+    var lockedBlock = lockedCount ? '<section class="locked-market-summary"><div class="locked-market-icon">' + iconSvg('lock') + '</div><div><span>Ngoài quyền xem</span><strong>' + lockedCount + ' mã phù hợp đang được khóa</strong><p>Scanner vẫn quét toàn thị trường. Khối này chỉ hiển thị số lượng, không liệt kê danh tính mã bị khóa.</p></div><div class="locked-actions">' + (remaining > 0 ? '<button type="button" class="secondary-action scanner-replace-trigger">Thay một mã</button>' : '') + '<button type="button" class="primary-action scanner-upgrade-trigger">Tăng phạm vi theo dõi</button></div></section>' : '';
+    var capacity = plan.fullMarket ? '<div><small>Quyền xem</small><strong>Toàn scanner universe</strong></div><div><small>Watchlist ưu tiên</small><strong>' + watchlist.length + ' mã mock</strong></div>' : '<div><small>Watchlist</small><strong>' + watchlist.length + '/' + plan.watchlistLimit + ' mã</strong></div><div><small>Lượt đổi còn lại</small><strong>' + remaining + '/' + plan.changeLimit + '</strong></div>';
+    var fullCapacityActions = !plan.fullMarket && watchlist.length >= plan.watchlistLimit && remaining > 0 ? '<div class="capacity-actions"><span>Watchlist đã đủ chỗ, nhưng bạn vẫn còn lượt đổi.</span><button type="button" class="secondary-action scanner-replace-trigger">Thay một mã</button><button type="button" class="text-action scanner-upgrade-trigger">Nâng cấp</button></div>' : '';
+    return '<main class="wrap scanner-main"><section class="scanner-hero"><div><span class="eyebrow">SCANNER · STAGING MOCK</span><h1>Bộ quét cổ phiếu</h1><p>Tìm mã chính xác, xem aggregate toàn thị trường hoặc phân tích các mã trong quyền xem hiện tại.</p></div><label class="mock-plan-control"><span>Gói đang xem thử</span><select id="mock-plan-select" aria-label="Chọn gói giả lập staging">' + planOptions + '</select></label><div class="scanner-head-stats"><div><small>Scanner universe</small><strong>' + state.rows.length + ' mã</strong></div><div><small>Quyền xem hiện tại</small><strong>' + (plan.fullMarket ? 'Toàn thị trường' : watchlist.length + '/' + plan.viewLimit + ' mã') + '</strong></div><div><small>Gói</small><strong>' + esc(plan.label) + '</strong></div></div></section>' + secondarySourceWarningHtml(false) +
+      '<section class="scanner-command panel"><div class="scanner-mode" role="group" aria-label="Phạm vi kết quả"><button type="button" data-scanner-mode="market" class="' + (state.scannerMode === 'market' ? 'active' : '') + '" aria-pressed="' + (state.scannerMode === 'market') + '">Toàn bộ tín hiệu</button><button type="button" data-scanner-mode="watchlist" class="' + (state.scannerMode === 'watchlist' ? 'active' : '') + '" aria-pressed="' + (state.scannerMode === 'watchlist') + '">Watchlist của tôi</button></div><div class="scanner-search-row"><div class="search-box"><span class="search-icon" aria-hidden="true">⌕</span><input id="stock-search" type="text" inputmode="search" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" aria-label="Tìm chính xác mã cổ phiếu" placeholder="Nhập chính xác mã cổ phiếu" value="' + esc(state.query) + '"></div><button id="search-btn" class="search-btn" type="button">Tìm mã</button><button id="clear-btn" class="clear-btn" type="button">Xóa</button><button id="scanner-filter-toggle" class="filter-toggle" type="button" aria-expanded="' + state.scannerFiltersOpen + '" aria-controls="scanner-filter-panel">Bộ lọc</button></div>' +
+      '<div class="quick-filters" aria-label="Bộ lọc nhanh">' + quickSignals + '</div><div id="scanner-filter-panel" class="scanner-filter-controls ' + (state.scannerFiltersOpen ? 'is-open' : '') + '"><label><span>Sàn giao dịch</span><select data-select-filter="exchange">' + selectOptions(exchanges, state.exchange) + '</select></label><label><span>Tín hiệu</span><select data-select-filter="signal">' + selectOptions(signals, state.signal) + '</select></label><label><span>Sắp xếp</span><select data-select-filter="sort">' + selectOptions(sorts, state.sort) + '</select></label><button id="reset-filters" type="button" class="clear-filters">Đặt lại bộ lọc</button></div></section>' +
+      exactSearchHtml() + '<section class="watchlist-capacity panel"><div class="capacity-values">' + capacity + '</div>' + fullCapacityActions + '</section><div class="scanner-result-head"><div><span>' + (state.scannerMode === 'market' ? 'Kết quả toàn thị trường' : 'Kết quả Watchlist') + '</span><strong>Tổng ' + marketMatches.length + ' · Hiện ' + visibleMatches.length + ' · Khóa ' + lockedCount + '</strong></div><p>' + (state.query ? 'Kết quả tìm chính xác ở phía trên; bảng vẫn giữ bộ lọc thị trường.' : 'Bộ lọc aggregate không làm thay đổi scanner universe.') + '</p></div>' + results + lockedBlock +
+      (pages > 1 ? '<div class="pager"><button id="prev-page" type="button" ' + (state.page === 1 ? 'disabled' : '') + '>Trang trước</button><span>Trang ' + state.page + '/' + pages + '</span><button id="next-page" type="button" ' + (state.page === pages ? 'disabled' : '') + '>Trang sau</button></div>' : '') + '<p class="disclaimer">STAGING MOCK · Frontend không phải security boundary. Công cụ quét dữ liệu, không đưa ra khuyến nghị mua/bán.</p></main>';
   }
   function overviewHtml() {
     var total = state.rows.length;
@@ -570,6 +607,17 @@
     var placeholders=Array.from({length:placeholderCount},function(){return '<span class="locked-placeholder">'+iconSvg('lock')+'<b>•••</b></span>';}).join('');
     return '<div id="membership-dialog" class="membership-backdrop"><section class="membership-dialog discovery-dialog" role="dialog" aria-modal="true" aria-labelledby="discovery-dialog-title"><div class="membership-dialog-head"><div><span class="staging-badge">STAGING · '+esc(plan.label)+'</span><h2 id="discovery-dialog-title">'+data.totalCount+' '+esc(discoveryLabel(state.discoveryGroup))+'</h2></div><button id="membership-close" class="dialog-close" type="button" aria-label="Đóng nhóm tín hiệu">×</button></div><div class="membership-dialog-body"><div class="coverage-summary"><div><small>Tổng nhóm</small><strong>'+data.totalCount+'</strong></div><div><small>Bạn xem được</small><strong>'+data.visibleCount+'/'+data.totalCount+'</strong></div><div><small>Ngoài quyền xem</small><strong>'+data.lockedCount+'</strong></div></div><section class="visible-entitlement"><h3>Trong quyền xem của bạn</h3>'+(visiblePreview.length?'<div class="dialog-visible-grid">'+visiblePreview.map(overviewStockCard).join('')+'</div>'+(hiddenVisible?'<p class="preview-note">+ '+hiddenVisible+' mã khác cũng nằm trong quyền xem.</p>':''):'<div class="empty compact-empty">Watchlist hiện chưa có mã nào trong nhóm này.</div>')+'</section>'+(data.lockedCount?'<button type="button" class="locked-area locked-trigger"><span class="locked-area-title">'+iconSvg('lock')+' Ngoài quyền xem</span><span class="locked-placeholder-grid">'+placeholders+'</span>'+(data.lockedCount>8?'<strong>+ '+(data.lockedCount-placeholderCount)+' mã khác ngoài quyền xem</strong>':'<strong>'+data.lockedCount+' mã ngoài quyền xem</strong>')+'<small>Chọn để xem preview gói Plus</small></button>':'<div class="all-unlocked">'+iconSvg('shield')+'<div><strong>Toàn bộ nhóm đang nằm trong quyền xem mock</strong><span>Full Market không khóa market detail trong trạng thái staging này.</span></div></div>')+'</div></section></div>';
   }
+  function scannerActionDialogHtml() {
+    if (!state.scannerDialog) return '<div id="scanner-action-dialog" class="membership-backdrop" hidden></div>';
+    var plan = mockPlan();
+    var watchlist = mockWatchlistRows();
+    var remaining = plan.changeLimit === null ? null : Math.max(0, plan.changeLimit - state.mockChangeUsed);
+    var target = state.scannerDialogSymbol ? ' ' + esc(state.scannerDialogSymbol) : '';
+    var content = state.scannerDialog === "replace" ?
+      '<div class="scanner-dialog-copy"><h3>Thay một mã trong Watchlist</h3><p>Watchlist đã đủ <strong>' + watchlist.length + '/' + plan.watchlistLimit + ' mã</strong>. Để mở quyền xem' + target + ', hãy chọn một mã hiện tại để thay.</p><div class="capacity-values"><div><small>Watchlist</small><strong>' + watchlist.length + '/' + plan.watchlistLimit + ' mã</strong></div><div><small>Lượt đổi còn lại</small><strong>' + remaining + '/' + plan.changeLimit + '</strong></div></div><p class="mock-notice">Xác nhận thay mã sẽ dùng 1 lượt đổi. Luồng này chỉ là preview UX; staging chưa ghi thay đổi.</p><div class="preview-actions"><button id="scanner-action-close-bottom" type="button" class="secondary-action">Để sau</button><button type="button" class="preview-disabled" disabled>Thay mã chưa bật trong staging</button></div></div>' :
+      '<div class="scanner-dialog-copy"><h3>Tăng phạm vi theo dõi</h3><p>Bạn đang dùng <strong>' + esc(plan.label) + '</strong>. Nâng cấp tăng số mã được xem chi tiết; scanner universe không thay đổi.</p><article class="plus-preview"><div class="plus-preview-head"><div><span class="popular-badge">Phổ biến nhất</span><h3>Plus</h3></div><strong>300.000đ<span>/tháng</span></strong></div><ul><li>50 mã theo dõi chi tiết</li><li>50 lượt đổi mỗi chu kỳ</li><li>Cảnh báo Email</li><li>Cảnh báo Telegram</li></ul><p>Tín hiệu tìm đến bạn. Không phải cam kết lợi nhuận.</p></article><div class="preview-actions"><button id="scanner-action-close-bottom" type="button" class="secondary-action">Để sau</button><button type="button" class="preview-disabled" disabled>Thanh toán chưa bật trong staging</button></div></div>';
+    return '<div id="scanner-action-dialog" class="membership-backdrop"><section class="membership-dialog scanner-action-dialog" role="dialog" aria-modal="true" aria-labelledby="scanner-action-title"><div class="membership-dialog-head"><div><span class="staging-badge">STAGING PREVIEW</span><h2 id="scanner-action-title">' + (state.scannerDialog === 'replace' ? 'Quản lý quyền xem' : 'Xem gói nâng cấp') + '</h2></div><button id="scanner-action-close" class="dialog-close" type="button" aria-label="Đóng">×</button></div><div class="membership-dialog-body">' + content + '</div></section></div>';
+  }
   function dialogHtml() {
     var r = state.selected;
     if (!r) return '<div id="dialog" class="dialog-backdrop" hidden></div>';
@@ -594,7 +642,7 @@
   }
   function render() {
     var body = state.route === "list" ? listHtml() : state.route === "industry" ? industryHtml() : state.route === "fundamental" ? fundamentalHtml() : overviewHtml();
-    app.innerHTML = headerHtml() + body + dialogHtml() + membershipDialogHtml();
+    app.innerHTML = headerHtml() + body + dialogHtml() + membershipDialogHtml() + scannerActionDialogHtml();
     bind();
     updateClock();
   }
@@ -622,6 +670,7 @@
       state.mockPlan = MOCK_PLAN_CONFIG[mockPlanSelect.value] ? mockPlanSelect.value : "FREE";
       state.discoveryGroup = "";
       state.upsellOpen = false;
+      state.scannerDialog = "";
       render();
     });
     document.querySelectorAll("[data-discovery]").forEach(function(button){
@@ -641,6 +690,20 @@
     if(membershipBack)membershipBack.addEventListener("click",function(){state.upsellOpen=false;render();});
     var membershipBackdrop=document.getElementById("membership-dialog");
     if(membershipBackdrop&&!membershipBackdrop.hidden)membershipBackdrop.addEventListener("click",function(event){if(event.target===membershipBackdrop)closeMembershipDialog();});
+    document.querySelectorAll("[data-scanner-mode]").forEach(function (button) { button.addEventListener("click", function () { state.scannerMode = button.getAttribute("data-scanner-mode") === "watchlist" ? "watchlist" : "market"; state.page = 1; render(); }); });
+    document.querySelectorAll("[data-select-filter]").forEach(function (select) { select.addEventListener("change", function () { state[select.getAttribute("data-select-filter")] = select.value; state.page = 1; render(); }); });
+    var filterToggle = document.getElementById("scanner-filter-toggle");
+    if (filterToggle) filterToggle.addEventListener("click", function () { state.scannerFiltersOpen = !state.scannerFiltersOpen; render(); });
+    var resetFilters = document.getElementById("reset-filters");
+    if (resetFilters) resetFilters.addEventListener("click", function () { state.exchange = "all"; state.signal = ""; state.sort = "signal"; state.page = 1; render(); });
+    document.querySelectorAll(".scanner-replace-trigger").forEach(function (button) { button.addEventListener("click", function () { state.scannerDialog = "replace"; state.scannerDialogSymbol = button.getAttribute("data-target-symbol") || ""; render(); var closeButton = document.getElementById("scanner-action-close"); if (closeButton) closeButton.focus(); }); });
+    document.querySelectorAll(".scanner-upgrade-trigger").forEach(function (button) { button.addEventListener("click", function () { state.scannerDialog = "upgrade"; state.scannerDialogSymbol = ""; render(); var closeButton = document.getElementById("scanner-action-close"); if (closeButton) closeButton.focus(); }); });
+    var scannerActionClose = document.getElementById("scanner-action-close");
+    if (scannerActionClose) scannerActionClose.addEventListener("click", closeScannerActionDialog);
+    var scannerActionCloseBottom = document.getElementById("scanner-action-close-bottom");
+    if (scannerActionCloseBottom) scannerActionCloseBottom.addEventListener("click", closeScannerActionDialog);
+    var scannerActionBackdrop = document.getElementById("scanner-action-dialog");
+    if (scannerActionBackdrop && !scannerActionBackdrop.hidden) scannerActionBackdrop.addEventListener("click", function (event) { if (event.target === scannerActionBackdrop) closeScannerActionDialog(); });
     document.querySelectorAll("[data-symbol]").forEach(function (el) {
       var symbol = el.getAttribute("data-symbol");
       el.setAttribute("tabindex", "0");
@@ -673,7 +736,9 @@
   function openSymbol(symbol) {
     state.discoveryGroup = "";
     state.upsellOpen = false;
-    state.selected = state.rows.find(function(r){return r.symbol===symbol;}) || {symbol:String(symbol||"").toUpperCase(),exchange:"—",signalCount:0,currentPrice:null,changePct:null,cumVolume:null,avgVolume10:null,dayVolumeRatioPct:null,ma10:null,ma10DistancePct:null,ma200:null,ma200DistancePct:null,rvol30Pct:null,rvol30Sessions:0};
+    var matched = state.rows.find(function(r){return r.symbol===symbol;});
+    if (state.route === "list" && matched && !isMockEntitled(matched)) { state.scannerDialog = "replace"; state.scannerDialogSymbol = matched.symbol; render(); return; }
+    state.selected = matched || {symbol:String(symbol||"").toUpperCase(),exchange:"—",signalCount:0,currentPrice:null,changePct:null,cumVolume:null,avgVolume10:null,dayVolumeRatioPct:null,ma10:null,ma10DistancePct:null,ma200:null,ma200DistancePct:null,rvol30Pct:null,rvol30Sessions:0};
     render();
     if (!state.quarterlyBySymbol[symbol] && !state.quarterlyLoading[symbol]) fetchQuarterly(symbol);
   }
@@ -689,6 +754,7 @@
   }
   function closeDialog() { state.selected = null; render(); }
   function closeMembershipDialog() { state.discoveryGroup = ""; state.upsellOpen = false; render(); }
+  function closeScannerActionDialog() { state.scannerDialog = ""; state.scannerDialogSymbol = ""; render(); }
   function extractCached() {
     try {
       var own = JSON.parse(localStorage.getItem(CACHE_KEY) || "null");
@@ -859,7 +925,7 @@
     if(state.waitingForNewData && now-state.lastVersionPollAt>=VERSION_POLL_INTERVAL_MS) pollLatestVersion();
   }
   setInterval(updateClock,1000);
-  document.addEventListener("keydown", function(e){if(e.key!=="Escape")return;if(state.discoveryGroup)closeMembershipDialog();else if(state.selected)closeDialog();});
+  document.addEventListener("keydown", function(e){if(e.key!=="Escape")return;if(state.scannerDialog)closeScannerActionDialog();else if(state.discoveryGroup)closeMembershipDialog();else if(state.selected)closeDialog();});
   var cached = extractCached();
   if (cached) applyData(cached);
   render();

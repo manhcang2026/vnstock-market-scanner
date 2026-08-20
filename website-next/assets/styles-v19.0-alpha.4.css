@@ -200,6 +200,49 @@ main.wrap{
   .group-grid .stock-card{flex-basis:calc(100vw - 52px)}
 }
 
+/* =========================================================
+   v19.0-alpha.4 — Scanner locked membership UX preview
+   STAGING MOCK ONLY — NOT A SECURITY BOUNDARY
+   ========================================================= */
+.scanner-main{display:grid;gap:14px}
+.scanner-hero{display:grid;grid-template-columns:minmax(0,1fr) 190px;gap:14px 20px;padding:20px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--surface-1);box-shadow:var(--shadow-sm)}
+.scanner-hero>div:first-child{min-width:0}.scanner-hero .eyebrow{color:var(--interactive);font-size:11px;font-weight:850;letter-spacing:.08em}.scanner-hero h1{margin:5px 0 4px;font-size:26px;line-height:1.2;letter-spacing:-.025em}.scanner-hero p{max-width:760px;margin:0;color:var(--text-muted);font-size:13.5px;line-height:1.55}
+.scanner-head-stats{grid-column:1/-1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px}
+.scanner-head-stats>div,.capacity-values>div{padding:11px 12px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2)}
+.scanner-head-stats small,.capacity-values small{display:block;color:var(--text-muted);font-size:11.5px}.scanner-head-stats strong,.capacity-values strong{display:block;margin-top:3px;color:var(--text-primary);font-size:15px;font-variant-numeric:tabular-nums}
+
+.scanner-command{padding:14px}.scanner-mode{display:inline-flex;gap:4px;padding:4px;border:1px solid var(--border);border-radius:11px;background:var(--surface-2)}
+.scanner-mode button{min-height:40px;padding:0 14px;border:0;border-radius:8px;background:transparent;color:var(--text-secondary);font-size:13px;font-weight:750}.scanner-mode button.active{background:var(--surface-raised);color:var(--text-primary);box-shadow:var(--shadow-sm)}
+.scanner-search-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:8px;margin-top:12px}.scanner-search-row #stock-search{height:44px;font-size:15px}.filter-toggle{display:none;min-height:44px;padding:0 13px;border:1px solid var(--border-strong);border-radius:9px;background:var(--surface-2);color:var(--text-primary);font-weight:750}
+.quick-filters{display:none}.scanner-filter-controls{display:grid;grid-template-columns:repeat(3,minmax(150px,1fr)) auto;align-items:end;gap:9px;margin-top:11px}.scanner-filter-controls label{display:grid;gap:5px;color:var(--text-secondary);font-size:11.5px;font-weight:700}.scanner-filter-controls select{width:100%;min-height:42px;padding:0 34px 0 10px;border:1px solid var(--border);border-radius:9px;background:var(--surface-2);color:var(--text-primary)}.clear-filters{min-height:42px;padding:0 12px;border:1px solid var(--border);border-radius:9px;background:var(--surface-2);color:var(--text-secondary);font-size:12px;font-weight:700}
+
+.exact-search-result{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:15px 16px;border:1px solid var(--border);border-radius:13px;background:var(--surface-1);box-shadow:var(--shadow-sm)}.exact-search-result.empty{display:grid;justify-content:stretch}.exact-search-result.empty strong,.scanner-empty strong{display:block;color:var(--text-primary);font-size:14px}.exact-search-result.empty span,.scanner-empty span{display:block;margin-top:4px;color:var(--text-muted);font-size:12.5px}
+.public-identity{display:flex;align-items:center;gap:11px;min-width:0}.public-identity>div{min-width:0}.public-identity span{color:var(--text-muted);font-size:11px}.public-identity h2{margin:2px 0 1px;font-size:21px}.public-identity p{margin:0;color:var(--text-secondary);font-size:13px}.identity-lock{width:42px;height:42px;display:grid;place-items:center;flex:0 0 auto;border:1px solid #665224;border-radius:11px;background:rgba(130,92,18,.12);color:var(--warning)}.identity-lock .ui-icon{width:20px;height:20px}
+.exact-locked{display:grid;grid-template-columns:minmax(220px,1fr) minmax(280px,1.2fr) auto;border-color:#665224}.locked-search-copy strong{font-size:13.5px}.locked-search-copy p{margin:4px 0 0;color:var(--text-muted);font-size:12px;line-height:1.45}
+.locked-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px}.primary-action,.secondary-action,.text-action{min-height:42px;padding:0 13px;border-radius:9px;font-size:12.5px;font-weight:750}.primary-action{border:1px solid #357eb9;background:#246ca8;color:#fff}.primary-action:hover{background:#185884}.secondary-action{border:1px solid var(--border-strong);background:var(--surface-2);color:var(--text-primary)}.text-action{border:0;background:transparent;color:var(--interactive)}
+
+.watchlist-capacity{padding:12px 14px}.capacity-values{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.capacity-actions{display:flex;align-items:center;gap:9px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)}.capacity-actions span{margin-right:auto;color:var(--text-secondary);font-size:12.5px}
+.scanner-result-head{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;padding:0 2px}.scanner-result-head>div span{display:block;color:var(--text-muted);font-size:11.5px}.scanner-result-head>div strong{display:block;margin-top:3px;font-size:15px;font-variant-numeric:tabular-nums}.scanner-result-head p{margin:0;color:var(--text-muted);font-size:12px;text-align:right}
+.scanner-table-panel{min-width:0}.scanner-v19-table{min-width:1160px}.scanner-v19-table th,.scanner-v19-table td{padding:11px 10px;vertical-align:middle}.scanner-v19-table th.scanner-identity,.scanner-v19-table td.scanner-identity{text-align:left!important}.scanner-v19-table th.num,.scanner-v19-table td.num{text-align:right!important;font-variant-numeric:tabular-nums}.scanner-v19-table th.center,.scanner-v19-table td.center{text-align:center!important}.table-company{display:flex;align-items:center;gap:9px;min-width:190px}.table-company>div{min-width:0}.table-company b{display:block;color:var(--interactive);font-size:14px}.table-company span{display:block;max-width:190px;margin-top:2px;color:var(--text-secondary);font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.scanner-v19-table .signal-rail{justify-content:center;margin-top:0;white-space:nowrap}.scanner-v19-table .rail-dot{font-size:14px}.data-status{display:inline-flex;padding:4px 7px;border:1px solid var(--border);border-radius:999px;color:var(--text-muted);font-size:11px}.data-status.is-warning{border-color:#665224;color:var(--warning)}
+.scanner-empty{display:grid}.locked-market-summary{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:13px;padding:15px;border:1px solid #665224;border-radius:13px;background:rgba(130,92,18,.1)}.locked-market-icon{width:42px;height:42px;display:grid;place-items:center;border-radius:11px;background:rgba(130,92,18,.15);color:var(--warning)}.locked-market-summary span{display:block;color:var(--warning);font-size:11.5px;font-weight:750}.locked-market-summary strong{display:block;margin-top:2px;font-size:14px}.locked-market-summary p{margin:4px 0 0;color:var(--text-muted);font-size:12px;line-height:1.45}
+
+.scanner-mobile-list{display:none}.scanner-stock-card{padding:14px;border:1px solid var(--border);border-radius:13px;background:var(--surface-1);cursor:pointer}.scanner-card-head{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px}.scanner-card-id{min-width:0}.scanner-card-id>div{display:flex;align-items:center;gap:7px}.scanner-card-id b{font-size:18px}.scanner-card-id>div span{padding:2px 5px;border:1px solid var(--border);border-radius:5px;color:var(--text-muted);font-size:10px}.scanner-card-id p{margin:2px 0 0;color:var(--text-secondary);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.scanner-card-head .signal-rail{margin-top:0}.scanner-card-price{display:flex;align-items:baseline;gap:8px;margin-top:12px}.scanner-card-price strong{font-size:21px;font-variant-numeric:tabular-nums}.scanner-card-price span{font-size:14px;font-weight:750;font-variant-numeric:tabular-nums}.scanner-card-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin-top:11px}.scanner-card-metrics>div{padding:9px;border-radius:9px;background:var(--surface-2)}.scanner-card-metrics small{display:block;color:var(--text-muted);font-size:10.5px;line-height:1.35}.scanner-card-metrics b{display:block;margin-top:4px;font-size:13px;font-variant-numeric:tabular-nums}.scanner-card-status{display:flex;justify-content:space-between;gap:10px;margin-top:10px;color:var(--text-muted);font-size:11px}
+.scanner-dialog-copy>h3{margin:0 0 5px;font-size:17px}.scanner-dialog-copy>p{margin:0;color:var(--text-secondary);font-size:13px;line-height:1.55}.scanner-dialog-copy .capacity-values{margin-top:13px}.mock-notice{margin-top:12px!important;padding:10px 11px;border-left:3px solid var(--warning);border-radius:7px;background:rgba(130,92,18,.1)}
+
+html[data-theme="light"] .scanner-hero,html[data-theme="light"] .exact-search-result,html[data-theme="light"] .scanner-stock-card{background:var(--surface-1)}
+html[data-theme="light"] .scanner-mode button.active{background:#fff}
+
+@media(max-width:1024px){.exact-locked{grid-template-columns:1fr 1fr}.exact-locked .locked-actions{grid-column:1/-1;justify-content:flex-start}.scanner-filter-controls{grid-template-columns:repeat(3,minmax(0,1fr))}.clear-filters{grid-column:1/-1;justify-self:start}}
+@media(max-width:767px){
+  .scanner-main{gap:11px}.scanner-hero{grid-template-columns:1fr;padding:15px}.scanner-hero h1{font-size:22px}.scanner-hero p{font-size:12.5px}.scanner-hero .mock-plan-control{width:100%;margin:0}.scanner-head-stats{grid-template-columns:1fr 1fr}.scanner-head-stats>div:last-child{grid-column:1/-1}
+  .scanner-command{padding:11px}.scanner-mode{display:grid;grid-template-columns:1fr 1fr;width:100%}.scanner-mode button{padding:0 8px;font-size:12px}.scanner-search-row{grid-template-columns:minmax(0,1fr) auto auto;margin-top:10px}.scanner-search-row .clear-btn{grid-column:auto}.scanner-search-row .filter-toggle{display:block;grid-column:1/-1;width:100%}.quick-filters{display:flex;gap:7px;overflow-x:auto;margin-top:9px;padding-bottom:2px;scrollbar-width:none}.quick-filter{flex:0 0 auto;min-height:38px;padding:0 12px;border:1px solid var(--border);border-radius:999px;background:var(--surface-2);color:var(--text-secondary);font-size:12px;font-weight:750}.quick-filter.active{border-color:var(--interactive);background:var(--interactive-soft);color:var(--text-primary)}
+  .scanner-filter-controls{display:none;grid-template-columns:1fr;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)}.scanner-filter-controls.is-open{display:grid}.clear-filters{grid-column:auto;width:100%}
+  .exact-search-result,.exact-locked{display:grid;grid-template-columns:1fr;gap:12px}.exact-locked .locked-actions{grid-column:auto}.exact-search-result>.primary-action{width:100%}.locked-actions{justify-content:stretch}.locked-actions button{flex:1}
+  .capacity-actions{align-items:stretch;flex-wrap:wrap}.capacity-actions span{width:100%;margin-right:0}.scanner-result-head{display:block}.scanner-result-head p{margin-top:4px;text-align:left}
+  .scanner-main .desktop-table{display:none}.scanner-mobile-list{display:grid;gap:9px}.scanner-card-head{grid-template-columns:auto minmax(0,1fr)}.scanner-card-head .signal-rail{grid-column:1/-1}.locked-market-summary{grid-template-columns:auto 1fr}.locked-market-summary .locked-actions{grid-column:1/-1}.scanner-stock-card{width:100%;min-width:0}
+}
+@media(max-width:480px){.scanner-search-row{grid-template-columns:minmax(0,1fr) auto}.scanner-search-row .clear-btn{grid-column:1/-1}.scanner-head-stats,.capacity-values{grid-template-columns:1fr}.scanner-head-stats>div:last-child{grid-column:auto}.scanner-card-metrics{grid-template-columns:1fr 1fr}.scanner-card-metrics>div:last-child{grid-column:1/-1}.scanner-card-status{display:grid}.locked-actions{display:grid;grid-template-columns:1fr}.locked-actions button{width:100%}}
+
 /* ==========================================================
    v17.4 — LOCAL COMPANY LOGOS + DATA-FIRST POLISH
    ========================================================== */
@@ -502,7 +545,7 @@ html[data-theme="light"] .dialog-company .company-full{color:#1d2e40}
 html[data-theme="light"] .bctc-source strong{color:#2b4056}
 
 /* =========================================================
-   v19.0-alpha.2 — CCC UI Foundation
+   Inherited CCC UI Foundation
    Brand, semantic themes, app shell, Data Trust, readability
    ========================================================= */
 
@@ -836,7 +879,7 @@ html[data-theme="light"] td{border-bottom-color:var(--border)}
 }
 
 /* =========================================================
-   v19.0-alpha.3 — Overview membership/watchlist UX preview
+   Inherited Overview membership/watchlist UX preview
    STAGING ONLY: no auth, payment or secure entitlement layer
    ========================================================= */
 .overview-v19{display:grid;gap:16px}
