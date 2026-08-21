@@ -646,3 +646,35 @@ select{min-height:38px;padding:0 34px 0 10px;border:1px solid var(--input);borde
   .market-pulse-rail .market-unavailable span{max-width:130px}
 }
 
+/* CCC Market Pulse Live Data — Supabase current */
+.market-pulse.has-fetch-error .status-dot{background:var(--warning)}
+.market-live-data{display:grid;gap:8px;margin-top:14px}
+.market-live-quote{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+.market-live-price{font-size:25px;font-weight:700;line-height:1.05;letter-spacing:-.02em;font-variant-numeric:tabular-nums lining-nums}
+.market-live-change{display:inline-flex;align-items:baseline;gap:4px;font-size:11px;font-weight:650;white-space:nowrap;font-variant-numeric:tabular-nums lining-nums}
+.market-change-basis{color:var(--muted-foreground);font-size:8px;font-weight:600;text-transform:uppercase}
+.market-live-meta{display:flex;align-items:center;justify-content:space-between;gap:10px;color:var(--muted-foreground);font-size:9px;line-height:1.35}
+.market-live-meta>span:first-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.market-live-source{flex:none}
+.market-tile.is-primary .market-live-data{margin-top:28px;gap:10px}
+.market-tile.is-primary .market-live-price{font-size:36px}
+.market-tile.is-primary .market-live-change{font-size:13px}
+.market-tile header em.market-status.is-open{background:var(--positive-bg);color:var(--positive)}
+.market-tile header em.market-status.is-closed{background:var(--surface-3);color:var(--muted-foreground)}
+.market-tile header em.market-status.is-stale{background:var(--warning-bg);color:var(--warning)}
+.market-tile header em.market-status.is-error{background:var(--negative-bg);color:var(--negative)}
+
+.market-pulse-rail .market-live-data,
+.market-pulse-rail .market-tile.is-primary .market-live-data{gap:5px;margin-top:8px}
+.market-pulse-rail .market-live-price{font-size:18px}
+.market-pulse-rail .market-tile.is-primary .market-live-price{font-size:24px}
+.market-pulse-rail .market-live-change,
+.market-pulse-rail .market-tile.is-primary .market-live-change{font-size:10px}
+.market-pulse-rail .market-live-meta{font-size:9px}
+.market-pulse-rail .market-live-source{max-width:92px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+@media(max-width:767px){
+  .market-live-price{font-size:23px}
+  .market-tile.is-primary .market-live-price{font-size:30px}
+  .market-live-quote{align-items:flex-end}
+}

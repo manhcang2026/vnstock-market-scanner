@@ -6,13 +6,16 @@
   var API_URL = SUPABASE_URL + "/rest/v1/stock_snapshot?select=*&order=symbol.asc";
   var FINANCIAL_API_URL = SUPABASE_URL + "/rest/v1/financial_latest?select=*&order=symbol.asc";
   var METADATA_API_URL = SUPABASE_URL + "/rest/v1/stock_metadata?select=*&order=symbol.asc";
+  var MARKET_PULSE_API_URL = SUPABASE_URL + "/rest/v1/market_pulse_current?select=*&order=sort_order.asc";
   var CACHE_KEY = "vnstock_dashboard_raw_v19_0_alpha_4_staging_supabase_800";
+  var MARKET_PULSE_CACHE_KEY = "ccc_market_pulse_current_v1";
   var LEGACY_CACHE_KEY = "vnstock_dashboard_cache_v1";
   var THEME_KEY = "vnstock_dashboard_theme_v17";
   var LATEST_API_URL = SUPABASE_URL + "/rest/v1/stock_snapshot?select=updated_at&order=updated_at.desc&limit=1";
   var EXPECTED_UNIVERSE_COUNT = 800;
   var AUTO_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
   var VERSION_POLL_INTERVAL_MS = 15 * 1000;
+  var MARKET_PULSE_POLL_INTERVAL_MS = 60 * 1000;
   var LOGO_BASE_URL = "/assets/logos/";
   var LOGO_ASSET_VERSION = "1741";
   // STAGING ONLY: UX preview. This is not authentication, billing or a security boundary.
@@ -39,6 +42,7 @@
     latestUpdateMs: null, waitingForNewData: false, lastVersionPollAt: 0, versionPolling: false,
     financialRows: [], financialBySymbol: {}, financialLoaded: false, financialError: "",
     metadataRows: [], metadataBySymbol: {}, metadataLoaded: false, metadataError: "",
+    marketPulseRows: [], marketPulseByKey: {}, marketPulseLoaded: false, marketPulseFetching: false, marketPulseError: "", marketPulseSignature: "",
     industryGroup: new URLSearchParams(location.search).get("group") || "",
     fundamentalMinScore: 0, fundamentalProfitGrowth: "all", fundamentalRoe: "all",
     quarterlyBySymbol: {}, quarterlyLoading: {}, quarterlyError: {},
@@ -219,20 +223,102 @@
   function commonContextRailHtml(extra) {
     return '<aside class="context-rail">' + (extra || '') + planScopeCardHtml() + dataTrustCardHtml() + '</aside>';
   }
+  function normalizeMarketPulse(row) {
+    return {
+      key: String(row.key || "").toLowerCase(),
+      displayName: row.display_name || "",
+      sortOrder: num(row.sort_order),
+      price: num(row.price),
+      previousClose: num(row.previous_close),
+      changeValue: num(row.change_value),
+      changePct: num(row.change_pct),
+      currency: row.currency || "",
+      source: row.source || "",
+      sourceSymbol: row.source_symbol || "",
+      changeBasis: row.change_basis || "previous_close",
+      marketStatus: String(row.market_status || "UNKNOWN").toUpperCase(),
+      marketTime: row.market_time || null,
+      lastSuccessAt: row.last_success_at || null,
+      checkedAt: row.checked_at || null,
+      dataStatus: String(row.data_status || "NO_DATA").toUpperCase()
+    };
+  }
+  function marketPulseDigits(key) {
+    return key === "btc" ? 0 : key === "dxy" ? 3 : 2;
+  }
+  function marketPulseSigned(value, digits) {
+    if (value === null || !Number.isFinite(value)) return "—";
+    return (value > 0 ? "+" : "") + formatNumber(value, digits);
+  }
+  function marketPulseTimeText(value) {
+    if (!value) return "—";
+    var d = new Date(value);
+    if (Number.isNaN(d.getTime())) return "—";
+    var formatter = new Intl.DateTimeFormat("en-GB", {
+      timeZone:"Asia/Ho_Chi_Minh",
+      day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit", hour12:false
+    });
+    var parts = {};
+    formatter.formatToParts(d).forEach(function (part) { if (part.type !== "literal") parts[part.type] = part.value; });
+    var nowParts = {};
+    formatter.formatToParts(new Date()).forEach(function (part) { if (part.type !== "literal") nowParts[part.type] = part.value; });
+    var clock = parts.hour + ":" + parts.minute;
+    return parts.day === nowParts.day && parts.month === nowParts.month ? clock : parts.day + "/" + parts.month + " · " + clock;
+  }
+  function marketPulseLatestCheckedAt() {
+    var best = null;
+    state.marketPulseRows.forEach(function (row) {
+      var ms = Date.parse(row.checkedAt || row.lastSuccessAt || row.marketTime || "");
+      if (Number.isFinite(ms) && (best === null || ms > best)) best = ms;
+    });
+    return best === null ? null : new Date(best).toISOString();
+  }
+  function marketPulseStatusModel(row) {
+    if (!row) return { label:"Không có dữ liệu", cls:"is-error" };
+    if (row.dataStatus === "STALE") return { label:"Chậm cập nhật", cls:"is-stale" };
+    if (row.dataStatus === "ERROR" || row.dataStatus === "NO_DATA") return { label:"Không có dữ liệu", cls:"is-error" };
+    if (row.marketStatus === "OPEN_24H") return { label:"24/7", cls:"is-open" };
+    if (row.marketStatus === "OPEN" || row.marketStatus === "REGULAR") return { label:"Đang giao dịch", cls:"is-open" };
+    if (row.marketStatus === "CLOSED") return { label:"Đóng cửa", cls:"is-closed" };
+    if (row.marketStatus.indexOf("PRE") >= 0) return { label:"Trước phiên", cls:"is-closed" };
+    if (row.marketStatus.indexOf("POST") >= 0) return { label:"Sau phiên", cls:"is-closed" };
+    return { label:"Cập nhật", cls:"is-closed" };
+  }
+  function marketPulseSourceLabel(row) {
+    var source = String(row && row.source || "");
+    if (/vnstock/i.test(source)) return source.replace(" fallback", "");
+    if (/coingecko/i.test(source)) return "CoinGecko";
+    if (/yahoo/i.test(source)) return "Yahoo";
+    return source || "Nguồn dữ liệu";
+  }
   function marketPulseHtml() {
     var instruments = [
-      ["VN-INDEX", "VN-INDEX", true, "Việt Nam"],
-      ["S&P 500", "S&P 500", false, "Hoa Kỳ"],
-      ["HANG SENG", "HANG SENG", false, "Hong Kong"],
-      ["DXY", "DXY", false, "USD Index"],
-      ["GOLD", "GOLD", false, "Vàng"],
-      ["WTI", "WTI", false, "Dầu thô"],
-      ["BTC", "BTC", false, "Bitcoin"]
+      ["vnindex", "VN-INDEX", true, "Việt Nam"],
+      ["sp500", "S&P 500", false, "Hoa Kỳ"],
+      ["hangseng", "HANG SENG", false, "Hong Kong"],
+      ["dxy", "DXY", false, "USD Index"],
+      ["gold", "GOLD", false, "Gold Futures"],
+      ["wti", "WTI", false, "WTI Futures"],
+      ["btc", "BTC", false, "Bitcoin"]
     ];
     var cards = instruments.map(function (item) {
-      return '<article class="market-tile ' + (item[2] ? 'is-primary' : '') + '"><header><strong>' + esc(item[0]) + '</strong>' + (item[2] ? '<span>CHỦ ĐẠO</span>' : '') + '<em>Không có dữ liệu</em></header><div class="market-unavailable"><b>—</b><span>Chưa kết nối nguồn chỉ số</span></div><footer>' + esc(item[3]) + ' · trạng thái không khả dụng</footer></article>';
-    }).join('');
-    return '<section class="market-pulse panel-anatomy" aria-labelledby="market-pulse-title"><header class="section-bar"><div><i class="status-dot"></i><h2 id="market-pulse-title">Market Pulse</h2><span>Cập nhật ' + esc(compactTime(state.meta && state.meta.marketUpdatedAt)) + '</span></div><small>7 chỉ số · không dùng dữ liệu giả</small></header><div class="market-pulse-grid">' + cards + '</div></section>';
+      var row = state.marketPulseByKey[item[0]] || null;
+      var status = marketPulseStatusModel(row);
+      var hasData = !!row && row.price !== null && Number.isFinite(row.price);
+      var body = "";
+      if (hasData) {
+        var digits = marketPulseDigits(row.key);
+        var changeTone = metricClass(row.changePct);
+        var changeBasis = row.changeBasis === "rolling_24h" ? '<small class="market-change-basis">24h</small>' : "";
+        body = '<div class="market-live-data"><div class="market-live-quote"><b class="market-live-price">' + esc(formatNumber(row.price, digits)) + '</b><span class="market-live-change ' + changeTone + '">' + esc(marketPulseSigned(row.changeValue, digits)) + ' · ' + esc(pct(row.changePct, 2)) + changeBasis + '</span></div><div class="market-live-meta"><span>' + esc(item[3]) + ' · ' + esc(marketPulseTimeText(row.marketTime || row.lastSuccessAt)) + '</span><span class="market-live-source">' + esc(marketPulseSourceLabel(row)) + '</span></div></div>';
+      } else {
+        body = '<div class="market-unavailable"><b>—</b><span>' + esc(state.marketPulseError ? "Đang dùng kết nối gần nhất" : "Đang chờ dữ liệu backend") + '</span></div>';
+      }
+      return '<article class="market-tile ' + (item[2] ? "is-primary " : "") + (hasData ? "has-live-data" : "") + '" data-market-key="' + esc(item[0]) + '"><header><strong>' + esc(item[1]) + '</strong>' + (item[2] ? '<span>CHỦ ĐẠO</span>' : "") + '<em class="market-status ' + status.cls + '">' + esc(status.label) + '</em></header>' + body + '<footer>' + esc(item[3]) + ' · ' + esc(row ? marketPulseSourceLabel(row) : "chưa có nguồn") + '</footer></article>';
+    }).join("");
+    var updated = marketPulseLatestCheckedAt();
+    var sectionMeta = state.marketPulseFetching ? "Đang cập nhật…" : state.marketPulseError ? "Kết nối lỗi · giữ dữ liệu" : updated ? "Cập nhật " + marketPulseTimeText(updated) : "Đang tải dữ liệu";
+    return '<section class="market-pulse panel-anatomy ' + (state.marketPulseError ? "has-fetch-error" : "") + '" aria-labelledby="market-pulse-title"><header class="section-bar"><div><i class="status-dot"></i><h2 id="market-pulse-title">Market Pulse</h2><span>' + esc(sectionMeta) + '</span></div><small>' + esc(sectionMeta) + '</small></header><div class="market-pulse-grid">' + cards + '</div></section>';
   }
   function mockPlan() { return MOCK_PLAN_CONFIG[state.mockPlan] || MOCK_PLAN_CONFIG.FREE; }
   function mockWatchlistRows() {
@@ -1166,6 +1252,53 @@
       state.metadataLoaded=true; state.metadataError="";
     } catch(e){state.metadataError="Không tải được tên công ty.";}
   }
+  function applyMarketPulseRows(rawRows) {
+    var rows = (rawRows || []).map(normalizeMarketPulse).filter(function (row) { return row.key; });
+    var byKey = {};
+    rows.forEach(function (row) { byKey[row.key] = row; });
+    var signature = rows.map(function (row) {
+      return [row.key, row.checkedAt, row.marketTime, row.price, row.changePct, row.marketStatus, row.dataStatus].join(":");
+    }).join("|");
+    var changed = signature !== state.marketPulseSignature;
+    state.marketPulseRows = rows;
+    state.marketPulseByKey = byKey;
+    state.marketPulseLoaded = true;
+    state.marketPulseSignature = signature;
+    return changed;
+  }
+  function extractMarketPulseCached() {
+    try {
+      var cached = JSON.parse(localStorage.getItem(MARKET_PULSE_CACHE_KEY) || "null");
+      if (cached && Array.isArray(cached.rows) && cached.rows.length) return cached.rows;
+    } catch (_) {}
+    return null;
+  }
+  async function fetchMarketPulse(renderOnChange) {
+    if (state.marketPulseFetching) return false;
+    state.marketPulseFetching = true;
+    var controller = new AbortController();
+    var timeout = setTimeout(function () { controller.abort(); }, 10000);
+    var changed = false;
+    try {
+      var response = await fetch(MARKET_PULSE_API_URL, {
+        method:"GET", cache:"no-store", signal:controller.signal,
+        headers:{"apikey":SUPABASE_KEY,"Accept":"application/json"}
+      });
+      if (!response.ok) throw new Error("HTTP " + response.status);
+      var rows = await response.json();
+      if (!Array.isArray(rows)) throw new Error("Supabase trả Market Pulse không hợp lệ");
+      changed = applyMarketPulseRows(rows);
+      state.marketPulseError = "";
+      try { localStorage.setItem(MARKET_PULSE_CACHE_KEY, JSON.stringify({rows:rows,savedAt:Date.now()})); } catch (_) {}
+    } catch (error) {
+      state.marketPulseError = error && error.name === "AbortError" ? "Market Pulse phản hồi quá 10 giây" : "Không tải được Market Pulse";
+    } finally {
+      clearTimeout(timeout);
+      state.marketPulseFetching = false;
+    }
+    if (renderOnChange !== false && changed && state.route === "overview" && !state.selected && !state.accountOpen) render();
+    return changed;
+  }
   async function fetchData(manual) {
     if (state.fetching) return;
     state.fetching = true;
@@ -1206,7 +1339,7 @@
     }
   }
   async function refreshAllSources() {
-    await Promise.all([fetchData(true), fetchFinancial(), fetchMetadata()]);
+    await Promise.all([fetchData(true), fetchFinancial(), fetchMetadata(), fetchMarketPulse(false)]);
     render();
   }
   function vietnamParts(ms) {
@@ -1302,8 +1435,12 @@
   document.addEventListener("keydown", function(e){if(e.key!=="Escape")return;if(state.scannerDialog)closeScannerActionDialog();});
   var cached = extractCached();
   if (cached) applyData(cached);
+  var cachedPulse = extractMarketPulseCached();
+  if (cachedPulse) applyMarketPulseRows(cachedPulse);
   render();
   fetchFinancial().then(function(){ render(); });
   fetchMetadata().then(function(){ render(); });
+  fetchMarketPulse(true);
   fetchData(false);
+  setInterval(function(){ fetchMarketPulse(true); }, MARKET_PULSE_POLL_INTERVAL_MS);
 })();
