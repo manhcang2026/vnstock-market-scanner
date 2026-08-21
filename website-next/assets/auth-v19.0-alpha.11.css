@@ -1,0 +1,140 @@
+body.ccc-auth-open{overflow:hidden}
+#ccc-auth-root{position:relative;z-index:1200}
+#ccc-account-page-root{display:none}
+body.ccc-account-route #ccc-account-page-root{display:block}
+body.ccc-account-route #app main.wrap{display:none!important}
+
+.ccc-auth-overlay{position:fixed;inset:0;display:grid;place-items:center;padding:24px;background:oklch(0 0 0 / .58);backdrop-filter:blur(4px)}
+.ccc-auth-dialog{width:min(500px,100%);max-height:min(820px,calc(100dvh - 48px));overflow:auto;border:1px solid var(--border-strong);border-radius:var(--radius-xl);background:var(--elevated);color:var(--foreground);box-shadow:0 24px 80px oklch(0 0 0 / .32)}
+.ccc-auth-head{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;padding:24px 24px 18px;border-bottom:1px solid var(--border)}
+.ccc-auth-head h2{margin:4px 0 6px;font-size:22px;line-height:1.2;letter-spacing:-.02em}
+.ccc-auth-head p{margin:0;color:var(--muted-foreground);font-size:13px;line-height:1.55}
+.ccc-auth-close{width:36px;height:36px;display:grid;flex:none;place-items:center;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface-2);color:var(--foreground);font-size:24px;line-height:1}
+.ccc-auth-close:hover{background:var(--surface-3)}
+.ccc-auth-body{padding:24px}
+.ccc-auth-feedback{margin:18px 24px 0;padding:11px 12px;border:1px solid var(--border);border-radius:var(--radius-md);font-size:13px;line-height:1.5}
+.ccc-auth-feedback.embedded{margin:0}
+.ccc-auth-feedback.error{border-color:var(--negative);background:var(--negative-bg);color:var(--negative)}
+.ccc-auth-feedback.success{border-color:var(--positive);background:var(--positive-bg);color:var(--positive)}
+.ccc-auth-google,.ccc-auth-button{width:100%;min-height:44px;border-radius:var(--radius-md);font-weight:700}
+.ccc-auth-google{display:flex;align-items:center;justify-content:center;gap:10px;border:1px solid var(--border-strong);background:var(--surface-1);color:var(--foreground)}
+.ccc-auth-google:hover:not(:disabled){background:var(--surface-2)}
+.ccc-auth-google-mark{display:grid;width:24px;height:24px;place-items:center;border:1px solid var(--border-strong);border-radius:50%;background:var(--surface-2);font-size:13px;font-weight:800}
+.ccc-auth-divider{display:flex;align-items:center;gap:12px;margin:20px 0;color:var(--muted-foreground);font-size:11px}
+.ccc-auth-divider::before,.ccc-auth-divider::after{height:1px;flex:1;background:var(--border);content:""}
+.ccc-auth-divider span{white-space:nowrap}
+.ccc-auth-form{display:grid;gap:8px}
+.ccc-auth-form label{margin-top:4px;font-size:12px;font-weight:700}
+.ccc-auth-form input{width:100%;height:44px;padding:0 12px;border:1px solid var(--input);border-radius:var(--radius-md);background:var(--surface-2);color:var(--foreground);font-size:14px;outline:0}
+.ccc-auth-form input::placeholder{color:var(--muted-foreground)}
+.ccc-auth-form input:focus{border-color:var(--ring);box-shadow:0 0 0 3px var(--focus-ring)}
+.ccc-auth-button{display:flex;align-items:center;justify-content:center;margin-top:10px;border:1px solid transparent;padding:0 16px;text-decoration:none}
+.ccc-auth-button.primary{background:var(--primary);color:var(--primary-foreground)}
+.ccc-auth-button.primary:hover:not(:disabled){filter:brightness(1.05)}
+.ccc-auth-button.secondary{border-color:var(--border-strong);background:var(--surface-2);color:var(--foreground)}
+.ccc-auth-button.secondary:hover:not(:disabled){background:var(--surface-3)}
+.ccc-auth-button.danger{border-color:var(--negative);color:var(--negative)}
+.ccc-auth-stage-note{margin:18px 0 0;color:var(--muted-foreground);font-size:11px;line-height:1.55}
+.ccc-auth-account{display:grid;gap:16px}
+.ccc-auth-user-row{display:flex;align-items:center;gap:12px;padding:14px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--surface-1)}
+.ccc-auth-user-avatar{display:grid;width:42px;height:42px;flex:none;place-items:center;border-radius:50%;background:var(--primary);color:var(--primary-foreground);font-size:16px;font-weight:800}
+.ccc-auth-user-row strong,.ccc-auth-user-row p{display:block;margin:0;overflow-wrap:anywhere}
+.ccc-auth-user-row strong{font-size:14px}.ccc-auth-user-row p{margin-top:3px;color:var(--muted-foreground);font-size:12px}
+.ccc-auth-membership{display:grid;gap:12px;padding:14px;border:1px solid var(--border-strong);border-radius:var(--radius-lg);background:var(--surface-1)}
+.ccc-auth-plan-head{display:flex;align-items:center;justify-content:space-between;gap:16px}
+.ccc-auth-plan-head>div span{display:block;color:var(--muted-foreground);font-size:10px;font-weight:600}
+.ccc-auth-plan-head>div strong{display:block;margin-top:3px;font-size:18px;line-height:1.2}
+.ccc-auth-plan-code{display:inline-flex;align-items:center;min-height:26px;padding:0 9px;border:1px solid var(--border-strong);border-radius:999px;background:var(--surface-2);font-size:10px;font-weight:800;letter-spacing:.06em}
+.ccc-auth-membership-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:0}
+.ccc-auth-membership-grid>div{padding:10px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface-2)}
+.ccc-auth-membership-grid dt{color:var(--muted-foreground);font-size:10px;font-weight:600;line-height:1.35}
+.ccc-auth-membership-grid dd{margin:5px 0 0;font-size:12px;font-weight:700;line-height:1.35}
+.ccc-auth-membership-loading{display:flex;align-items:center;gap:12px;padding:14px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--surface-1)}
+.ccc-auth-membership-loading strong,.ccc-auth-membership-loading p{display:block;margin:0}
+.ccc-auth-membership-loading strong{font-size:12px}.ccc-auth-membership-loading p{margin-top:3px;color:var(--muted-foreground);font-size:10px}
+.ccc-auth-spinner{width:20px;height:20px;flex:none;border:2px solid var(--border-strong);border-top-color:var(--foreground);border-radius:50%;animation:ccc-auth-spin .7s linear infinite}
+@keyframes ccc-auth-spin{to{transform:rotate(360deg)}}
+
+/* Real account route */
+.ccc-account-page{display:grid;align-content:start;gap:20px}
+.ccc-account-heading{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;min-height:78px}
+.ccc-account-heading h1{margin:4px 0 4px;font-size:26px;line-height:1.15;letter-spacing:-.025em}
+.ccc-account-heading p{margin:0;color:var(--muted-foreground);font-size:13px}
+.ccc-account-identity{display:flex;align-items:center;gap:10px;min-width:0;padding:9px 12px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--surface-1)}
+.ccc-account-avatar{display:grid;width:38px;height:38px;flex:none;place-items:center;border-radius:50%;background:var(--primary);color:var(--primary-foreground);font-weight:800}
+.ccc-account-identity div{min-width:0}.ccc-account-identity strong,.ccc-account-identity span{display:block;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ccc-account-identity strong{font-size:13px}.ccc-account-identity span{margin-top:2px;color:var(--muted-foreground);font-size:11px}
+.ccc-account-layout{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:20px;align-items:start}
+.ccc-account-main,.ccc-account-side{display:grid;gap:20px;min-width:0}
+.ccc-account-card{padding:20px;border:1px solid var(--border);border-radius:var(--radius-xl);background:var(--surface-1);box-shadow:var(--shadow-sm)}
+.ccc-account-card.setup-required{border-color:var(--warning)}
+.ccc-account-card.compact{padding:18px}
+.ccc-account-card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px}
+.ccc-account-card-head h2{margin:3px 0 4px;font-size:18px;line-height:1.2}
+.ccc-account-card-head p{margin:0;color:var(--muted-foreground);font-size:12px;line-height:1.5}
+.ccc-account-kicker{display:block;color:var(--muted-foreground);font-size:10px;font-weight:800;letter-spacing:.08em}
+.ccc-account-status,.ccc-account-plan-badge{display:inline-flex;align-items:center;min-height:26px;flex:none;padding:0 9px;border:1px solid var(--border-strong);border-radius:999px;background:var(--surface-2);font-size:10px;font-weight:800}
+.ccc-account-status.ok{border-color:var(--positive);color:var(--positive)}
+.ccc-account-status.pending{border-color:var(--warning);color:var(--warning)}
+.ccc-account-plan-badge{letter-spacing:.06em}
+.ccc-account-form-message{margin:14px 0 0;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-md);font-size:12px}
+.ccc-account-form-message.error{border-color:var(--negative);background:var(--negative-bg);color:var(--negative)}
+.ccc-account-form-message.success{border-color:var(--positive);background:var(--positive-bg);color:var(--positive)}
+.ccc-account-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:18px}
+.ccc-account-field{display:grid;gap:6px;min-width:0}
+.ccc-account-field.full{grid-column:1/-1}
+.ccc-account-field label{font-size:12px;font-weight:700}.ccc-account-field label b{color:var(--negative)}.ccc-account-field label span{color:var(--muted-foreground);font-size:10px;font-weight:500}
+.ccc-account-field input,.ccc-account-field textarea{width:100%;border:1px solid var(--input);border-radius:var(--radius-md);background:var(--surface-2);color:var(--foreground);outline:0}
+.ccc-account-field input{height:42px;padding:0 11px}.ccc-account-field textarea{padding:10px 11px;resize:vertical;line-height:1.5}
+.ccc-account-field input[readonly]{color:var(--muted-foreground);cursor:not-allowed}
+.ccc-account-field input:focus:not([readonly]),.ccc-account-field textarea:focus{border-color:var(--ring);box-shadow:0 0 0 3px var(--focus-ring)}
+.ccc-account-field small{color:var(--muted-foreground);font-size:10px}
+.ccc-account-form-actions{grid-column:1/-1;display:flex;justify-content:flex-end}
+.ccc-account-primary,.ccc-account-secondary{min-height:42px;padding:0 16px;border-radius:var(--radius-md);font-weight:700}
+.ccc-account-primary{border:1px solid var(--primary);background:var(--primary);color:var(--primary-foreground)}
+.ccc-account-secondary{width:100%;margin-top:14px;border:1px solid var(--border-strong);background:var(--surface-2);color:var(--foreground)}
+.ccc-account-secondary.danger{border-color:var(--negative);color:var(--negative)}
+.ccc-account-metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:18px}
+.ccc-account-metrics>div{padding:12px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface-2)}
+.ccc-account-metrics span,.ccc-account-metrics strong{display:block}.ccc-account-metrics span{color:var(--muted-foreground);font-size:10px}.ccc-account-metrics strong{margin-top:4px;font-size:13px}
+.ccc-account-cycle{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)}
+.ccc-account-cycle span{color:var(--muted-foreground);font-size:10px}.ccc-account-cycle strong{font-size:11px}
+.ccc-account-placeholder{margin-top:14px;padding:14px;border:1px dashed var(--border-strong);border-radius:var(--radius-md);color:var(--muted-foreground);font-size:11px;text-align:center}
+.ccc-account-security-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--border);font-size:11px}
+.ccc-account-security-row span{color:var(--muted-foreground)}.ccc-account-security-row strong{font-size:11px}
+.ccc-account-loading,.ccc-account-empty{display:grid;max-width:560px;min-height:280px;place-items:center;align-content:center;gap:10px;margin:40px auto;padding:32px;border:1px solid var(--border);border-radius:var(--radius-xl);background:var(--surface-1);text-align:center}
+.ccc-account-loading{grid-template-columns:auto 1fr;place-items:center start;text-align:left}
+.ccc-account-loading strong,.ccc-account-loading p{display:block;margin:0}.ccc-account-loading p{margin-top:4px;color:var(--muted-foreground);font-size:11px}
+.ccc-account-empty-icon{display:grid;width:54px;height:54px;place-items:center;border-radius:50%;background:var(--primary);color:var(--primary-foreground);font-size:18px;font-weight:800}
+.ccc-account-empty h2{margin:4px 0 0;font-size:20px}.ccc-account-empty p{max-width:400px;margin:0;color:var(--muted-foreground);font-size:12px}
+
+@media (max-width:1023px){
+  .ccc-account-layout{grid-template-columns:1fr}
+  .ccc-account-side{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:767px){
+  .ccc-auth-overlay{align-items:end;padding:0;background:oklch(0 0 0 / .52)}
+  .ccc-auth-dialog{width:100%;max-height:92dvh;border-right:0;border-bottom:0;border-left:0;border-radius:var(--radius-xl) var(--radius-xl) 0 0;padding-bottom:env(safe-area-inset-bottom)}
+  .ccc-auth-head{padding:20px 18px 16px}.ccc-auth-body{padding:20px 18px}.ccc-auth-feedback{margin:16px 18px 0}.ccc-auth-feedback.embedded{margin:0}
+  .ccc-auth-head h2{font-size:20px}.ccc-auth-form input{font-size:16px}
+  .ccc-account-page{padding-top:18px}
+  .ccc-account-heading{align-items:flex-start;flex-direction:column;gap:12px}
+  .ccc-account-heading h1{font-size:23px}
+  .ccc-account-identity{width:100%}
+  .ccc-account-identity strong,.ccc-account-identity span{max-width:calc(100vw - 120px)}
+  .ccc-account-card{padding:16px}
+  .ccc-account-card-head{align-items:flex-start}
+  .ccc-account-form{grid-template-columns:1fr;gap:14px}
+  .ccc-account-field.full,.ccc-account-form-actions{grid-column:auto}
+  .ccc-account-form-actions{justify-content:stretch}.ccc-account-primary{width:100%}
+  .ccc-account-side{grid-template-columns:1fr}
+}
+@media (max-width:390px){
+  .ccc-auth-membership-grid,.ccc-account-metrics{grid-template-columns:1fr}
+  .ccc-account-cycle{align-items:flex-start;flex-direction:column;gap:3px}
+}
+@media (prefers-reduced-motion:no-preference){.ccc-auth-dialog{animation:ccc-auth-in .16s ease-out}@keyframes ccc-auth-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}}
+
+body.ccc-real-membership .mock-plan-control{display:none!important}
+body.ccc-real-membership #mock-plan-select{display:none!important}
+.ccc-real-plan-chip{display:inline-flex;align-items:center;min-height:28px;padding:0 10px;border:1px solid var(--border-strong);border-radius:999px;background:var(--surface-2);color:var(--foreground);font-size:10px;font-weight:800;letter-spacing:.03em;white-space:nowrap}
