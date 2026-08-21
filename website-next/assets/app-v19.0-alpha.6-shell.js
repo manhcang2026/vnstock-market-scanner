@@ -42,7 +42,7 @@
     industryGroup: new URLSearchParams(location.search).get("group") || "",
     fundamentalMinScore: 0, fundamentalProfitGrowth: "all", fundamentalRoe: "all",
     quarterlyBySymbol: {}, quarterlyLoading: {}, quarterlyError: {},
-    mockPlan: "FREE", mockChangeUsed: 3,
+    mockPlan: "FREE", mockChangeUsed: 3, overviewGroup: "2plus",
     scannerMode: "market", scannerFiltersOpen: false, scannerDialog: "", scannerDialogSymbol: "",
     detailTab: "overview", detailReturnScroll: 0, accountOpen: false, accountReturnScroll: 0
   };
@@ -174,10 +174,18 @@
   }
   function overviewStockRowHtml(row) {
     var company = companyDisplayName(row.symbol) || "Tên công ty đang cập nhật";
+    var financial = financialBySymbol(row.symbol);
+    var metadata = state.metadataBySymbol[String(row.symbol || "").toUpperCase()] || {};
+    var groupName = (financial && financial.website_group) || metadata.website_group || "";
+    var identityMeta = row.exchange + (groupName ? " · " + groupName : "");
+    var reasons = notableReasons(row);
+    var reasonHtml = reasons.length ? reasons.map(function (reason) { return '<span>' + esc(reason) + '</span>'; }).join('') : '<span class="stock-row-highlight-muted">Chưa có điểm nổi bật bổ sung</span>';
+    var volumeRatio = row.dayVolumeRatioPct === null || !Number.isFinite(row.dayVolumeRatioPct) ? "—" : plainPct(row.dayVolumeRatioPct) + " KLTB10";
     return '<article class="lovable-stock-row" data-symbol="' + esc(row.symbol) + '">' +
-      '<div class="stock-row-identity">' + logoHtml(row.symbol, 'row-logo') + '<div><strong>' + esc(row.symbol) + '</strong><span title="' + esc(company) + '">' + esc(company) + '</span><small>' + esc(row.exchange) + '</small></div></div>' +
+      '<div class="stock-row-identity">' + logoHtml(row.symbol, 'row-logo') + '<div><strong>' + esc(row.symbol) + '</strong><span title="' + esc(company) + '">' + esc(company) + '</span><small>' + esc(identityMeta) + '</small></div></div>' +
       '<div class="stock-row-price"><strong>' + formatPrice(row.currentPrice) + '</strong><span class="' + metricClass(row.changePct) + '">' + pct(row.changePct) + '</span></div>' +
-      '<div class="stock-row-volume"><small>KL hiện tại</small><strong>' + shortVolume(row.cumVolume) + '</strong></div>' +
+      '<div class="stock-row-volume"><small>KL hiện tại</small><strong>' + shortVolume(row.cumVolume) + '</strong><span>' + esc(volumeRatio) + '</span></div>' +
+      '<div class="stock-row-highlights">' + reasonHtml + '</div>' +
       '<div class="stock-row-ccc">' + signalRailHtml(row) + '</div>' +
     '</article>';
   }
@@ -248,7 +256,7 @@
     return [];
   }
   function discoveryLabel(key) {
-    return key === "4of4" ? "mã đạt 4/4" : key === "3plus" ? "mã đạt từ 3 tín hiệu" : key === "2plus" ? "mã đạt từ 2 tín hiệu" : "mã có RVOL30 sớm";
+    return key === "4of4" ? "mã đạt 4/4" : key === "3plus" ? "mã đạt từ 3 tín hiệu" : key === "2plus" ? "mã đạt từ 2 tín hiệu" : "mã có RVOL30 nổi bật";
   }
   function discoveryData(key) {
     var plan = mockPlan();
@@ -647,9 +655,12 @@
   }
   function overviewHtml() {
     var plan = mockPlan();
-    var watchlist = mockWatchlistRows();
-    var inScope = watchlist.filter(function (row) { return row.signalCount >= 2; }).sort(priority).slice(0, 8);
-    var summary2 = discoveryData("2plus");
+    var selectedGroup = ["4of4", "3plus", "2plus", "rvol30"].indexOf(state.overviewGroup) >= 0 ? state.overviewGroup : "2plus";
+    var groupTitles = { "4of4":"Đạt 4/4", "3plus":"Từ 3 tín hiệu", "2plus":"Từ 2 tín hiệu", "rvol30":"RVOL30 nổi bật" };
+    var selectedData = discoveryData(selectedGroup);
+    var selectedVisible = selectedData.visibleItems.slice().sort(priority);
+    var shown = selectedVisible.slice(0, 10);
+    var scannerSignal = { "4of4":"4of4", "3plus":"3plus", "2plus":"2plus", "rvol30":"rvol30" }[selectedGroup];
     var density = [
       ["4of4", "Đạt 4/4", discoveryRows("4of4").length, "Hội tụ mạnh"],
       ["3plus", "Từ 3 tín hiệu", discoveryRows("3plus").length, "Đang hội tụ"],
@@ -657,17 +668,20 @@
       ["rvol30", "RVOL30 nổi bật", discoveryRows("rvol30").length, "Dòng tiền tương đối"]
     ].map(function (metric) {
       var data = discoveryData(metric[0]);
-      return '<div class="density-tile"><span>' + esc(metric[1]) + '</span><strong>' + metric[2] + '<small> mã</small></strong><div><em>' + esc(metric[3]) + '</em><b>' + data.visibleCount + ' trong phạm vi</b></div></div>';
+      var active = selectedGroup === metric[0];
+      return '<button type="button" class="density-tile overview-density-trigger ' + (active ? 'active' : '') + '" data-overview-group="' + metric[0] + '" aria-pressed="' + active + '"><span>' + esc(metric[1]) + '</span><strong>' + metric[2] + '<small> mã</small></strong><div><em>' + esc(metric[3]) + '</em><b>' + data.visibleCount + ' trong phạm vi</b></div></button>';
     }).join('');
     var planOptions = Object.keys(MOCK_PLAN_CONFIG).map(function (code) { return '<option value="' + code + '" ' + (state.mockPlan === code ? 'selected' : '') + '>' + esc(MOCK_PLAN_CONFIG[code].label) + '</option>'; }).join('');
     var legendCard = railCardHtml("CCC Signal Rail", "4 phân đoạn", signalLegendHtml(), "signal-legend-card");
+    var visibleSummary = selectedData.totalCount ? selectedData.visibleCount + '/' + selectedData.totalCount + ' mã trong phạm vi' : 'Chưa có mã trong nhóm';
+    var seeAll = selectedData.visibleCount > shown.length ? '<div class="overview-see-all"><a href="/danh-sach?signal=' + encodeURIComponent(scannerSignal) + '">Xem tất cả ' + selectedData.visibleCount + ' mã trong Bộ quét ' + iconSvg('arrow') + '</a></div>' : '';
+    var lockedBlock = selectedData.lockedCount ? '<section class="locked-remainder overview-locked-remainder"><div class="locked-remainder-icon">' + iconSvg('lock') + '</div><div><span>NGOÀI PHẠM VI</span><strong>' + selectedData.lockedCount + ' mã thuộc nhóm ' + esc(groupTitles[selectedGroup]) + ' đang được bảo vệ</strong><p>Bạn vẫn thấy tổng số lượng của nhóm trên toàn thị trường, nhưng danh tính và dữ liệu kỹ thuật ngoài phạm vi gói không được liệt kê.</p></div><button type="button" class="secondary-action scanner-upgrade-trigger">Mở rộng phạm vi</button></section>' : '';
     return '<main class="wrap overview-main lovable-overview">' +
       '<section class="page-heading"><div><span class="eyebrow">MARKET INTELLIGENCE</span><h1>Tổng quan</h1><p>Nhịp thị trường, mật độ hội tụ tín hiệu và lực dòng tiền trong phạm vi của bạn.</p></div><div class="page-heading-meta"><span>Scanner · ' + state.rows.length + ' mã</span><label><span>Gói staging</span><select id="mock-plan-select" aria-label="Chọn gói giả lập staging">' + planOptions + '</select></label></div></section>' +
       secondarySourceWarningHtml(false) + marketPulseHtml() +
-      '<section class="signal-density panel-anatomy"><header class="section-bar"><div><h2>Mật độ tín hiệu hôm nay</h2><span>Đếm trên toàn scanner universe</span></div><small>Ngoài phạm vi chỉ hiển thị số lượng</small></header><div class="density-grid">' + density + '</div></section>' +
-      '<section class="in-scope-results panel-anatomy"><header class="section-bar"><div><h2>Tín hiệu trong phạm vi của bạn</h2><span>Danh tính chỉ hiển thị khi thuộc phạm vi gói ' + esc(plan.label) + '</span></div><small>' + inScope.length + ' mã hiển thị</small></header><div class="overview-row-head"><span>Công ty</span><span>Giá / thay đổi</span><span>Khối lượng</span><span>CCC</span></div><div class="overview-rows">' + (inScope.length ? inScope.map(overviewStockRowHtml).join('') : '<div class="empty-state"><strong>Chưa có mã đạt từ 2 tín hiệu</strong><span>Thử kiểm tra lại khi snapshot thị trường được cập nhật.</span></div>') + '</div></section>' +
-      (summary2.lockedCount ? '<section class="locked-remainder"><div class="locked-remainder-icon">' + iconSvg('lock') + '</div><div><span>NGOÀI PHẠM VI</span><strong>' + summary2.lockedCount + ' mã đạt từ 2 tín hiệu đang được bảo vệ</strong><p>Danh tính và hình dạng tín hiệu không được liệt kê. Scanner universe vẫn giữ nguyên.</p></div><button type="button" class="secondary-action scanner-upgrade-trigger">Mở rộng phạm vi</button></section>' : '') +
-      commonContextRailHtml(legendCard) +
+      '<section class="signal-density panel-anatomy"><header class="section-bar"><div><h2>Mật độ tín hiệu hôm nay</h2><span>Chọn một nhóm để xem các mã thuộc phạm vi của bạn ngay bên dưới</span></div><small>Ngoài phạm vi chỉ hiển thị số lượng</small></header><div class="density-grid">' + density + '</div></section>' +
+      '<section id="overview-results" class="in-scope-results panel-anatomy"><header class="section-bar"><div><h2>Tín hiệu trong phạm vi của bạn</h2><span>Đang xem: <b>' + esc(groupTitles[selectedGroup]) + '</b> · ' + visibleSummary + '</span></div><small>' + shown.length + ' mã hiển thị</small></header><div class="overview-row-head"><span>Công ty</span><span>Giá / thay đổi</span><span>Khối lượng</span><span>Điểm nổi bật</span><span>CCC</span></div><div class="overview-rows">' + (shown.length ? shown.map(overviewStockRowHtml).join('') : '<div class="empty-state"><strong>Chưa có mã thuộc phạm vi của bạn trong nhóm này</strong><span>Chọn nhóm tín hiệu khác hoặc kiểm tra lại khi snapshot thị trường được cập nhật.</span></div>') + '</div>' + seeAll + '</section>' +
+      lockedBlock + commonContextRailHtml(legendCard) +
       '<p class="disclaimer">STAGING · Dữ liệu thật, entitlement frontend chỉ phục vụ duyệt UX. Công cụ không đưa ra khuyến nghị mua/bán.</p></main>';
   }
   function membershipDialogHtml() {
@@ -869,6 +883,14 @@
       state.mockPlan = MOCK_PLAN_CONFIG[mockPlanSelect.value] ? mockPlanSelect.value : "FREE";
       state.scannerDialog = "";
       render();
+    });
+    document.querySelectorAll("[data-overview-group]").forEach(function (button) {
+      button.addEventListener("click", function () {
+        var key = button.getAttribute("data-overview-group");
+        if (["4of4", "3plus", "2plus", "rvol30"].indexOf(key) < 0) return;
+        state.overviewGroup = key;
+        render();
+      });
     });
     document.querySelectorAll("[data-scanner-mode]").forEach(function (button) { button.addEventListener("click", function () { state.scannerMode = button.getAttribute("data-scanner-mode") === "watchlist" ? "watchlist" : "market"; state.page = 1; render(); }); });
     document.querySelectorAll("[data-select-filter]").forEach(function (select) { select.addEventListener("change", function () { state[select.getAttribute("data-select-filter")] = select.value; state.page = 1; render(); }); });
