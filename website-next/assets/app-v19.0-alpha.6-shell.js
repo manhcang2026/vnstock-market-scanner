@@ -42,9 +42,9 @@
     industryGroup: new URLSearchParams(location.search).get("group") || "",
     fundamentalMinScore: 0, fundamentalProfitGrowth: "all", fundamentalRoe: "all",
     quarterlyBySymbol: {}, quarterlyLoading: {}, quarterlyError: {},
-    mockPlan: "FREE", mockChangeUsed: 3, discoveryGroup: "", upsellOpen: false,
+    mockPlan: "FREE", mockChangeUsed: 3,
     scannerMode: "market", scannerFiltersOpen: false, scannerDialog: "", scannerDialogSymbol: "",
-    detailTab: "overview", accountOpen: false
+    detailTab: "overview", detailReturnScroll: 0, accountOpen: false, accountReturnScroll: 0
   };
 
   function esc(value) {
@@ -395,7 +395,7 @@
     return Object.keys(map).sort(function(a,b){return map[b]-map[a]||a.localeCompare(b,"vi");}).map(function(g){return [g,map[g]];});
   }
   function financialCard(row){
-    var s=financialScore(row); var market=state.rows.find(function(x){return x.symbol===row.symbol;});
+    var s=financialScore(row);
     return '<article class="fund-card" data-symbol="'+esc(row.symbol)+'">'+
       '<div class="fund-card-top"><div><b class="fund-symbol">'+esc(row.symbol)+'</b><span>'+esc(row.website_group||'—')+'</span></div>'+scoreBadgeHtml(row)+'</div>'+
       '<div class="fund-card-grid">'+
@@ -404,8 +404,11 @@
         '<div><small>P/E<br>Giá / lợi nhuận</small><b>'+(num(row.pe)===null?'—':num(row.pe).toFixed(2)+'x')+'</b></div>'+
         '<div><small>P/B<br>Giá / giá trị sổ sách</small><b>'+(num(row.pb)===null?'—':num(row.pb).toFixed(2)+'x')+'</b></div>'+
       '</div>'+
-      '<div class="fund-card-foot"><span>'+(market?'Tín hiệu kỹ thuật '+market.signalCount+'/4':'Chưa có dữ liệu kỹ thuật')+'</span><span>'+esc(scoreCoverageText(row))+'</span></div>'+
+      '<div class="fund-card-foot"><span>'+esc(scoreCoverageText(row))+'</span></div>'+
     '</article>';
+  }
+  function researchTabsHtml(){
+    return '<nav class="research-tabs" aria-label="Điều hướng Nghiên cứu"><a href="/so-sanh-theo-nganh" class="'+(state.route==='industry'?'active':'')+'"'+(state.route==='industry'?' aria-current="page"':'')+'>Theo ngành</a><a href="/sang-loc-co-ban" class="'+(state.route==='fundamental'?'active':'')+'"'+(state.route==='fundamental'?' aria-current="page"':'')+'>Sàng lọc cơ bản</a></nav>';
   }
   function scoreMethodHtml(){
     return '<section class="score-method panel">'+
@@ -435,7 +438,7 @@
     var selected=state.financialRows.filter(function(r){return r.website_group===state.industryGroup;}).sort(function(a,b){var sa=financialScore(a),sb=financialScore(b);return (sb.available?sb.earned/sb.available:0)-(sa.available?sa.earned/sa.available:0);});
     var groupButtons=groups.map(function(g){return '<button class="industry-chip '+(state.industryGroup===g[0]?'active':'')+'" data-industry="'+esc(g[0])+'"><span>'+esc(g[0])+'</span><b>'+g[1]+' mã</b></button>';}).join('');
     var rows=selected.map(function(r){
-      var m=state.rows.find(function(x){return x.symbol===r.symbol;}); var s=financialScore(r);
+      var s=financialScore(r);
       return '<tr data-symbol="'+esc(r.symbol)+'">'+
         '<td class="center symbol"><b>'+esc(r.symbol)+'</b></td>'+
         '<td class="center"><div>'+scoreBadgeHtml(r)+'</div><small class="score-coverage">'+esc(scoreCoverageText(r))+'</small></td>'+
@@ -443,11 +446,10 @@
         '<td class="center">'+pct(num(r.roea_pct))+'</td>'+
         '<td class="center">'+(num(r.pe)===null?'—':num(r.pe).toFixed(2)+'x')+'</td>'+
         '<td class="center">'+(num(r.pb)===null?'—':num(r.pb).toFixed(2)+'x')+'</td>'+
-        '<td class="center">'+(m?'<span class="signal-pill '+signalClass(m.signalCount)+'">'+m.signalCount+'/4</span>':'—')+'</td>'+
         '<td class="center"><span class="freshness-tag freshness-'+String(r.freshness_status||'').toLowerCase()+'">'+esc(freshnessLabel(r.freshness_status))+'</span></td>'+
       '</tr>';
     }).join('');
-    return '<main class="wrap fund-main"><section class="page-intro"><span class="eyebrow">SO SÁNH DOANH NGHIỆP CÙNG NGÀNH</span><h1>So sánh theo ngành</h1><p>Chọn một ngành để đặt các doanh nghiệp cạnh nhau. Bảng ưu tiên các chỉ tiêu dễ so sánh: tăng trưởng lợi nhuận, khả năng sinh lời, định giá và tín hiệu kỹ thuật.</p></section>'+secondarySourceWarningHtml(true)+'<section class="industry-picker">'+groupButtons+'</section><section class="panel industry-panel"><div class="section-title"><div><h2>'+esc(state.industryGroup||'Ngành')+'</h2><p>'+selected.length+' mã · sắp xếp theo Điểm cơ bản trên phần dữ liệu có thể chấm.</p></div></div><div class="desktop-table"><div class="table-shell fund-table-shell"><table class="fundamental-table industry-table"><thead><tr><th>'+metricHead('Mã cổ phiếu','')+'</th><th>'+metricHead('Điểm cơ bản','Điểm đạt / điểm có thể chấm')+'</th><th>'+metricHead('Tăng trưởng lợi nhuận','So với cùng kỳ năm trước')+'</th><th>'+metricHead('ROE','Lợi nhuận / vốn chủ sở hữu')+'</th><th>'+metricHead('P/E','Giá / lợi nhuận')+'</th><th>'+metricHead('P/B','Giá / giá trị sổ sách')+'</th><th>'+metricHead('Tín hiệu kỹ thuật','Số tín hiệu đang đạt')+'</th><th>'+metricHead('Dữ liệu','Mức độ cập nhật')+'</th></tr></thead><tbody>'+rows+'</tbody></table></div></div><div class="mobile-list fund-mobile-list">'+selected.map(financialCard).join('')+'</div></section><p class="disclaimer">Điểm số hỗ trợ sàng lọc và học phân tích, không phải khuyến nghị mua/bán.</p></main>';
+    return '<main class="wrap fund-main"><section class="page-intro"><span class="eyebrow">NGHIÊN CỨU CƠ BẢN CÔNG KHAI</span><h1>So sánh theo ngành</h1><p>Chọn một ngành để đặt các doanh nghiệp cạnh nhau theo tăng trưởng lợi nhuận, khả năng sinh lời và định giá.</p></section>'+researchTabsHtml()+secondarySourceWarningHtml(true)+'<section class="industry-picker">'+groupButtons+'</section><section class="panel industry-panel"><div class="section-title"><div><h2>'+esc(state.industryGroup||'Ngành')+'</h2><p>'+selected.length+' mã · sắp xếp theo Điểm cơ bản trên phần dữ liệu có thể chấm.</p></div></div><div class="desktop-table"><div class="table-shell fund-table-shell"><table class="fundamental-table industry-table"><thead><tr><th>'+metricHead('Mã cổ phiếu','')+'</th><th>'+metricHead('Điểm cơ bản','Điểm đạt / điểm có thể chấm')+'</th><th>'+metricHead('Tăng trưởng lợi nhuận','So với cùng kỳ năm trước')+'</th><th>'+metricHead('ROE','Lợi nhuận / vốn chủ sở hữu')+'</th><th>'+metricHead('P/E','Giá / lợi nhuận')+'</th><th>'+metricHead('P/B','Giá / giá trị sổ sách')+'</th><th>'+metricHead('Dữ liệu','Mức độ cập nhật')+'</th></tr></thead><tbody>'+rows+'</tbody></table></div></div><div class="mobile-list fund-mobile-list">'+selected.map(financialCard).join('')+'</div></section><p class="disclaimer">Điểm số hỗ trợ sàng lọc và học phân tích, không phải khuyến nghị mua/bán.</p></main>';
   }
   function fundamentalHtml(){
     var rows=state.financialRows.slice().filter(function(r){var s=financialScore(r);if(state.fundamentalMinScore && (!s.available || s.earned/s.available*100<state.fundamentalMinScore))return false;var py=num(r.profit_yoy_pct),roe=num(r.roea_pct);if(state.fundamentalProfitGrowth==='positive' && !(py!==null&&py>0))return false;if(state.fundamentalProfitGrowth==='20plus' && !(py!==null&&py>=20))return false;if(state.fundamentalRoe==='15plus' && !(roe!==null&&roe>=15))return false;if(state.fundamentalRoe==='20plus' && !(roe!==null&&roe>=20))return false;return true;}).sort(function(a,b){var sa=financialScore(a),sb=financialScore(b);return (sb.available?sb.earned/sb.available:0)-(sa.available?sa.earned/sa.available:0);});
@@ -455,7 +457,6 @@
     var growthBtns=[['all','Tất cả'],['positive','Lợi nhuận tăng so cùng kỳ'],['20plus','Lợi nhuận tăng từ 20% so cùng kỳ']].map(function(x){return '<button class="chip '+(state.fundamentalProfitGrowth===x[0]?'active':'')+'" data-fund-filter="growth" data-value="'+x[0]+'">'+x[1]+'</button>';}).join('');
     var roeBtns=[['all','Tất cả'],['15plus','ROE từ 15%'],['20plus','ROE từ 20%']].map(function(x){return '<button class="chip '+(state.fundamentalRoe===x[0]?'active':'')+'" data-fund-filter="roe" data-value="'+x[0]+'">'+x[1]+'</button>';}).join('');
     var tableRows=rows.map(function(r){
-      var m=state.rows.find(function(x){return x.symbol===r.symbol;});
       return '<tr data-symbol="'+esc(r.symbol)+'">'+
         '<td class="center symbol"><b>'+esc(r.symbol)+'</b></td>'+
         '<td class="center"><span class="industry-name-cell">'+esc(r.website_group||'—')+'</span></td>'+
@@ -464,11 +465,10 @@
         '<td class="center">'+pct(num(r.roea_pct))+'</td>'+
         '<td class="center">'+(num(r.pe)===null?'—':num(r.pe).toFixed(2)+'x')+'</td>'+
         '<td class="center">'+(num(r.pb)===null?'—':num(r.pb).toFixed(2)+'x')+'</td>'+
-        '<td class="center">'+(m?'<span class="signal-pill '+signalClass(m.signalCount)+'">'+m.signalCount+'/4</span>':'—')+'</td>'+
         '<td class="center"><span class="freshness-tag freshness-'+String(r.freshness_status||'').toLowerCase()+'">'+esc(freshnessLabel(r.freshness_status))+'</span></td>'+
       '</tr>';
     }).join('');
-    return '<main class="wrap fund-main"><section class="page-intro"><span class="eyebrow">SÀNG LỌC NỀN TẢNG DOANH NGHIỆP</span><h1>Sàng lọc cơ bản</h1><p>Dùng các chỉ tiêu tài chính để tìm doanh nghiệp phù hợp với tiêu chí của bạn. Mỗi mã vẫn được giữ nếu thiếu dữ liệu và website ghi rõ phần nào chưa thể chấm.</p></section>'+secondarySourceWarningHtml(true)+scoreMethodHtml()+'<section class="panel fund-filters"><div class="filter-block"><p class="filter-label">Mức Điểm cơ bản</p><div class="filter-help">Ví dụ 70% nghĩa là doanh nghiệp đạt ít nhất 70% số điểm trên những chỉ tiêu hiện có.</div><div class="chips">'+scoreBtns+'</div></div><div class="filter-block"><p class="filter-label">Tăng trưởng lợi nhuận sau thuế</p><div class="chips">'+growthBtns+'</div></div><div class="filter-block"><p class="filter-label">ROE – lợi nhuận trên vốn chủ sở hữu</p><div class="chips">'+roeBtns+'</div></div></section><p class="result-info">Đang hiển thị <strong>'+rows.length+'</strong> / '+state.financialRows.length+' mã trong danh sách theo dõi. Mã thiếu dữ liệu vẫn được giữ để bạn nhận biết.</p><section class="panel screener-table-panel"><div class="desktop-table"><div class="table-shell screener-table-shell"><table class="fundamental-table screener-table"><thead><tr><th>'+metricHead('Mã cổ phiếu','')+'</th><th>'+metricHead('Ngành','Nhóm hoạt động chính')+'</th><th>'+metricHead('Điểm cơ bản','Điểm đạt / điểm có thể chấm')+'</th><th>'+metricHead('Tăng trưởng lợi nhuận','So với cùng kỳ năm trước')+'</th><th>'+metricHead('ROE','Lợi nhuận / vốn chủ sở hữu')+'</th><th>'+metricHead('P/E','Giá / lợi nhuận')+'</th><th>'+metricHead('P/B','Giá / giá trị sổ sách')+'</th><th>'+metricHead('Tín hiệu kỹ thuật','Số tín hiệu đang đạt')+'</th><th>'+metricHead('Dữ liệu','Mức độ cập nhật')+'</th></tr></thead><tbody>'+tableRows+'</tbody></table></div></div><div class="mobile-list fund-mobile-list">'+rows.map(financialCard).join('')+'</div></section><p class="disclaimer">Điểm số hỗ trợ sàng lọc và học phân tích, không phải khuyến nghị mua/bán.</p></main>';
+    return '<main class="wrap fund-main"><section class="page-intro"><span class="eyebrow">NGHIÊN CỨU CƠ BẢN CÔNG KHAI</span><h1>Sàng lọc cơ bản</h1><p>Dùng các chỉ tiêu tài chính để tìm doanh nghiệp phù hợp với tiêu chí của bạn. Mỗi mã vẫn được giữ nếu thiếu dữ liệu và website ghi rõ phần nào chưa thể chấm.</p></section>'+researchTabsHtml()+secondarySourceWarningHtml(true)+scoreMethodHtml()+'<section class="panel fund-filters"><div class="filter-block"><p class="filter-label">Mức Điểm cơ bản</p><div class="filter-help">Ví dụ 70% nghĩa là doanh nghiệp đạt ít nhất 70% số điểm trên những chỉ tiêu hiện có.</div><div class="chips">'+scoreBtns+'</div></div><div class="filter-block"><p class="filter-label">Tăng trưởng lợi nhuận sau thuế</p><div class="chips">'+growthBtns+'</div></div><div class="filter-block"><p class="filter-label">ROE – lợi nhuận trên vốn chủ sở hữu</p><div class="chips">'+roeBtns+'</div></div></section><p class="result-info">Đang hiển thị <strong>'+rows.length+'</strong> / '+state.financialRows.length+' mã trong danh sách theo dõi. Mã thiếu dữ liệu vẫn được giữ để bạn nhận biết.</p><section class="panel screener-table-panel"><div class="desktop-table"><div class="table-shell screener-table-shell"><table class="fundamental-table screener-table"><thead><tr><th>'+metricHead('Mã cổ phiếu','')+'</th><th>'+metricHead('Ngành','Nhóm hoạt động chính')+'</th><th>'+metricHead('Điểm cơ bản','Điểm đạt / điểm có thể chấm')+'</th><th>'+metricHead('Tăng trưởng lợi nhuận','So với cùng kỳ năm trước')+'</th><th>'+metricHead('ROE','Lợi nhuận / vốn chủ sở hữu')+'</th><th>'+metricHead('P/E','Giá / lợi nhuận')+'</th><th>'+metricHead('P/B','Giá / giá trị sổ sách')+'</th><th>'+metricHead('Dữ liệu','Mức độ cập nhật')+'</th></tr></thead><tbody>'+tableRows+'</tbody></table></div></div><div class="mobile-list fund-mobile-list">'+rows.map(financialCard).join('')+'</div></section><p class="disclaimer">Điểm số hỗ trợ sàng lọc và học phân tích, không phải khuyến nghị mua/bán.</p></main>';
   }
   function secondarySourceDetail() {
     var details = [];
@@ -489,6 +489,8 @@
       home: '<path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10v10h13V10"/><path d="M9.5 20v-6h5v6"/>',
       list: '<rect x="4" y="5" width="16" height="14" rx="2"/><path d="M8 9h8M8 13h8M8 17h5"/>',
       industry: '<path d="M4 20V9l5-3v14M9 11l6-3v12M15 5l5 3v12M2 20h20"/>',
+      watchlist: '<path d="m12 3 2.7 5.5 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9L12 3Z"/>',
+      bell: '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/>',
       fundamental: '<circle cx="10" cy="10" r="6"/><path d="m14.5 14.5 5 5M7 11l2-2 2 2 3-4"/>',
       sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.66 6.34l1.41-1.41"/>',
       moon: '<path d="M20 15.5A8 8 0 0 1 8.5 4 8.5 8.5 0 1 0 20 15.5Z"/>',
@@ -539,14 +541,17 @@
     return Object.assign(base, { tone: "trust-live", label: "Dữ liệu hoạt động bình thường", detail: completeness });
   }
   function navLink(href, route, icon, label, compactLabel) {
-    var active = state.route === route;
+    var active = Array.isArray(route) ? route.indexOf(state.route) >= 0 : state.route === route;
     return '<a href="' + href + '" class="shell-nav-link ' + (active ? 'active' : '') + '"' + (active ? ' aria-current="page"' : '') + '><span class="nav-ico">' + iconSvg(icon) + '</span><span class="nav-label">' + esc(label) + '</span><small>' + esc(compactLabel || label) + '</small></a>';
+  }
+  function navPlaceholder(icon, label, compactLabel) {
+    return '<span class="shell-nav-link shell-nav-placeholder" aria-disabled="true" title="Chưa khả dụng trong staging"><span class="nav-ico">' + iconSvg(icon) + '</span><span class="nav-label">' + esc(label) + '</span><small>' + esc(compactLabel || label) + '</small><span class="nav-soon">STAGING</span></span>';
   }
   function headerHtml() {
     var trust = trustModel(Date.now());
     var targetTheme = state.theme === "light" ? "tối" : "sáng";
     var globalQuery = state.globalQuery;
-    var nav = navLink('/', 'overview', 'home', 'Tổng quan') + navLink('/danh-sach', 'list', 'list', 'Bộ quét') + navLink('/so-sanh-theo-nganh', 'industry', 'industry', 'Nghiên cứu', 'Ngành') + navLink('/sang-loc-co-ban', 'fundamental', 'fundamental', 'Sàng lọc cơ bản', 'Cơ bản');
+    var nav = navLink('/', 'overview', 'home', 'Tổng quan') + navLink('/danh-sach', 'list', 'list', 'Bộ quét') + navLink('/so-sanh-theo-nganh', ['industry','fundamental'], 'industry', 'Nghiên cứu', 'Nghiên cứu') + navPlaceholder('watchlist', 'Watchlist') + navPlaceholder('bell', 'Cảnh báo');
     return '<header class="app-header"><div class="app-header-inner">' +
       '<a class="app-brand" href="/" aria-label="Chuyện Chợ Chứng — Trang tổng quan"><span class="brand-mark">' + iconSvg('chart') + '</span><span class="brand-copy"><strong>CHUYỆN CHỢ CHỨNG</strong><small>Stock Intelligence</small></span></a>' +
       '<form id="global-search-form" class="global-search" role="search" action="/danh-sach" method="get"><label class="sr-only" for="global-stock-search">Tìm mã cổ phiếu</label><span class="global-search-icon">' + iconSvg('search') + '</span><input id="global-stock-search" name="q" type="search" inputmode="search" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" placeholder="Tìm mã chứng khoán" value="' + esc(globalQuery) + '"><button class="global-search-submit" type="submit" aria-label="Thực hiện tìm kiếm mã cổ phiếu">' + iconSvg('search') + '</button></form>' +
@@ -578,10 +583,7 @@
     var row = exactSearchRow();
     if (!row) return '<section class="exact-search-result empty"><strong>Không tìm thấy mã ' + esc(q) + '</strong><span>Hãy kiểm tra lại mã cổ phiếu rồi tìm lại.</span></section>';
     var company = companyDisplayName(row.symbol) || "Tên công ty đang cập nhật";
-    if (isMockEntitled(row)) {
-      return '<section class="exact-search-result exact-entitled"><div class="public-identity">' + logoHtml(row.symbol, 'card-logo') + '<div><span>Đúng mã bạn tìm</span><h2>' + esc(row.symbol) + '</h2><p>' + esc(company) + ' · ' + esc(row.exchange) + '</p></div></div><button type="button" class="primary-action" data-symbol="' + esc(row.symbol) + '">Mở chi tiết</button></section>';
-    }
-    return '<section class="exact-search-result exact-locked" data-public-symbol="' + esc(row.symbol) + '"><div class="public-identity"><span class="identity-lock">' + iconSvg('lock') + '</span><div><span>Kết quả thư mục công khai</span><h2>' + esc(row.symbol) + '</h2><p>' + esc(company) + ' · ' + esc(row.exchange) + '</p></div></div><div class="locked-search-copy"><strong>Mã này chưa nằm trong quyền xem của bạn</strong><p>Chi tiết giá, tín hiệu, MA, RVOL và dữ liệu cơ bản không được hiển thị.</p></div><div class="locked-actions"><button type="button" class="secondary-action scanner-replace-trigger" data-target-symbol="' + esc(row.symbol) + '">Thay một mã</button><button type="button" class="primary-action scanner-upgrade-trigger">Xem gói nâng cấp</button></div></section>';
+    return '<section class="exact-search-result exact-public"><div class="public-identity">' + logoHtml(row.symbol, 'card-logo') + '<div><span>Kết quả công khai</span><h2>' + esc(row.symbol) + '</h2><p>' + esc(company) + ' · ' + esc(row.exchange) + '</p></div></div><div class="exact-public-quote"><div><small>Giá hiện tại</small><strong>' + formatPrice(row.currentPrice) + '</strong></div><div><small>Thay đổi</small><strong class="' + metricClass(row.changePct) + '">' + pct(row.changePct) + '</strong></div><div><small>KL hiện tại</small><strong>' + shortVolume(row.cumVolume) + '</strong></div></div><div class="exact-public-action"><span>Fundamental Research và BCTC luôn công khai. Số liệu kỹ thuật vẫn theo phạm vi gói.</span><button type="button" class="primary-action" data-symbol="' + esc(row.symbol) + '">Mở chi tiết</button></div></section>';
   }
   function legacyListHtml() {
     var plan = mockPlan();
@@ -652,10 +654,10 @@
       ["4of4", "Đạt 4/4", discoveryRows("4of4").length, "Hội tụ mạnh"],
       ["3plus", "Từ 3 tín hiệu", discoveryRows("3plus").length, "Đang hội tụ"],
       ["2plus", "Từ 2 tín hiệu", discoveryRows("2plus").length, "Đang hình thành"],
-      ["rvol30", "RVOL30 sớm", discoveryRows("rvol30").length, "Dòng tiền tương đối"]
+      ["rvol30", "RVOL30 nổi bật", discoveryRows("rvol30").length, "Dòng tiền tương đối"]
     ].map(function (metric) {
       var data = discoveryData(metric[0]);
-      return '<button type="button" class="density-tile discovery-trigger" data-discovery="' + metric[0] + '"><span>' + esc(metric[1]) + '</span><strong>' + metric[2] + '<small> mã</small></strong><div><em>' + esc(metric[3]) + '</em><b>' + data.visibleCount + ' trong phạm vi</b></div></button>';
+      return '<div class="density-tile"><span>' + esc(metric[1]) + '</span><strong>' + metric[2] + '<small> mã</small></strong><div><em>' + esc(metric[3]) + '</em><b>' + data.visibleCount + ' trong phạm vi</b></div></div>';
     }).join('');
     var planOptions = Object.keys(MOCK_PLAN_CONFIG).map(function (code) { return '<option value="' + code + '" ' + (state.mockPlan === code ? 'selected' : '') + '>' + esc(MOCK_PLAN_CONFIG[code].label) + '</option>'; }).join('');
     var legendCard = railCardHtml("CCC Signal Rail", "4 phân đoạn", signalLegendHtml(), "signal-legend-card");
@@ -757,10 +759,12 @@
       var bctcUrl = 'https://finance.vietstock.vn/' + encodeURIComponent(String(r.symbol || '').toUpperCase()) + '/tai-chinh.htm?tab=BCTT';
       content = '<section class="detail-panel"><header><h3>Báo cáo tài chính</h3><span>Dữ liệu quý đã lưu trong hệ thống</span></header>' + qhtml + '<div class="bctc-action"><div><strong>Tài liệu công bố doanh nghiệp</strong><span>Nguồn ngoài: VietstockFinance</span></div><a href="' + esc(bctcUrl) + '" target="_blank" rel="noopener noreferrer">Xem BCTC trên Vietstock ' + iconSvg('arrow') + '</a></div></section>';
     }
-    return '<div id="dialog" class="dialog-backdrop"><section class="stock-detail-modal" role="dialog" aria-modal="true" aria-labelledby="stock-detail-title"><header class="stock-detail-head"><div class="stock-public-identity">' + logoHtml(r.symbol, 'detail-logo') + '<div><div><h2 id="stock-detail-title">' + esc(r.symbol) + '</h2><span>' + esc(r.exchange) + '</span>' + (groupName ? '<span>' + esc(groupName) + '</span>' : '') + '</div><p>' + esc(company) + '</p><small>KL hiện tại · ' + shortVolume(r.cumVolume) + '</small></div></div><div class="stock-public-quote"><strong>' + formatPrice(r.currentPrice) + '</strong><span class="' + metricClass(r.changePct) + '">' + pct(r.changePct) + '</span></div><button id="dialog-close" class="dialog-close" type="button" aria-label="Đóng chi tiết">×</button></header><div class="detail-tabs" role="tablist" aria-label="Nội dung chi tiết cổ phiếu">' + tabs + '</div><div class="stock-detail-body" role="tabpanel">' + secondarySourceWarningHtml(true) + content + '</div></section></div>';
+    return '<main class="wrap stock-detail-page">' +
+      '<section class="stock-detail-navigation"><button id="detail-back" class="back-action" type="button">' + iconSvg('arrow') + '<span>Quay lại</span></button></section>' +
+      '<section class="stock-detail-workspace" aria-labelledby="stock-detail-title"><header class="stock-detail-head"><div class="stock-public-identity">' + logoHtml(r.symbol, 'detail-logo') + '<div><div><h2 id="stock-detail-title">' + esc(r.symbol) + '</h2><span>' + esc(r.exchange) + '</span>' + (groupName ? '<span>' + esc(groupName) + '</span>' : '') + '</div><p>' + esc(company) + '</p><small>KL hiện tại · ' + shortVolume(r.cumVolume) + '</small></div></div><div class="stock-public-quote"><strong>' + formatPrice(r.currentPrice) + '</strong><span class="' + metricClass(r.changePct) + '">' + pct(r.changePct) + '</span></div></header><div class="detail-tabs" role="tablist" aria-label="Nội dung chi tiết cổ phiếu">' + tabs + '</div><div class="stock-detail-body" role="tabpanel">' + secondarySourceWarningHtml(true) + content + '</div></section></main>';
   }
   function accountDialogHtml() {
-    if (!state.accountOpen) return '<div id="account-dialog" class="dialog-backdrop" hidden></div>';
+    if (!state.accountOpen) return '';
     var plan = mockPlan();
     var watchlist = mockWatchlistRows();
     var remaining = plan.changeLimit === null ? "Không giới hạn" : Math.max(0, plan.changeLimit - state.mockChangeUsed) + "/" + plan.changeLimit;
@@ -776,7 +780,7 @@
       [plan.fullMarket, 'Full Market scope'],
       [true, 'Thông tin công khai toàn scanner universe']
     ].map(function (item) { return '<li class="' + (item[0] ? 'active' : '') + '"><span>' + (item[0] ? iconSvg('check') : '—') + '</span><p>' + esc(item[1]) + '</p></li>'; }).join('');
-    return '<div id="account-dialog" class="dialog-backdrop"><section class="account-modal" role="dialog" aria-modal="true" aria-labelledby="account-title"><header><div><span class="eyebrow">STAGING MEMBERSHIP</span><h2 id="account-title">Tài khoản & gói thành viên</h2><p>Preview trải nghiệm gói; chưa có auth, billing hoặc hồ sơ production.</p></div><button id="account-close" class="dialog-close" type="button" aria-label="Đóng tài khoản">×</button></header><div class="account-layout"><div class="account-main"><section class="account-card profile-card"><header><h3>Hồ sơ staging</h3><span>Chưa kết nối xác thực</span></header><div class="profile-summary"><span class="account-avatar large">' + iconSvg('user') + '</span><div><strong>Người dùng staging</strong><p>Không sử dụng danh tính Lovable giả.</p></div></div><div class="account-metrics"><div><small>Gói hiện tại</small><strong>' + esc(plan.label) + '</strong></div><div><small>Watchlist</small><strong>' + watchlist.length + (plan.watchlistLimit === null ? '' : '/' + plan.watchlistLimit) + '</strong></div><div><small>Quota còn lại</small><strong>' + remaining + '</strong></div><div><small>Full Market</small><strong>' + (plan.fullMarket ? 'Có' : 'Không') + '</strong></div></div></section><section class="account-card"><header><h3>Demo state switcher</h3><span>Chỉ thay đổi state frontend</span></header><div class="account-plan-grid">' + planCards + '</div></section></div><aside class="account-side"><section class="account-card"><header><h3>Quyền lợi</h3><span>Không có gói phụ bên trong CCC</span></header><ul class="benefit-list">' + benefits + '</ul></section><section class="account-card security-card"><header><h3>Bảo mật</h3><span>Chưa kết nối auth</span></header><div><span>Xác thực 2 lớp</span><strong>Chưa bật</strong></div><div><span>Phiên đăng nhập</span><strong>Không khả dụng</strong></div><button type="button" disabled>Đăng xuất chưa khả dụng</button></section></aside></div></section></div>';
+    return '<main class="wrap account-page"><section class="account-navigation"><button id="account-back" class="back-action" type="button">' + iconSvg('arrow') + '<span>Quay lại</span></button></section><section class="account-modal" aria-labelledby="account-title"><header><div><span class="eyebrow">STAGING MEMBERSHIP</span><h2 id="account-title">Tài khoản & gói thành viên</h2><p>Preview trải nghiệm gói; chưa có auth, billing hoặc hồ sơ production.</p></div></header><div class="account-layout"><div class="account-main"><section class="account-card profile-card"><header><h3>Hồ sơ staging</h3><span>Chưa kết nối xác thực</span></header><div class="profile-summary"><span class="account-avatar large">' + iconSvg('user') + '</span><div><strong>Người dùng staging</strong><p>Không sử dụng danh tính Lovable giả.</p></div></div><div class="account-metrics"><div><small>Gói hiện tại</small><strong>' + esc(plan.label) + '</strong></div><div><small>Watchlist</small><strong>' + watchlist.length + (plan.watchlistLimit === null ? '' : '/' + plan.watchlistLimit) + '</strong></div><div><small>Quota còn lại</small><strong>' + remaining + '</strong></div><div><small>Full Market</small><strong>' + (plan.fullMarket ? 'Có' : 'Không') + '</strong></div></div></section><section class="account-card"><header><h3>Demo state switcher</h3><span>Chỉ thay đổi state frontend</span></header><div class="account-plan-grid">' + planCards + '</div></section></div><aside class="account-side"><section class="account-card"><header><h3>Quyền lợi</h3><span>Không có gói phụ bên trong CCC</span></header><ul class="benefit-list">' + benefits + '</ul></section><section class="account-card security-card"><header><h3>Bảo mật</h3><span>Chưa kết nối auth</span></header><div><span>Xác thực 2 lớp</span><strong>Chưa bật</strong></div><div><span>Phiên đăng nhập</span><strong>Không khả dụng</strong></div><button type="button" disabled>Đăng xuất chưa khả dụng</button></section></aside></div></section></main>';
   }
   function applyPageShellLayout() {
     var main = app.querySelector("main.wrap");
@@ -808,7 +812,9 @@
   }
   function render() {
     var body = state.route === "list" ? listHtml() : state.route === "industry" ? industryHtml() : state.route === "fundamental" ? fundamentalHtml() : overviewHtml();
-    app.innerHTML = headerHtml() + body + dialogHtml() + membershipDialogHtml() + scannerActionDialogHtml() + accountDialogHtml();
+    if (state.selected) body = dialogHtml();
+    if (state.accountOpen) body = accountDialogHtml();
+    app.innerHTML = headerHtml() + body + scannerActionDialogHtml();
     applyPageShellLayout();
     bind();
     updateClock();
@@ -853,38 +859,17 @@
     var mobileRefresh = document.getElementById("mobile-refresh");
     if (mobileRefresh) mobileRefresh.addEventListener("click", refreshAllSources);
     [document.getElementById("account-open"), document.getElementById("desktop-account-open")].forEach(function (button) {
-      if (button) button.addEventListener("click", function () { state.accountOpen = true; render(); var closeButton = document.getElementById("account-close"); if (closeButton) closeButton.focus(); });
+      if (button) button.addEventListener("click", function () { state.accountReturnScroll = window.scrollY || 0; state.accountOpen = true; render(); var backButton = document.getElementById("account-back"); if (backButton) backButton.focus(); });
     });
-    var accountClose = document.getElementById("account-close");
-    if (accountClose) accountClose.addEventListener("click", function () { state.accountOpen = false; render(); });
-    var accountBackdrop = document.getElementById("account-dialog");
-    if (accountBackdrop && !accountBackdrop.hidden) accountBackdrop.addEventListener("click", function (event) { if (event.target === accountBackdrop) { state.accountOpen = false; render(); } });
+    var accountBack = document.getElementById("account-back");
+    if (accountBack) accountBack.addEventListener("click", function () { var y=state.accountReturnScroll; state.accountOpen = false; render(); requestAnimationFrame(function(){window.scrollTo(0,y);}); });
     document.querySelectorAll("[data-account-plan]").forEach(function (button) { button.addEventListener("click", function () { var code = button.getAttribute("data-account-plan"); if (MOCK_PLAN_CONFIG[code]) state.mockPlan = code; render(); }); });
     var mockPlanSelect = document.getElementById("mock-plan-select");
     if (mockPlanSelect) mockPlanSelect.addEventListener("change", function () {
       state.mockPlan = MOCK_PLAN_CONFIG[mockPlanSelect.value] ? mockPlanSelect.value : "FREE";
-      state.discoveryGroup = "";
-      state.upsellOpen = false;
       state.scannerDialog = "";
       render();
     });
-    document.querySelectorAll("[data-discovery]").forEach(function(button){
-      button.addEventListener("click",function(){
-        state.discoveryGroup=button.getAttribute("data-discovery")||"";
-        state.upsellOpen=false;
-        render();
-        var closeButton=document.getElementById("membership-close");
-        if(closeButton)closeButton.focus();
-      });
-    });
-    var lockedTrigger=document.querySelector(".locked-trigger");
-    if(lockedTrigger)lockedTrigger.addEventListener("click",function(){state.upsellOpen=true;render();var closeButton=document.getElementById("membership-close");if(closeButton)closeButton.focus();});
-    var membershipClose=document.getElementById("membership-close");
-    if(membershipClose)membershipClose.addEventListener("click",closeMembershipDialog);
-    var membershipBack=document.getElementById("membership-back");
-    if(membershipBack)membershipBack.addEventListener("click",function(){state.upsellOpen=false;render();});
-    var membershipBackdrop=document.getElementById("membership-dialog");
-    if(membershipBackdrop&&!membershipBackdrop.hidden)membershipBackdrop.addEventListener("click",function(event){if(event.target===membershipBackdrop)closeMembershipDialog();});
     document.querySelectorAll("[data-scanner-mode]").forEach(function (button) { button.addEventListener("click", function () { state.scannerMode = button.getAttribute("data-scanner-mode") === "watchlist" ? "watchlist" : "market"; state.page = 1; render(); }); });
     document.querySelectorAll("[data-select-filter]").forEach(function (select) { select.addEventListener("change", function () { state[select.getAttribute("data-select-filter")] = select.value; state.page = 1; render(); }); });
     var filterToggle = document.getElementById("scanner-filter-toggle");
@@ -915,12 +900,11 @@
     document.querySelectorAll("[data-industry]").forEach(function(el){el.addEventListener("click",function(){state.industryGroup=el.getAttribute("data-industry")||"";render();window.scrollTo(0,0);});});
     document.querySelectorAll("[data-fund-filter]").forEach(function(el){el.addEventListener("click",function(){var t=el.getAttribute("data-fund-filter"),v=el.getAttribute("data-value");if(t==="score")state.fundamentalMinScore=Number(v)||0;if(t==="growth")state.fundamentalProfitGrowth=v;if(t==="roe")state.fundamentalRoe=v;render();});});
     document.querySelectorAll("[data-detail-tab]").forEach(function (button) { button.addEventListener("click", function () { state.detailTab = button.getAttribute("data-detail-tab") || "overview"; render(); var active = document.querySelector('[data-detail-tab="' + state.detailTab + '"]'); if (active) active.focus(); }); });
-    var close = document.getElementById("dialog-close");
-    if (close) close.addEventListener("click", closeDialog);
-    var backdrop = document.getElementById("dialog");
-    if (backdrop && !backdrop.hidden) backdrop.addEventListener("click", function(e){ if(e.target===backdrop) closeDialog(); });
+    var detailBack = document.getElementById("detail-back");
+    if (detailBack) detailBack.addEventListener("click", function () { if (history.state && history.state.cccWorkspace === "stock") history.back(); else closeDialog(); });
     if (state.route !== "list") return;
     var input = document.getElementById("stock-search");
+    if (!input) return;
     var submit = function () { state.query = input.value; state.page = 1; render(); };
     document.getElementById("search-btn").addEventListener("click", submit);
     input.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); submit(); } });
@@ -930,13 +914,13 @@
     var next = document.getElementById("next-page"); if (next) next.addEventListener("click", function(){state.page++;render();window.scrollTo(0,0);});
   }
   function openSymbol(symbol) {
-    state.discoveryGroup = "";
-    state.upsellOpen = false;
     var matched = state.rows.find(function(r){return r.symbol===symbol;});
-    if (state.route === "list" && matched && !isMockEntitled(matched)) { state.scannerDialog = "replace"; state.scannerDialogSymbol = matched.symbol; render(); return; }
+    state.detailReturnScroll = window.scrollY || 0;
     state.detailTab = "overview";
     state.selected = matched || {symbol:String(symbol||"").toUpperCase(),exchange:"—",signalCount:0,currentPrice:null,changePct:null,cumVolume:null,avgVolume10:null,dayVolumeRatioPct:null,ma10:null,ma10DistancePct:null,ma200:null,ma200DistancePct:null,rvol30Pct:null,rvol30Sessions:0};
+    try { history.pushState({cccWorkspace:"stock"}, "", location.href); } catch (_) {}
     render();
+    var backButton = document.getElementById("detail-back"); if (backButton) backButton.focus();
     if (!state.quarterlyBySymbol[symbol] && !state.quarterlyLoading[symbol]) fetchQuarterly(symbol);
   }
   async function fetchQuarterly(symbol) {
@@ -949,8 +933,7 @@
     } catch(e){state.quarterlyError[symbol]="Không tải được lịch sử quý: "+(e&&e.message?e.message:"Lỗi dữ liệu");}
     state.quarterlyLoading[symbol]=false; render();
   }
-  function closeDialog() { state.selected = null; state.detailTab = "overview"; render(); }
-  function closeMembershipDialog() { state.discoveryGroup = ""; state.upsellOpen = false; render(); }
+  function closeDialog() { var y=state.detailReturnScroll; state.selected = null; state.detailTab = "overview"; render(); requestAnimationFrame(function(){window.scrollTo(0,y);}); }
   function closeScannerActionDialog() { state.scannerDialog = ""; state.scannerDialogSymbol = ""; render(); }
   function extractCached() {
     try {
@@ -1122,7 +1105,8 @@
     if(state.waitingForNewData && now-state.lastVersionPollAt>=VERSION_POLL_INTERVAL_MS) pollLatestVersion();
   }
   setInterval(updateClock,1000);
-  document.addEventListener("keydown", function(e){if(e.key!=="Escape")return;if(state.accountOpen){state.accountOpen=false;render();}else if(state.scannerDialog)closeScannerActionDialog();else if(state.discoveryGroup)closeMembershipDialog();else if(state.selected)closeDialog();});
+  window.addEventListener("popstate",function(){if(!state.selected)return;closeDialog();});
+  document.addEventListener("keydown", function(e){if(e.key!=="Escape")return;if(state.scannerDialog)closeScannerActionDialog();});
   var cached = extractCached();
   if (cached) applyData(cached);
   render();
