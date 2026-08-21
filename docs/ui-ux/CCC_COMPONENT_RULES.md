@@ -285,7 +285,7 @@ Primary desktop analysis surface.
 - numeric values: right;
 - signal/status: center or compact.
 
-## Columns supported now
+## Current production fields available
 
 - Mã
 - Sàn
@@ -301,6 +301,10 @@ Primary desktop analysis surface.
 
 ## Requirements
 
+- Phase 1 desktop public result grid uses exactly five real proportional columns: `Identity | Price | Change | Current Volume | CCC`;
+- no filler column;
+- Identity and Market Quote are public; CCC Technical Intelligence is entitled or professionally locked;
+- additional technical fields above belong in entitled technical detail/filter/sort contexts and must not silently become public columns;
 - sticky header for long table;
 - readable 13.5–15px values;
 - sortable state clear;
@@ -314,19 +318,27 @@ Normal `Đầy đủ` state should be visually quiet; problems should stand out.
 
 # 15. Fundamental Table
 
-Used by Industry and Fundamental Screener.
+Used by Industry and Fundamental Screener as **Public Fundamental Research**.
 
 Core columns:
 
 - Symbol
 - Industry when relevant
 - Fundamental Score
+- Score Coverage
 - Profit YoY
+- Revenue/Income YoY when available
+- Quarterly Growth when available
 - ROE
+- ROA
+- Debt/Equity
+- Debt/Assets
 - P/E
 - P/B
-- Technical Signal
 - Freshness
+- Quarterly History/BCTC access where appropriate
+
+Do not include signal count, CCC Signal Rail, RVOL30, MA10, MA200, or technical signal columns in this table.
 
 ## Score cell
 
@@ -461,6 +473,11 @@ Required:
 - scroll management;
 - clear sections;
 - no enormous raw metric grid at top.
+- public identity/quote remain visible;
+- tabs are Tổng quan, Kỹ thuật, Cơ bản, BCTC;
+- Kỹ thuật is entitled or locked before protected content renders;
+- Cơ bản/BCTC research is public when real data exists;
+- public fundamentals and protected technical intelligence remain visually separated.
 
 ---
 
@@ -483,13 +500,16 @@ This is interpretive presentation, not investment advice.
 
 # 24. Fundamental Summary
 
-Top fundamental detail should show:
+This is a public research component. Top fundamental detail should show:
 
 - score / available;
 - coverage;
 - industry;
 - profit growth;
+- revenue/income and quarterly growth when available;
 - ROE;
+- ROA;
+- debt/equity and debt/assets;
 - P/E;
 - P/B;
 - freshness.

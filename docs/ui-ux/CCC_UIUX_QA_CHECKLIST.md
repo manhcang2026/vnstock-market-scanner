@@ -7,7 +7,8 @@
 
 # A. Source correctness
 
-- [ ] UI work modifies the current `website/` frontend, not an obsolete frontend.
+- [ ] Target is correct: `website/` for approved production work, or `website-next/` for the approved Phase 1 staging port.
+- [ ] Phase 1 implementation follows `CCC_LOVABLE_PHASE1_DESIGN_REFERENCE_v1.0.md` and `CCC_PHASE1_DESIGN_PORT_CONTRACT_v1.0.md`.
 - [ ] `VERSION.txt` is reviewed.
 - [ ] HTML references the intended versioned JS/CSS assets.
 - [ ] No production-only HawkHost edit exists without Git counterpart.
@@ -129,6 +130,8 @@
 
 # K. Overview
 
+- [ ] `PORT-01`: Page Header spans the working width before the main/right-rail split.
+- [ ] `PORT-02`: desktop rows share `Identity | Price/Change | Volume | CCC` tracks.
 - [ ] KPI count correct.
 - [ ] RVOL30 early list correct.
 - [ ] 4/4 list correct.
@@ -143,6 +146,7 @@
 
 # L. Scanner
 
+- [ ] `PORT-03`: desktop grid is `Identity | Price | Change | Current Volume | CCC` with no filler column.
 - [ ] Search works.
 - [ ] Enter submits search.
 - [ ] Clear search works.
@@ -160,6 +164,8 @@
 
 # M. Industry comparison
 
+- [ ] Route remains Public Fundamental Research.
+- [ ] No technical signal/rail/RVOL/MA columns are mixed into Research.
 - [ ] Industry list complete.
 - [ ] Industry names not unintentionally clipped.
 - [ ] Counts correct.
@@ -174,6 +180,8 @@
 
 # N. Fundamental screener
 
+- [ ] Route remains Public Fundamental Research.
+- [ ] No technical signal/rail/RVOL/MA columns are mixed into Research.
 - [ ] Score filter works.
 - [ ] Profit-growth filters work.
 - [ ] ROE filters work.
@@ -190,9 +198,12 @@
 - [ ] Logo fallback works.
 - [ ] Company name works.
 - [ ] Symbol/exchange correct.
+- [ ] Public price/change/current volume remain visible outside technical entitlement.
 - [ ] Technical signal summary correct.
+- [ ] Protected technical content is entitled or locked without flashing.
 - [ ] Why-notable explanation uses real values only.
 - [ ] Fundamental summary correct.
+- [ ] Fundamental Research remains public and visually separate from protected technical intelligence.
 - [ ] Score breakdown correct.
 - [ ] Quarterly loading works.
 - [ ] Quarterly empty works.

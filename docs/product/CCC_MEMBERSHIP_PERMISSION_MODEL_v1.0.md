@@ -11,16 +11,19 @@
 
 ## 1. Product principle
 
-Chuyện Chợ Chứng tách thành 2 lớp:
+Chuyện Chợ Chứng tách dữ liệu và quyền truy cập thành 3 lớp:
 
 ```text
-SCANNER UNIVERSE ~800 MÃ
+SCANNER UNIVERSE
         │
-        ├── MARKET INTELLIGENCE
-        │      → mọi user đều xem được ở cấp aggregate
+        ├── PUBLIC MARKET QUOTE + FUNDAMENTAL RESEARCH
+        │      → mọi user xem được cho mọi mã khi dữ liệu thật tồn tại
         │
-        └── PERSONAL STOCK INTELLIGENCE
-               → theo entitlement của từng gói
+        ├── CCC TECHNICAL INTELLIGENCE
+        │      → được bảo vệ theo technical entitlement của từng gói
+        │
+        └── PERSONALIZATION
+               → Watchlist + Alerts + Account
 ```
 
 ### Market Intelligence — FREE FOR ALL
@@ -36,33 +39,39 @@ Mọi user đều được thấy dữ liệu tổng hợp toàn scanner univers
 - trạng thái dữ liệu;
 - nội dung giải thích tín hiệu.
 
-### Personal Stock Intelligence — THEO GÓI
+Ngoài aggregate, mọi user được xem **Public Market Quote** cho mọi mã: ticker, company/display name, exchange, current price, percentage change và current accumulated volume.
 
-Quyền xem chi tiết từng mã gồm:
+**Public Fundamental Research** cũng công khai khi có field thật: industry/`website_group`, fundamental score và coverage, tăng trưởng lợi nhuận/doanh thu/quý, ROE, ROA, debt/equity, debt/assets, P/E, P/B, freshness tài chính, lịch sử quý và BCTC link. Missing-data rule hiện tại không đổi.
 
-- giá, % thay đổi;
+### CCC Technical Intelligence — THEO GÓI
+
+Technical entitlement từng mã gồm:
+
 - KL ngày / KLTB10;
 - MA10, MA200;
 - RVOL30;
 - 4 tín hiệu;
-- Stock Detail;
-- Điểm cơ bản;
-- dữ liệu tài chính;
-- lịch sử quý;
-- BCTC link;
-- các phân tích khác gắn với một symbol cụ thể.
+- signal count và CCC Signal Rail;
+- technical discovery identities;
+- technical alerts.
+
+> Market quote is public.
+>
+> Fundamental research is public.
+>
+> CCC technical intelligence is protected.
 
 ---
 
 ## 2. Commercial plans — LOCKED
 
-| Plan code | Tên | Giá/tháng | Quyền xem chi tiết | Watchlist | Lượt đổi/cycle | Email | Telegram |
+| Plan code | Tên | Giá/tháng | Phạm vi CCC Technical | Watchlist | Lượt đổi/cycle | Email | Telegram |
 |---|---|---:|---:|---:|---:|---|---|
 | `FREE` | Free | 0đ | 10 mã | 10 | 10 | Không | Không |
 | `BASIC` | Basic | 100.000đ | 20 mã | 20 | 20 | Không | Không |
 | `PLUS` | Plus | 300.000đ | 50 mã | 50 | 50 | Có | Có |
 | `PRO` | Pro | 500.000đ | 100 mã | 100 | 100 | Có | Có |
-| `FULL` | Full Market | 1.000.000đ | Toàn scanner universe | Không dùng Watchlist để giới hạn quyền xem | Không giới hạn quyền xem | Có | Có |
+| `FULL` | Full Market | 1.000.000đ | Toàn scanner universe | Không dùng Watchlist để giới hạn technical scope | Không giới hạn technical scope | Có | Có |
 
 `PLUS` là gói được ưu tiên trên pricing UI với nhãn:
 
@@ -87,7 +96,7 @@ PLUS = BASIC + capacity cao hơn + Email + Telegram
   ↓
 PRO = PLUS + capacity cao hơn
   ↓
-FULL = PRO + quyền xem toàn scanner universe
+FULL = PRO + CCC Technical Intelligence toàn scanner universe
 ```
 
 Bắt buộc:
@@ -113,7 +122,7 @@ ALERT ENTITLEMENT
 
 ### View entitlement
 
-Số symbol user được nhận protected detail.
+Số symbol user được nhận protected CCC Technical Intelligence. View entitlement không giới hạn Public Market Quote hoặc Public Fundamental Research.
 
 ### Watchlist entitlement
 
@@ -122,13 +131,13 @@ Số symbol active trong danh sách cá nhân.
 Với Free/Basic/Plus/Pro:
 
 ```text
-active watchlist set = detail entitlement set
+active watchlist set = technical entitlement set
 ```
 
 Với Full:
 
 ```text
-detail entitlement = all scanner universe
+technical entitlement = all scanner universe
 ```
 
 Watchlist của Full chỉ còn phục vụ:
@@ -232,9 +241,9 @@ Protected identities không xuất hiện trong Network/DevTools.
 
 ---
 
-## 8. Exact public stock directory — ALLOWED
+## 8. Public stock directory, quote and research — ALLOWED
 
-Có thể có directory công khai tối thiểu để user search chính xác một mã.
+User có thể search chính xác và xem public identity/quote/research của mọi mã.
 
 Ví dụ:
 
@@ -242,34 +251,38 @@ Ví dụ:
 VIX
 Chứng khoán VIX
 HOSE
-🔒 Chưa nằm trong quyền xem
+23.500 · +1,2% · KL 2.450.000
+CCC Technical Intelligence: 🔒 Ngoài phạm vi
 ```
 
-Directory public chỉ nên chứa:
+Public response có thể chứa:
 
 - symbol;
 - display_name/company_name;
-- exchange.
+- exchange;
+- current price;
+- percentage change;
+- current accumulated volume;
+- các field Fundamental Research thật được định nghĩa ở Mục 1.
 
 Không chứa:
 
-- live signal;
-- RVOL;
-- MA;
-- fundamental score;
-- financial detail;
-- protected live metrics.
+- KLTB10 hoặc KL ngày/KLTB10;
+- MA10/MA200 và khoảng cách;
+- RVOL30/sessions;
+- bốn technical signals, signal count hoặc CCC Signal Rail;
+- technical discovery identities hoặc technical alerts nếu chưa được entitlement.
 
 User biết `VIX` và chủ động search là khác với việc hệ thống enumerate các mã đang 4/4.
 
 ---
 
-## 9. Detail access — LOCKED SECURITY RULE
+## 9. Technical detail access — LOCKED SECURITY RULE
 
 Không được:
 
 ```text
-fetch 800 full rows
+fetch 800 full technical rows
 → browser nhận tất cả
 → JS/CSS giấu phần không được xem
 ```
@@ -281,8 +294,8 @@ request
   ↓
 backend entitlement check
   ↓
-AUTHORIZED → trả protected detail
-LOCKED     → không trả protected detail
+AUTHORIZED → trả protected technical detail
+LOCKED     → không trả protected technical detail
 ```
 
 Frontend không phải security boundary.
@@ -296,16 +309,18 @@ Permission áp dụng xuyên toàn sản phẩm.
 ### Overview
 
 - mọi user thấy market aggregate;
-- chỉ entitlement symbols được full detail;
-- ngoài entitlement chỉ hiện locked count/placeholder.
+- public identity/quote vẫn hiển thị cho mọi mã khi phù hợp với page pattern;
+- chỉ entitled symbols được CCC Technical Intelligence;
+- technical discovery ngoài entitlement chỉ hiện locked count/placeholder, không enumerate protected identities.
 
 ### Scanner
 
 Free/Basic/Plus/Pro:
 
-- detailed rows chỉ cho entitled symbols;
-- market-wide filter có thể trả aggregate/count;
-- không tải full protected rows.
+- public identity/quote rows có thể hiển thị cho mọi mã;
+- technical fields chỉ hiện cho entitled symbols;
+- market-wide technical discovery có thể trả aggregate/count;
+- không tải full protected technical rows.
 
 Full:
 
@@ -313,27 +328,27 @@ Full:
 
 ### Industry Comparison
 
-Không được dùng route này để bypass entitlement.
+Đây là Public Fundamental Research. Không đưa technical fields vào research table để bypass entitlement.
 
 ### Fundamental Screener
 
-Không được trả full protected table toàn thị trường cho Free nếu Scanner đang khóa.
+Đây là Public Fundamental Research. Không đưa technical fields vào research table để bypass entitlement.
 
 ### Stock Detail
 
-Backend check entitlement trước khi trả data.
+Public identity, quote và Fundamental Research vẫn hiển thị. Backend check technical entitlement trước khi trả CCC Technical Intelligence.
 
 ---
 
-## 11. Entitled symbol = full supported detail
+## 11. Entitled symbol = full supported technical detail
 
 Nếu một symbol nằm trong entitlement của user:
 
-> User được xem đầy đủ các loại detail mà sản phẩm hiện hỗ trợ cho symbol đó.
+> User được xem đầy đủ CCC Technical Intelligence mà sản phẩm hiện hỗ trợ cho symbol đó.
 
-Free 10 mã không phải “10 mã nhưng detail bị cắt nhỏ”.
+Free 10 mã không phải “10 mã nhưng technical detail bị cắt nhỏ”.
 
-Mục tiêu: Free trải nghiệm giá trị thật, paid mua **coverage + automation**, không phải mua từng field.
+Mục tiêu: public quote/fundamental tạo giá trị nghiên cứu rộng; Free trải nghiệm technical value thật; paid mua **technical coverage + automation**, không phải mua từng technical field.
 
 ---
 
@@ -421,7 +436,7 @@ Phải:
 1. yêu cầu user chọn tối đa 50 mã giữ active;
 2. phần còn lại chuyển inactive do plan;
 3. history giữ nguyên;
-4. protected detail ngoài active set dừng sau khi downgrade có hiệu lực.
+4. protected technical detail ngoài active set dừng sau khi downgrade có hiệu lực; public quote/fundamental không bị ảnh hưởng.
 
 Recommended state:
 
@@ -437,6 +452,7 @@ Khi paid plan hết hạn:
 
 - quyền quay về Free;
 - market aggregate vẫn xem;
+- Public Market Quote và Fundamental Research vẫn xem;
 - Email/Telegram paid alerts dừng;
 - nếu Watchlist >10, user chọn 10 mã giữ active;
 - history không bị xóa.
@@ -528,7 +544,8 @@ updated_at
 
 Khi v19 cutover:
 
-- browser không được public-select toàn protected `stock_snapshot`;
+- browser không được public-select các protected technical fields trong `stock_snapshot` hoặc nguồn tương đương;
+- API/RPC phải project public quote/fundamental riêng khỏi protected technical payload nếu cùng nguồn vật lý;
 - dùng Supabase RLS/RPC/Edge Function hoặc secure backend;
 - entitlement check dựa trên authenticated user;
 - frontend không chứa `service_role`;
@@ -555,7 +572,7 @@ Chỉ khi v19 sẵn sàng production:
 
 1. deploy v19;
 2. test Free/Basic/Plus/Pro/Full;
-3. chặn legacy protected full-table access;
+3. chặn legacy protected technical full-table access;
 4. verify DevTools không enumerate locked data;
 5. giữ rollback v18.5.
 
@@ -593,15 +610,16 @@ Chưa thuộc spec này:
 ## 24. Acceptance criteria
 
 - [ ] New user mặc định Free.
-- [ ] Free protected detail tối đa 10 active symbols.
+- [ ] Free protected technical detail tối đa 10 active symbols.
 - [ ] Basic = 20.
 - [ ] Plus = 50 + Email + Telegram.
 - [ ] Pro = 100 + toàn bộ Plus features.
-- [ ] Full xem toàn scanner universe + toàn bộ Pro features.
+- [ ] Full xem CCC Technical Intelligence toàn scanner universe + toàn bộ Pro features.
 - [ ] Mọi plan thấy market aggregate.
+- [ ] Mọi plan thấy Public Market Quote và Public Fundamental Research cho mọi mã khi field thật tồn tại.
 - [ ] Locked signal-group API không trả protected ticker.
-- [ ] Exact public search không trả protected metrics.
-- [ ] Industry/Fundamental không bypass entitlement.
+- [ ] Exact public search trả public quote/fundamental nhưng không trả protected technical metrics.
+- [ ] Industry/Fundamental là public research và không chứa technical columns để bypass entitlement.
 - [ ] Frontend không phải lớp security duy nhất.
 - [ ] Upgrade capacity không tiêu change quota.
 - [ ] Downgrade/expiry không xóa Watchlist history.

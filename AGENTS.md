@@ -34,6 +34,11 @@ Before modifying user-facing UI, read:
 
 CCC UI/UX Design System is authoritative.
 
+For the approved Phase 1 implementation, also read:
+
+- `docs/ui-ux/CCC_LOVABLE_PHASE1_DESIGN_REFERENCE_v1.0.md`
+- `docs/ui-ux/CCC_PHASE1_DESIGN_PORT_CONTRACT_v1.0.md`
+
 ## 3. Current production routes
 
 - `/`
@@ -97,6 +102,8 @@ For a major visual redesign:
 ## 10. Lovable gate
 
 Lovable is optional.
+
+Lovable Phase 1 is a design reference only, not production/runtime source or implementation architecture.
 
 Never call/use Lovable without explicit Product Owner approval.
 

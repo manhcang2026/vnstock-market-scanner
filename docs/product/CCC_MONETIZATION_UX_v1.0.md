@@ -15,7 +15,7 @@
 Tài liệu này định nghĩa trải nghiệm thương mại cho Chuyện Chợ Chứng:
 
 - Free vẫn nhìn thấy sức mạnh thật của scanner;
-- user hiểu rõ ranh giới giữa aggregate và protected detail;
+- user hiểu rõ ranh giới giữa public quote/fundamental và protected technical intelligence;
 - paywall xuất hiện ở đúng thời điểm;
 - Plus là gói conversion chính;
 - locked data không bị leak;
@@ -24,7 +24,7 @@ Tài liệu này định nghĩa trải nghiệm thương mại cho Chuyện Ch�
 
 Core idea:
 
-> **Không khóa việc biết thị trường đang có tín hiệu. Khóa quyền khai thác chi tiết những mã ngoài entitlement.**
+> **Market Quote và Fundamental Research là public. Chỉ CCC Technical Intelligence được bảo vệ theo technical entitlement.**
 
 ---
 
@@ -37,27 +37,27 @@ Không dùng mô hình:
 Thay vào đó:
 
 ```text
-MARKET INTELLIGENCE
-→ Free cho tất cả
+PUBLIC MARKET QUOTE + FUNDAMENTAL RESEARCH
+→ mọi plan, mọi mã khi có dữ liệu thật
 ```
 
 ```text
-PERSONAL STOCK INTELLIGENCE
-→ theo plan entitlement
+CCC TECHNICAL INTELLIGENCE
+→ theo technical entitlement của plan
 ```
 
 Free phải đủ tốt để user:
 
 - tin scanner đang chạy thật;
 - thấy aggregate thật;
-- dùng full detail cho 10 mã;
+- dùng full technical detail cho 10 mã;
 - hiểu sản phẩm;
 - có động lực nâng cấp tự nhiên.
 
 Paid monetizes:
 
-- coverage;
-- số mã;
+- technical coverage;
+- số mã trong technical scope;
 - automation alert;
 - full-market access.
 
@@ -145,11 +145,11 @@ Khi click:
 ```text
 14 mã đang đạt 4/4
 
-TRONG QUYỀN XEM CỦA BẠN
+TRONG PHẠM VI KỸ THUẬT CỦA BẠN
 ✓ FPT
 ✓ SSI
 
-NGOÀI QUYỀN XEM
+NGOÀI PHẠM VI KỸ THUẬT
 🔒 •••
 🔒 •••
 🔒 •••
@@ -160,7 +160,7 @@ Summary:
 
 ```text
 Bạn xem được 2 / 14 mã
-Còn 12 mã ngoài quyền xem
+Còn 12 technical discovery identities ngoài phạm vi
 ```
 
 ---
@@ -183,7 +183,7 @@ Ví dụ:
 🔒 •••
 🔒 •••
 
-+ 34 mã khác ngoài quyền xem
++ 34 technical discovery identities khác ngoài phạm vi
 ```
 
 Mục tiêu:
@@ -233,12 +233,14 @@ Public directory có thể trả:
 VIX
 Chứng khoán VIX
 HOSE
+23.500 · +1,2% · KL 2.450.000
+Fundamental Research (nếu có dữ liệu thật)
 ```
 
 Nếu ngoài entitlement:
 
 ```text
-🔒 Mã này chưa nằm trong quyền xem của bạn.
+🔒 CCC Technical Intelligence chưa nằm trong phạm vi của bạn.
 
 Watchlist: 10 / 10
 Còn 7 / 10 lượt đổi
@@ -251,7 +253,7 @@ Actions:
 [Xem gói nâng cấp]
 ```
 
-Không trả protected metrics.
+Trả Public Market Quote và Public Fundamental Research; không trả protected technical metrics.
 
 ---
 
@@ -259,17 +261,15 @@ Không trả protected metrics.
 
 Locked card không được show:
 
-- giá live;
-- % thay đổi;
+- KLTB10 hoặc KL ngày/KLTB10;
 - signal count;
 - RVOL30;
-- MA10/MA200;
-- Điểm cơ bản;
-- financial metrics;
-- quarterly detail;
-- protected freshness.
+- MA10/MA200 và khoảng cách;
+- CCC Signal Rail;
+- technical discovery identities;
+- technical alerts.
 
-Chỉ public identity tối thiểu.
+Locked state vẫn phải show public identity, current price, percentage change, current accumulated volume và Public Fundamental Research khi có dữ liệu thật.
 
 ---
 
@@ -283,9 +283,9 @@ Ví dụ:
 
 > 14 mã đạt 4/4
 
-nhưng không có quyền xem toàn bộ.
+nhưng không có technical entitlement cho toàn bộ identities trong nhóm.
 
-### Trigger 2 — User search mã ngoài entitlement
+### Trigger 2 — User muốn mở kỹ thuật của mã ngoài technical entitlement
 
 Ví dụ VIX.
 
@@ -367,9 +367,11 @@ Nhưng không biến thành hứa hẹn lợi nhuận.
 |---|---:|---:|---:|---:|---:|
 | Giá/tháng | 0đ | 100k | 300k | 500k | 1.000k |
 | Market aggregate toàn universe | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Chi tiết mã | 10 | 20 | 50 | 100 | Toàn thị trường |
-| Watchlist entitlement | 10 | 20 | 50 | 100 | Không giới hạn quyền xem |
-| Lượt đổi/cycle | 10 | 20 | 50 | 100 | Không giới hạn quyền xem |
+| Market Quote | Public | Public | Public | Public | Public |
+| Fundamental Research | Public | Public | Public | Public | Public |
+| CCC Technical Intelligence | 10 | 20 | 50 | 100 | Toàn thị trường |
+| Watchlist technical entitlement | 10 | 20 | 50 | 100 | Không giới hạn technical scope |
+| Lượt đổi/cycle | 10 | 20 | 50 | 100 | Không giới hạn technical scope |
 | Email alert | — | — | ✓ | ✓ | ✓ |
 | Telegram alert | — | — | ✓ | ✓ | ✓ |
 | Kế thừa toàn bộ Plus | — | — | ✓ | ✓ | ✓ |
@@ -391,7 +393,7 @@ Nên nói:
 ```text
 FREE
 
-10 mã theo dõi chi tiết
+10 mã trong phạm vi CCC Technical
 10 lượt đổi mỗi chu kỳ
 Xem tổng quan toàn thị trường
 0đ
@@ -456,7 +458,7 @@ Không được làm Pro thiếu feature Plus.
 ```text
 FULL MARKET
 
-Xem chi tiết toàn scanner universe
+CCC Technical Intelligence toàn scanner universe
 Email + Telegram
 Toàn bộ tính năng Pro
 1.000.000đ / tháng
@@ -642,7 +644,7 @@ Không dùng:
 Có thể dùng:
 
 - “14 mã đạt 4/4 điều kiện scanner”
-- “12 mã ngoài quyền xem”
+- “12 technical discovery identities ngoài phạm vi”
 - “Nâng cấp để tăng phạm vi theo dõi”
 
 ---
@@ -686,13 +688,14 @@ Toàn thị trường
 
 Nhưng:
 
-- Watchlist mode → detailed rows;
-- market-wide mode → aggregate / locked counts;
-- không tải protected full rows.
+- mọi mode → public identity/quote rows;
+- Watchlist mode → entitled technical fields;
+- market-wide mode → public rows + technical aggregate/locked state;
+- không tải protected full technical rows.
 
 Full:
 
-- full detailed market mode.
+- full technical market mode, không tự động alert mọi mã.
 
 Exact v19 layout sẽ test trên staging.
 
@@ -700,15 +703,16 @@ Exact v19 layout sẽ test trên staging.
 
 ## 30. Industry / Fundamental
 
-Không được trở thành lối bypass.
+Hai route này là Public Fundamental Research.
 
 Rule:
 
-- entitled symbols → full supported metrics;
-- market aggregate → summary;
-- protected stock-level content → locked.
+- public cho mọi symbol khi field thật tồn tại;
+- giữ missing-data, freshness và score-coverage rules;
+- không trộn hoặc đưa signal count, CCC Signal Rail, RVOL30, MA10, MA200 hay technical signal columns vào research table;
+- nếu một interaction mở CCC Technical Intelligence, phần đó vẫn kiểm tra technical entitlement riêng.
 
-Exact visual pattern sẽ thiết kế sau, nhưng permission là LOCKED.
+Public Research không phải lối bypass vì protected technical fields không thuộc research payload.
 
 ---
 
@@ -718,14 +722,17 @@ Nếu user mở URL của locked symbol:
 
 Không flash data rồi mới hide.
 
-Backend trả locked state ngay.
+Backend trả public quote/fundamental và technical locked state ngay.
 
 UI:
 
 ```text
 VIX · Chứng khoán VIX
+23.500 · +1,2% · KL 2.450.000
 
-🔒 Mã này chưa nằm trong quyền xem hiện tại.
+Cơ bản · Public
+
+Kỹ thuật · 🔒 Ngoài phạm vi hiện tại.
 
 [Quản lý Watchlist]
 [Xem gói nâng cấp]
@@ -781,7 +788,7 @@ Không mở đầu bằng bảng feature khổng lồ.
 
 ### Scanner có chỉ quét số mã trong gói của tôi?
 
-> Không. Hệ thống vẫn quét toàn scanner universe. Gói của bạn quyết định số mã được xem chi tiết và theo dõi cá nhân.
+> Không. Hệ thống vẫn quét toàn scanner universe. Market Quote và Fundamental Research là public; gói của bạn quyết định phạm vi CCC Technical Intelligence và theo dõi cá nhân.
 
 ### Lượt đổi mã là gì?
 
@@ -876,10 +883,11 @@ Trước khi auth thật xong có thể mock các state này trên staging, như
 ## 40. Acceptance criteria
 
 - [ ] Free thấy aggregate toàn thị trường.
-- [ ] Free dùng full supported detail cho 10 entitled symbols.
+- [ ] Free dùng full supported technical detail cho 10 entitled symbols.
+- [ ] Mọi plan thấy Public Market Quote và Fundamental Research cho mọi mã khi có dữ liệu thật.
 - [ ] Locked group cho thấy total/visible/locked.
 - [ ] Browser response không chứa protected locked ticker.
-- [ ] Exact search chỉ show public identity nếu locked.
+- [ ] Exact search show public identity/quote/fundamental nhưng không leak protected technical metrics.
 - [ ] Plus được highlight là recommended.
 - [ ] Pro kế thừa Plus.
 - [ ] Full kế thừa Pro.
@@ -890,7 +898,7 @@ Trước khi auth thật xong có thể mock các state này trên staging, như
 - [ ] Không dark pattern.
 - [ ] Không investment-guarantee wording.
 - [ ] Downgrade/expiry giữ history.
-- [ ] Industry/Fundamental không bypass.
+- [ ] Industry/Fundamental là Public Research và không chứa technical columns.
 - [ ] Deep link không flash protected data.
 
 ---

@@ -4,23 +4,25 @@
 **Status:** LOCKED STANDARD  
 **Version:** 1.1  
 **Baseline:** HawkHost static frontend `v18.5-final800-near-ma`  
-**Scope:** Toàn bộ giao diện người dùng của Chuyện Chợ Chứng, bắt đầu từ `website/`.
+**Scope:** Toàn bộ giao diện người dùng của Chuyện Chợ Chứng; `website/` là production và `website-next/` là v19 staging implementation target.
 
 ---
 
 # 0. Authority
 
-Tài liệu này là chuẩn UI/UX cấp cao nhất của sản phẩm.
+Tài liệu này là chuẩn UI/UX nền tảng cấp cao của sản phẩm. Với Phase 1, locked Port Contract là đặc tả chuyên biệt đã được Product Owner duyệt.
 
 Khi có xung đột, áp dụng theo thứ tự:
 
 1. Yêu cầu sản phẩm được Product Owner phê duyệt rõ ràng.
-2. `CCC_UIUX_MASTER.md`.
-3. `CCC_COMPONENT_RULES.md`.
-4. `CCC_PAGE_PATTERNS.md`.
-5. Hành vi production và data contract thật.
-6. UI/UX Pro Max hoặc các nguồn tham khảo khác.
-7. Sở thích cá nhân của designer/coder/AI.
+2. `CCC_PHASE1_DESIGN_PORT_CONTRACT_v1.0.md` cho Phase 1 implementation.
+3. `CCC_UIUX_MASTER.md`.
+4. `CCC_LOVABLE_PHASE1_DESIGN_REFERENCE_v1.0.md` cho visual direction đã duyệt.
+5. `CCC_COMPONENT_RULES.md`.
+6. `CCC_PAGE_PATTERNS.md`.
+7. Hành vi production và data contract thật.
+8. UI/UX Pro Max hoặc các nguồn tham khảo khác.
+9. Sở thích cá nhân của designer/coder/AI.
 
 > Do not redesign Chuyện Chợ Chứng from personal preference.  
 > Design decisions must follow real product data, CCC standards, and the user's task.
@@ -47,6 +49,8 @@ website/
 ```
 
 Không được giả định có React/TanStack/Lovable runtime nếu chưa có quyết định migration riêng.
+
+`website-next/` là v19 staging/next-generation implementation target. Nó không thay thế production source of truth cho tới khi QA đạt và Product Owner duyệt promotion.
 
 ## 1.2 Routes thật
 
@@ -119,6 +123,33 @@ Dùng cho:
 Dùng cho lịch sử quý trong Stock Detail.
 
 Không được trình bày field chưa tồn tại như dữ liệu production thật.
+
+## 1.4 Product data/access hierarchy — LOCKED
+
+```text
+PUBLIC LAYER
+Market Quote + Fundamental Research
+
+MEMBERSHIP LAYER
+CCC Technical Intelligence
+
+PERSONALIZATION LAYER
+Watchlist + Alerts + Account
+```
+
+Public Market Quote cho mọi mã gồm ticker, company/display name, exchange, current price, percentage change và current accumulated volume.
+
+Public Fundamental Research gồm các field tài chính thật đã liệt kê ở trên, score + coverage, freshness, quarterly history và BCTC link khi tồn tại. Missing-data principle không đổi.
+
+Protected CCC Technical Intelligence gồm KLTB10, KL ngày/KLTB10, MA10/MA200 và khoảng cách, RVOL30/sessions, bốn signals, signal count, CCC Signal Rail, technical discovery identities và technical alerts.
+
+> Market quote is public.
+>
+> Fundamental research is public.
+>
+> CCC technical intelligence is protected.
+
+Fundamental Research không được trộn trực quan với protected technical intelligence chỉ vì hai nhóm dữ liệu cùng tồn tại cho một mã.
 
 ---
 
@@ -577,18 +608,25 @@ Khi filter tăng:
 
 # 16. Industry comparison
 
-Industry page phải ưu tiên **comparison clarity**.
+Industry page là **Public Fundamental Research** và phải ưu tiên **comparison clarity**.
 
 Các cột cốt lõi hiện tại:
 
-- mã;
+- company identity;
 - Điểm cơ bản;
+- score coverage;
 - profit YoY;
+- revenue/income YoY;
+- quarterly growth;
 - ROE;
+- ROA;
+- debt/equity;
+- debt/assets;
 - P/E;
 - P/B;
-- signal kỹ thuật;
 - freshness.
+
+Không đưa signal count, CCC Signal Rail, RVOL30, MA10, MA200 hoặc technical signal columns vào research comparison.
 
 Industry selector phải:
 
@@ -603,7 +641,7 @@ Numeric columns cần alignment nhất quán.
 
 # 17. Fundamental screener
 
-Sàng lọc cơ bản là một **analysis workflow**, không phải collection of cards.
+Sàng lọc cơ bản là một **Public Fundamental Research analysis workflow**, không phải collection of cards.
 
 Cần:
 
@@ -620,6 +658,8 @@ Phần “Cách tính Điểm cơ bản” cần progressive disclosure:
 - rule chi tiết sau.
 
 Không bắt user đọc toàn bộ phương pháp trước khi xem kết quả.
+
+Không đưa technical signal/rail/RVOL/MA columns vào Fundamental Research.
 
 ---
 
@@ -638,16 +678,14 @@ Production detail hiện bao gồm:
 
 Target hierarchy:
 
-1. Identity
-2. Price/change
-3. CCC Signal Rail
-4. “Vì sao mã này đáng chú ý?”
-5. Technical evidence
-6. Fundamental summary
-7. Fundamental score breakdown
-8. Quarterly history
-9. BCTC
-10. Data trust/audit
+1. Public identity + Market Quote: ticker, company, exchange, price/change/current volume
+2. Tabs: Tổng quan / Kỹ thuật / Cơ bản / BCTC
+3. Technical tab: entitled evidence or professional locked state, without protected-content flash
+4. Public Fundamental summary
+5. Public Fundamental score + coverage/breakdown
+6. Public quarterly history
+7. Public BCTC link
+8. Data trust/audit
 
 Không bắt đầu detail bằng raw metric dump.
 
@@ -783,6 +821,13 @@ Trước khi dùng:
 
 Lovable output luôn phải được review lại theo CCC system.
 
+Lovable Phase 1 đã đóng và chỉ là visual/design reference. Không được xem prototype là production/runtime source. Phase 1 implementation phải đọc:
+
+- `CCC_LOVABLE_PHASE1_DESIGN_REFERENCE_v1.0.md`;
+- `CCC_PHASE1_DESIGN_PORT_CONTRACT_v1.0.md`.
+
+Điều này không cho phép gọi lại Lovable hoặc làm Phase 2; approval gate ở trên vẫn giữ nguyên.
+
 ---
 
 # 26. Design workflow
@@ -790,7 +835,7 @@ Lovable output luôn phải được review lại theo CCC system.
 Mọi major UI change đi qua:
 
 ## 00 — Verify production source
-Đảm bảo đang sửa `website/` hiện hành, không frontend cũ.
+Xác minh `website/` là production source of truth. Với Phase 1 đã duyệt, implementation target là `website-next/`; không sửa `website/` trước promotion approval.
 
 ## 01 — Product intent
 1 primary job + tối đa 3 secondary jobs.
@@ -817,7 +862,7 @@ Mockup trước khi major visual redesign.
 Không code major redesign trước khi mockup được duyệt.
 
 ## 09 — Implementation
-Sửa source thật.
+Sửa đúng target được duyệt. Phase 1 port thực hiện tại `website-next/`.
 
 ## 10 — Responsive/accessibility/performance QA
 375 / 768 / 1024 / 1440.
@@ -854,6 +899,7 @@ Tên version thực tế sẽ được chốt trước release.
 ## LOCKED
 
 - production source is `website/`;
+- Phase 1 staging implementation target is `website-next/`;
 - 4 route hiện tại;
 - scanner universe không bị frontend xóa;
 - 4 tín hiệu;
@@ -868,6 +914,10 @@ Tên version thực tế sẽ được chốt trước release.
 - accessibility;
 - Lovable approval gate;
 - mockup approval before major redesign.
+- Public Market Quote + Public Fundamental Research;
+- protected CCC Technical Intelligence;
+- Phase 1 visual reference + port contract;
+- `PORT-01`, `PORT-02`, `PORT-03` là implementation debt bắt buộc.
 
 ## EVOLVING
 

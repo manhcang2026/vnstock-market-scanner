@@ -8,6 +8,8 @@
 **Status:** APPROVAL / MOCKUP PLANNING  
 **Scope:** UI/UX + frontend presentation behavior. This document does not authorize changes to scanner thresholds or backend universe logic.
 
+> **Historical-plan notice (2026-08-21):** This audit remains an evidence/history document. Where its proposed access model, Research columns, Lovable status, or layout direction conflicts with the locked Phase 1 rules, `CCC_PHASE1_DESIGN_PORT_CONTRACT_v1.0.md` and `CCC_LOVABLE_PHASE1_DESIGN_REFERENCE_v1.0.md` supersede it. In particular, Market Quote and Fundamental Research are public, CCC Technical Intelligence is protected, Research excludes technical columns, and `PORT-01`–`PORT-03` are mandatory.
+
 ---
 
 # 1. Executive conclusion

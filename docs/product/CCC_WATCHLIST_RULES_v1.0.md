@@ -32,13 +32,15 @@ Mục tiêu:
 
 Watchlist là danh sách symbol cá nhân user chọn để:
 
-- xem chi tiết;
+- mở CCC Technical Intelligence theo phạm vi gói;
 - theo dõi thường xuyên;
-- làm access entitlement với Free/Basic/Plus/Pro;
+- làm active technical entitlement set với Free/Basic/Plus/Pro;
 - nhận alert nếu plan hỗ trợ;
 - cá nhân hóa giao diện.
 
 Watchlist **không thay đổi scanner universe**.
+
+Watchlist cũng không khóa ticker, company, exchange, Public Market Quote hoặc Public Fundamental Research. Ba lớp dữ liệu tuân `CCC_MEMBERSHIP_PERMISSION_MODEL_v1.0.md` và `CCC_PHASE1_DESIGN_PORT_CONTRACT_v1.0.md`.
 
 Xóa FPT khỏi Watchlist không làm backend ngừng quét FPT.
 
@@ -52,7 +54,7 @@ Xóa FPT khỏi Watchlist không làm backend ngừng quét FPT.
 | Basic | 20 | 20 |
 | Plus | 50 | 50 |
 | Pro | 100 | 100 |
-| Full Market | Không dùng Watchlist để giới hạn quyền xem | Không giới hạn quyền xem |
+| Full Market | Không dùng Watchlist để giới hạn technical scope | Không giới hạn technical scope |
 
 Với Full, Watchlist vẫn hữu ích cho:
 
@@ -60,7 +62,7 @@ Với Full, Watchlist vẫn hữu ích cho:
 - alert selection;
 - priority display.
 
-Nhưng không còn là điều kiện để mở Stock Detail.
+Nhưng không còn là điều kiện để mở CCC Technical Intelligence. Full Market không đồng nghĩa tự động alert toàn thị trường.
 
 ---
 
@@ -140,7 +142,7 @@ Không tốn quota.
 
 Lý do:
 
-Không có symbol mới nào được entitlement.
+Không có symbol mới nào được technical entitlement.
 
 ---
 
@@ -414,7 +416,9 @@ HOSE
 
 Nếu locked:
 
-> Mã này chưa nằm trong Watchlist của bạn.
+Public identity, quote và Fundamental Research vẫn hiển thị. Chỉ technical state dùng thông báo:
+
+> CCC Technical Intelligence của mã này chưa nằm trong phạm vi Watchlist của bạn.
 
 Actions:
 
@@ -572,20 +576,23 @@ Free/Basic/Plus/Pro:
 ```text
 ACTIVE watchlist
 =
-protected Stock Detail entitlement
+protected CCC Technical Intelligence entitlement
 ```
 
 Nếu symbol không active:
 
 ```text
-get_stock_detail(symbol)
+get_public_quote_and_fundamental(symbol)
+→ PUBLIC
+
+get_ccc_technical_intelligence(symbol)
 → LOCKED
 ```
 
 Full:
 
 ```text
-protected detail entitlement = full scanner universe
+protected technical entitlement = full scanner universe
 ```
 
 ---
@@ -598,12 +605,12 @@ Alert-eligible symbols mặc định nằm trong active Watchlist.
 
 Remove symbol:
 
-- detail entitlement dừng;
+- technical entitlement dừng;
 - alert cho symbol đó dừng, trừ khi Product Spec tương lai định nghĩa khác.
 
 Full:
 
-Alert selection độc lập hơn vì detail entitlement = all market.
+Alert selection độc lập hơn vì technical entitlement = all market.
 
 ---
 
@@ -624,7 +631,7 @@ System:
 2. báo user cần giảm còn 50;
 3. user chọn mã giữ;
 4. extras → `INACTIVE_DUE_TO_PLAN`;
-5. sau effective time, extras không còn protected detail;
+5. sau effective time, extras không còn protected technical detail; public quote/fundamental vẫn hiển thị;
 6. không tốn change quota vì downgrade deactivation.
 
 Recommended state:
@@ -647,8 +654,9 @@ UI:
 Trong thời gian reduction-required:
 
 - market aggregate vẫn xem;
+- Public Market Quote và Public Fundamental Research vẫn xem;
 - paid alerts dừng;
-- không leak protected detail ngoài Free entitlement;
+- không leak protected technical detail ngoài Free entitlement;
 - history giữ nguyên.
 
 ---
@@ -734,7 +742,8 @@ Quản lý Watchlist phải mobile-first đủ dùng:
 - [ ] Remove không tác động scanner universe.
 - [ ] History được giữ.
 - [ ] Downgrade không random-delete.
-- [ ] Full detail access không phụ thuộc Watchlist.
+- [ ] Full technical access không phụ thuộc Watchlist.
+- [ ] Watchlist không khóa public identity, quote hoặc Fundamental Research.
 
 ---
 

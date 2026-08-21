@@ -29,6 +29,15 @@ Target refinement:
 - Light/Dark;
 - refresh/countdown.
 
+Locked Phase 1 structure:
+
+```text
+PAGE HEADER — full working width
+CONTENT GRID — MAIN + OPTIONAL RIGHT RAIL
+```
+
+The Page Header must appear before the main/right-rail split (`PORT-01`).
+
 ## Mobile
 
 - compact top identity/status;
@@ -83,6 +92,16 @@ Do not duplicate every item excessively between KPI and cards.
 ### F. Tín hiệu ban đầu
 
 1/4 preview only.
+
+## Desktop result row — LOCKED Phase 1
+
+Every row shares the same deterministic four-zone grid (`PORT-02`):
+
+```text
+Identity | Price/Change | Volume | CCC Signal Rail
+```
+
+Do not use `flex + justify-between`. Public identity/quote remain visible; protected technical discovery and CCC obey technical entitlement.
 
 ## Mobile
 
@@ -163,6 +182,16 @@ When metadata integration is added to list:
 
 Do not sacrifice key numeric columns just to fit long company names.
 
+## Desktop result grid — LOCKED Phase 1
+
+Use five real proportional columns (`PORT-03`):
+
+```text
+Identity | Price | Change | Current Volume | CCC
+```
+
+No filler column. Public identity and quote show for every stock; CCC Technical Intelligence is entitled or professionally locked. Additional technical metrics stay in entitled technical detail/filter/sort contexts.
+
 ---
 
 # 4. So sánh theo ngành `/so-sanh-theo-nganh`
@@ -173,15 +202,22 @@ Answer:
 
 **“Trong cùng một ngành, doanh nghiệp nào nổi bật hơn theo các chỉ tiêu đang có?”**
 
+This route is **Public Fundamental Research**.
+
 ## Current real fields
 
 - website_group;
 - score;
+- score coverage;
 - profit YoY;
+- revenue/income YoY;
+- quarterly growth;
 - ROE;
+- ROA;
+- debt/equity;
+- debt/assets;
 - P/E;
 - P/B;
-- technical signal;
 - freshness.
 
 ## Target desktop
@@ -205,10 +241,13 @@ Priority:
 1. Company identity
 2. Score + coverage
 3. Profit growth
-4. ROE
-5. Valuation
-6. Technical
-7. Freshness
+4. Revenue/income and quarterly growth when available
+5. ROE / ROA
+6. Debt/equity and debt/assets
+7. P/E / P/B
+8. Freshness
+
+Do not add signal count, CCC Signal Rail, RVOL30, MA10, MA200, or technical signal columns to this research surface.
 
 All table columns centered only if appropriate; numeric comparison may be right aligned for faster scanning.
 
@@ -235,6 +274,8 @@ Freshness labels must remain.
 Answer:
 
 **“Doanh nghiệp nào phù hợp với các tiêu chí cơ bản tôi chọn?”**
+
+This route is **Public Fundamental Research**.
 
 ## Current real filters
 
@@ -267,6 +308,10 @@ Methodology remains fully available for trust.
 
 Always show score coverage.
 
+Prioritize real fundamental fields: industry, score/coverage, profit growth, revenue/income growth, quarterly growth, ROE, ROA, debt/equity, debt/assets, P/E, P/B, freshness, quarterly history and BCTC access where appropriate.
+
+Do not add signal count, CCC Signal Rail, RVOL30, MA10, MA200, or technical signal columns to this research surface.
+
 ---
 
 # 6. Stock Detail — shared across pages
@@ -283,8 +328,17 @@ Answer:
 - symbol;
 - company name;
 - exchange;
-- price/change;
-- score/signal summary.
+- current price/change/current accumulated volume;
+- public quote summary.
+
+Tabs:
+
+- Tổng quan;
+- Kỹ thuật;
+- Cơ bản;
+- BCTC.
+
+Identity and Market Quote are public. The Kỹ thuật tab is fully entitled or professionally locked before protected content can render. Cơ bản and BCTC research are public when real fields/links exist.
 
 ## Section 1 — Why notable
 
@@ -299,6 +353,8 @@ Plain Vietnamese.
 - RVOL30;
 - sample count.
 
+This section is Protected CCC Technical Intelligence.
+
 ## Section 3 — Fundamental Summary
 
 - score/available;
@@ -309,6 +365,8 @@ Plain Vietnamese.
 - P/E;
 - P/B;
 - freshness.
+
+This section is Public Fundamental Research and must remain visually separate from protected technical intelligence.
 
 ## Section 4 — Score breakdown
 
@@ -358,7 +416,7 @@ When implemented:
 
 ## Rule
 
-Watchlist only controls personalized display.
+For Free/Basic/Plus/Pro, Watchlist determines the active CCC Technical Intelligence entitlement set and also supports personalization. It does not lock public identity, quote, or Fundamental Research.
 
 Removing from watchlist never changes scanner universe.
 

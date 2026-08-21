@@ -1,4 +1,15 @@
-v19.0-alpha.4
-STAGING — không phải production.
-Baseline: website/ v18.5-final800-near-ma.
-Scanner: locked membership UX, exact public search, Watchlist và market aggregate staging mock.
+v19.0-alpha.5-phase1-contract
+STAGING — not production.
+Phase 1 design direction locked.
+Visual reference:
+CCC_LOVABLE_PHASE1_DESIGN_REFERENCE_v1.0.md
+Implementation contract:
+CCC_PHASE1_DESIGN_PORT_CONTRACT_v1.0.md
+Public:
+Market Quote + Fundamental Research
+Protected:
+CCC Technical Intelligence
+Mandatory implementation debt pending:
+PORT-01 Full-width Page Header
+PORT-02 Overview 4-zone Grid
+PORT-03 Scanner 5-column Grid
