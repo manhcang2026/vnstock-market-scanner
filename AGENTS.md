@@ -116,6 +116,117 @@ Before using Lovable:
 3. estimate credits;
 4. wait for approval.
 
+## LOVABLE ACCESS POLICY — HARD GATE
+
+For this repository, Lovable is an external DESIGN REFERENCE.
+
+DEFAULT POLICY:
+
+Lovable access is READ-ONLY unless the Product Owner explicitly approves a specific write action in the current conversation.
+
+### READ-ONLY ALLOWED WITHOUT NEW APPROVAL
+
+Only for inspecting the already-approved Phase 1 reference:
+
+- `get_project`
+- `list_files`
+- `read_file`
+- `list_messages`
+- `get_message`
+- `list_edits`
+- `get_diff`
+- `get_project_knowledge`
+- `get_workspace_knowledge`
+
+These actions may only be used to extract/reference existing Lovable data.
+
+### FORBIDDEN WITHOUT EXPLICIT PRODUCT OWNER APPROVAL
+
+Never perform any Lovable action that can create, edit, mutate, publish, deploy, configure, upload, delete, connect, provision or otherwise change Lovable state unless the Product Owner explicitly approves THAT action.
+
+This includes, but is not limited to:
+
+- `send_message`
+- `create_project`
+- deploy / publish actions
+- `set_project_knowledge`
+- `set_workspace_knowledge`
+- `enable_database`
+- database `INSERT` / `UPDATE` / `DELETE` / DDL
+- project visibility changes
+- connector changes
+- workspace/project skill updates
+- uploads
+- edits
+- deletes
+- any future Lovable tool with write/mutation semantics
+
+IMPORTANT:
+
+- Plugin presence is NOT permission to write.
+- Previous approval for a different Lovable action is NOT reusable.
+- Previous Phase 1 approval is NOT permission for future writes.
+- Available Lovable credits are NOT permission to spend them.
+- Plan mode is NOT automatically read-only if the action can modify Lovable.
+- Never use `send_message` merely to inspect or analyze the project.
+- Never ask Lovable itself to perform extraction when read tools can retrieve the data.
+- If uncertain whether an action is read-only, treat it as WRITE and STOP.
+
+### REQUIRED WRITE APPROVAL
+
+Before any Lovable write action:
+
+1. Explain exactly what Lovable action is proposed.
+2. Explain what it will change.
+3. Wait for explicit Product Owner approval in the current conversation.
+4. Perform only the specifically approved action.
+
+If approval is absent:
+
+STOP and do not call the write action.
+
+### PHASE 1 EXTRACTION SPECIAL RULE
+
+For Lovable Phase 1 extraction:
+
+READ existing source/files/messages only.
+
+Do NOT:
+
+- send prompts/messages to Lovable
+- request Lovable to redesign anything
+- modify code
+- modify knowledge
+- deploy
+- publish
+- connect backend
+- use Lovable credits
+
+The extraction exists only to transfer the already-approved Phase 1 design reference into this repository.
+
+## UI/UX PRO MAX SKILL — SUPPORTING REFERENCE ONLY
+
+This repository may use the local UI/UX Pro Max skill under `.agent/`.
+
+The skill is a supporting design-intelligence tool only.
+
+It MUST NOT override:
+
+1. explicit Product Owner decisions;
+2. `CCC_PHASE1_DESIGN_PORT_CONTRACT_v1.0.md`;
+3. `CCC_LOVABLE_PHASE1_DESIGN_REFERENCE_v1.0.md`;
+4. `CCC_UIUX_MASTER.md`;
+5. `CCC_COMPONENT_RULES.md`;
+6. `CCC_PAGE_PATTERNS.md`.
+
+Use the skill to improve implementation quality, accessibility, responsive behavior, spacing, typography, usability and visual polish.
+
+Do NOT use the skill to reinterpret locked product rules, change the approved Phase 1 design direction, introduce a new design language, or redesign pages from personal preference.
+
+When the skill conflicts with a locked CCC rule:
+
+CCC rules win.
+
 ## 11. Secrets
 
 Never place:
