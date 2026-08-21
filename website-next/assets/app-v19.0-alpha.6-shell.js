@@ -178,14 +178,18 @@
     var metadata = state.metadataBySymbol[String(row.symbol || "").toUpperCase()] || {};
     var groupName = (financial && financial.website_group) || metadata.website_group || "";
     var identityMeta = row.exchange + (groupName ? " · " + groupName : "");
-    var reasons = notableReasons(row);
-    var reasonHtml = reasons.length ? reasons.map(function (reason) { return '<span>' + esc(reason) + '</span>'; }).join('') : '<span class="stock-row-highlight-muted">Chưa có điểm nổi bật bổ sung</span>';
     var volumeRatio = row.dayVolumeRatioPct === null || !Number.isFinite(row.dayVolumeRatioPct) ? "—" : plainPct(row.dayVolumeRatioPct) + " KLTB10";
+    var rvolText = row.rvol30Pct === null || !Number.isFinite(row.rvol30Pct) ? "—" : plainPct(row.rvol30Pct);
+    var ma200Text = row.ma200DistancePct === null || !Number.isFinite(row.ma200DistancePct) ? "—" : pct(row.ma200DistancePct, 1);
+    var volumeClass = row.dayVolumeRatioPct !== null && Number.isFinite(row.dayVolumeRatioPct) && row.dayVolumeRatioPct >= 200 ? " is-strong" : "";
     return '<article class="lovable-stock-row" data-symbol="' + esc(row.symbol) + '">' +
       '<div class="stock-row-identity">' + logoHtml(row.symbol, 'row-logo') + '<div><strong>' + esc(row.symbol) + '</strong><span title="' + esc(company) + '">' + esc(company) + '</span><small>' + esc(identityMeta) + '</small></div></div>' +
       '<div class="stock-row-price"><strong>' + formatPrice(row.currentPrice) + '</strong><span class="' + metricClass(row.changePct) + '">' + pct(row.changePct) + '</span></div>' +
-      '<div class="stock-row-volume"><small>KL hiện tại</small><strong>' + shortVolume(row.cumVolume) + '</strong><span>' + esc(volumeRatio) + '</span></div>' +
-      '<div class="stock-row-highlights">' + reasonHtml + '</div>' +
+      '<div class="stock-row-volume"><small>KL hiện tại</small><strong>' + shortVolume(row.cumVolume) + '</strong><span class="volume-ratio' + volumeClass + '">' + esc(volumeRatio) + '</span></div>' +
+      '<div class="stock-row-highlights" aria-label="Điểm nổi bật kỹ thuật">' +
+        '<div class="stock-row-highlight-line highlight-rvol"><span>RVOL30</span><strong>' + esc(rvolText) + '</strong></div>' +
+        '<div class="stock-row-highlight-line highlight-trend"><span>MA200</span><strong>' + esc(ma200Text) + '</strong></div>' +
+      '</div>' +
       '<div class="stock-row-ccc">' + signalRailHtml(row) + '</div>' +
     '</article>';
   }
@@ -653,6 +657,92 @@
       '<section class="scanner-controls panel-anatomy"><div class="scanner-mode" role="group" aria-label="Phạm vi kết quả"><button type="button" data-scanner-mode="market" class="' + (state.scannerMode === 'market' ? 'active' : '') + '" aria-pressed="' + (state.scannerMode === 'market') + '">Toàn bộ tín hiệu</button><button type="button" data-scanner-mode="watchlist" class="' + (state.scannerMode === 'watchlist' ? 'active' : '') + '" aria-pressed="' + (state.scannerMode === 'watchlist') + '">Watchlist của tôi</button></div><div class="scanner-search-row"><div class="search-box"><span class="search-icon" aria-hidden="true">' + iconSvg('search') + '</span><input id="stock-search" type="search" inputmode="search" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" aria-label="Tìm chính xác mã cổ phiếu" placeholder="Nhập chính xác mã cổ phiếu" value="' + esc(state.query) + '"></div><button id="search-btn" class="primary-action" type="button">Tìm mã</button><button id="clear-btn" class="secondary-action" type="button">Xóa</button><button id="scanner-filter-toggle" class="filter-toggle" type="button" aria-expanded="' + state.scannerFiltersOpen + '" aria-controls="scanner-filter-panel">Bộ lọc</button></div><div class="quick-filters" aria-label="Bộ lọc nhanh">' + quickSignals + '</div><div id="scanner-filter-panel" class="scanner-filter-controls ' + (state.scannerFiltersOpen ? 'is-open' : '') + '"><label><span>Sàn giao dịch</span><select data-select-filter="exchange">' + selectOptions(exchanges, state.exchange) + '</select></label><label><span>Tín hiệu</span><select data-select-filter="signal">' + selectOptions(signals, state.signal) + '</select></label><label><span>Sắp xếp</span><select data-select-filter="sort">' + selectOptions(sorts, state.sort) + '</select></label><button id="reset-filters" type="button" class="secondary-action clear-filters">Đặt lại</button></div></section>' +
       exactSearchHtml() + '<section class="scanner-results panel-anatomy"><header class="section-bar"><div><h2>' + (state.scannerMode === 'market' ? 'Kết quả toàn thị trường' : 'Kết quả Watchlist') + '</h2><span>Tổng ' + marketMatches.length + ' · Trong phạm vi ' + visibleMatches.length + ' · Khóa ' + lockedCount + '</span></div><small>Trang ' + state.page + '/' + pages + '</small></header>' + results + '</section>' + lockedBlock + (pages > 1 ? '<div class="pager"><button id="prev-page" type="button" ' + (state.page === 1 ? 'disabled' : '') + '>Trang trước</button><span>Trang ' + state.page + '/' + pages + '</span><button id="next-page" type="button" ' + (state.page === pages ? 'disabled' : '') + '>Trang sau</button></div>' : '') + commonContextRailHtml(context) + '<p class="disclaimer">STAGING · Frontend không phải security boundary. Công cụ không đưa ra khuyến nghị mua/bán.</p></main>';
   }
+  function overviewGroupTitle(key) {
+    return key === "4of4" ? "Đạt 4/4" : key === "3plus" ? "Từ 3 tín hiệu" : key === "2plus" ? "Từ 2 tín hiệu" : "RVOL30 nổi bật";
+  }
+  function overviewGroupModel(key) {
+    var selectedGroup = ["4of4", "3plus", "2plus", "rvol30"].indexOf(key) >= 0 ? key : "2plus";
+    var data = discoveryData(selectedGroup);
+    var visible = data.visibleItems.slice().sort(priority);
+    var shown = visible.slice(0, 10);
+    return { key:selectedGroup, title:overviewGroupTitle(selectedGroup), data:data, shown:shown };
+  }
+  function overviewEmptyRowsHtml() {
+    return '<div class="empty-state"><strong>Chưa có mã thuộc phạm vi của bạn trong nhóm này</strong><span>Chọn nhóm tín hiệu khác hoặc kiểm tra lại khi snapshot thị trường được cập nhật.</span></div>';
+  }
+  function overviewSeeAllHtml(model) {
+    if (model.data.visibleCount <= model.shown.length) return "";
+    return '<div class="overview-see-all"><a href="/danh-sach?signal=' + encodeURIComponent(model.key) + '">Xem tất cả ' + model.data.visibleCount + ' mã trong Bộ quét ' + iconSvg('arrow') + '</a></div>';
+  }
+  function overviewLockedHtml(model) {
+    if (!model.data.lockedCount) return "";
+    return '<section class="locked-remainder overview-locked-remainder"><div class="locked-remainder-icon">' + iconSvg('lock') + '</div><div><span>NGOÀI PHẠM VI</span><strong>' + model.data.lockedCount + ' mã thuộc nhóm ' + esc(model.title) + ' đang được bảo vệ</strong><p>Bạn vẫn thấy tổng số lượng của nhóm trên toàn thị trường, nhưng danh tính và dữ liệu kỹ thuật ngoài phạm vi gói không được liệt kê.</p></div><button type="button" class="secondary-action scanner-upgrade-trigger">Mở rộng phạm vi</button></section>';
+  }
+  function bindOverviewDynamic(root) {
+    if (!root) return;
+    root.querySelectorAll(".company-logo-img").forEach(function (img) {
+      img.addEventListener("load", function () { img.parentElement.classList.add("has-logo"); });
+      img.addEventListener("error", function () { img.remove(); });
+      if (img.complete && img.naturalWidth > 0) img.parentElement.classList.add("has-logo");
+    });
+    root.querySelectorAll("[data-symbol]").forEach(function (el) {
+      var symbol = el.getAttribute("data-symbol");
+      el.setAttribute("tabindex", "0");
+      el.setAttribute("aria-label", "Mở chi tiết " + symbol);
+      if (el.tagName !== "TR") el.setAttribute("role", "button");
+      el.addEventListener("click", function () { openSymbol(symbol); });
+      el.addEventListener("keydown", function (event) {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          openSymbol(symbol);
+        }
+      });
+    });
+    root.querySelectorAll(".scanner-upgrade-trigger").forEach(function (button) {
+      button.addEventListener("click", function () {
+        state.scannerDialog = "upgrade";
+        state.scannerDialogSymbol = "";
+        render();
+        var closeButton = document.getElementById("scanner-action-close");
+        if (closeButton) closeButton.focus();
+      });
+    });
+  }
+  function updateOverviewGroupInline(key) {
+    var model = overviewGroupModel(key);
+    state.overviewGroup = model.key;
+
+    document.querySelectorAll("[data-overview-group]").forEach(function (button) {
+      var active = button.getAttribute("data-overview-group") === model.key;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-pressed", active ? "true" : "false");
+    });
+
+    var summary = document.getElementById("overview-selection-summary");
+    if (summary) {
+      var visibleSummary = model.data.totalCount ? model.data.visibleCount + "/" + model.data.totalCount + " mã trong phạm vi" : "Chưa có mã trong nhóm";
+      summary.innerHTML = 'Đang xem: <b>' + esc(model.title) + '</b> · ' + esc(visibleSummary);
+    }
+
+    var count = document.getElementById("overview-selection-count");
+    if (count) count.textContent = model.shown.length + " mã hiển thị";
+
+    var rows = document.getElementById("overview-rows");
+    if (rows) {
+      rows.innerHTML = model.shown.length ? model.shown.map(overviewStockRowHtml).join("") : overviewEmptyRowsHtml();
+      bindOverviewDynamic(rows);
+    }
+
+    var seeAll = document.getElementById("overview-see-all-slot");
+    if (seeAll) seeAll.innerHTML = overviewSeeAllHtml(model);
+
+    var locked = document.getElementById("overview-locked-slot");
+    if (locked) {
+      locked.innerHTML = overviewLockedHtml(model);
+      bindOverviewDynamic(locked);
+    }
+  }
+
   function overviewHtml() {
     var plan = mockPlan();
     var selectedGroup = ["4of4", "3plus", "2plus", "rvol30"].indexOf(state.overviewGroup) >= 0 ? state.overviewGroup : "2plus";
@@ -680,8 +770,8 @@
       '<section class="page-heading"><div><span class="eyebrow">MARKET INTELLIGENCE</span><h1>Tổng quan</h1><p>Nhịp thị trường, mật độ hội tụ tín hiệu và lực dòng tiền trong phạm vi của bạn.</p></div><div class="page-heading-meta"><span>Scanner · ' + state.rows.length + ' mã</span><label><span>Gói staging</span><select id="mock-plan-select" aria-label="Chọn gói giả lập staging">' + planOptions + '</select></label></div></section>' +
       secondarySourceWarningHtml(false) + marketPulseHtml() +
       '<section class="signal-density panel-anatomy"><header class="section-bar"><div><h2>Mật độ tín hiệu hôm nay</h2><span>Chọn một nhóm để xem các mã thuộc phạm vi của bạn ngay bên dưới</span></div><small>Ngoài phạm vi chỉ hiển thị số lượng</small></header><div class="density-grid">' + density + '</div></section>' +
-      '<section id="overview-results" class="in-scope-results panel-anatomy"><header class="section-bar"><div><h2>Tín hiệu trong phạm vi của bạn</h2><span>Đang xem: <b>' + esc(groupTitles[selectedGroup]) + '</b> · ' + visibleSummary + '</span></div><small>' + shown.length + ' mã hiển thị</small></header><div class="overview-row-head"><span>Công ty</span><span>Giá / thay đổi</span><span>Khối lượng</span><span>Điểm nổi bật</span><span>CCC</span></div><div class="overview-rows">' + (shown.length ? shown.map(overviewStockRowHtml).join('') : '<div class="empty-state"><strong>Chưa có mã thuộc phạm vi của bạn trong nhóm này</strong><span>Chọn nhóm tín hiệu khác hoặc kiểm tra lại khi snapshot thị trường được cập nhật.</span></div>') + '</div>' + seeAll + '</section>' +
-      lockedBlock + commonContextRailHtml(legendCard) +
+      '<section id="overview-results" class="in-scope-results panel-anatomy"><header class="section-bar"><div><h2>Tín hiệu trong phạm vi của bạn</h2><span id="overview-selection-summary">Đang xem: <b>' + esc(groupTitles[selectedGroup]) + '</b> · ' + visibleSummary + '</span></div><small id="overview-selection-count">' + shown.length + ' mã hiển thị</small></header><div class="overview-row-head"><span>Công ty</span><span>Giá / thay đổi</span><span>Khối lượng</span><span>Điểm nổi bật</span><span>CCC</span></div><div id="overview-rows" class="overview-rows">' + (shown.length ? shown.map(overviewStockRowHtml).join('') : '<div class="empty-state"><strong>Chưa có mã thuộc phạm vi của bạn trong nhóm này</strong><span>Chọn nhóm tín hiệu khác hoặc kiểm tra lại khi snapshot thị trường được cập nhật.</span></div>') + '</div><div id="overview-see-all-slot">' + seeAll + '</div></section>' +
+      '<div id="overview-locked-slot">' + lockedBlock + '</div>' + commonContextRailHtml(legendCard) +
       '<p class="disclaimer">STAGING · Dữ liệu thật, entitlement frontend chỉ phục vụ duyệt UX. Công cụ không đưa ra khuyến nghị mua/bán.</p></main>';
   }
   function membershipDialogHtml() {
@@ -888,8 +978,7 @@
       button.addEventListener("click", function () {
         var key = button.getAttribute("data-overview-group");
         if (["4of4", "3plus", "2plus", "rvol30"].indexOf(key) < 0) return;
-        state.overviewGroup = key;
-        render();
+        updateOverviewGroupInline(key);
       });
     });
     document.querySelectorAll("[data-scanner-mode]").forEach(function (button) { button.addEventListener("click", function () { state.scannerMode = button.getAttribute("data-scanner-mode") === "watchlist" ? "watchlist" : "market"; state.page = 1; render(); }); });
