@@ -182,7 +182,7 @@
     var rvolText = row.rvol30Pct === null || !Number.isFinite(row.rvol30Pct) ? "—" : plainPct(row.rvol30Pct);
     var ma200Text = row.ma200DistancePct === null || !Number.isFinite(row.ma200DistancePct) ? "—" : pct(row.ma200DistancePct, 1);
     var volumeClass = row.dayVolumeRatioPct !== null && Number.isFinite(row.dayVolumeRatioPct) && row.dayVolumeRatioPct >= 200 ? " is-strong" : "";
-    return '<article class="lovable-stock-row" data-symbol="' + esc(row.symbol) + '">' +
+    return '<article class="lovable-stock-row universal-stock-card" data-symbol="' + esc(row.symbol) + '">' +
       '<div class="stock-row-identity">' + logoHtml(row.symbol, 'row-logo') + '<div><strong>' + esc(row.symbol) + '</strong><span title="' + esc(company) + '">' + esc(company) + '</span><small>' + esc(identityMeta) + '</small></div></div>' +
       '<div class="stock-row-price"><strong>' + formatPrice(row.currentPrice) + '</strong><span class="' + metricClass(row.changePct) + '">' + pct(row.changePct) + '</span></div>' +
       '<div class="stock-row-volume"><small>KL hiện tại</small><strong>' + shortVolume(row.cumVolume) + '</strong><span class="volume-ratio' + volumeClass + '">' + esc(volumeRatio) + '</span></div>' +
@@ -526,6 +526,27 @@
     var match = text.match(/\b(\d{2}:\d{2})(?::\d{2})?\b/);
     return match ? match[1] : text;
   }
+  function vietnamClockText(ms, compactDate) {
+    var parts = new Intl.DateTimeFormat("en-GB", {
+      timeZone:"Asia/Ho_Chi_Minh",
+      day:"2-digit", month:"2-digit", year:"numeric",
+      hour:"2-digit", minute:"2-digit", second:"2-digit", hour12:false
+    }).formatToParts(new Date(ms));
+    var out = {};
+    parts.forEach(function (part) { if (part.type !== "literal") out[part.type] = part.value; });
+    return {
+      date: compactDate ? (out.day + "/" + out.month) : (out.day + "/" + out.month + "/" + out.year),
+      time: out.hour + ":" + out.minute + ":" + out.second
+    };
+  }
+  function updateHeaderClockNow(ms) {
+    var desktop = vietnamClockText(ms, false);
+    var mobile = vietnamClockText(ms, true);
+    var headerNow = document.getElementById("header-now");
+    if (headerNow) headerNow.textContent = desktop.date + " · " + desktop.time;
+    var mobileNow = document.getElementById("mobile-now");
+    if (mobileNow) mobileNow.textContent = mobile.date + " · " + mobile.time;
+  }
   function trustModel(now) {
     var m = state.meta || {};
     var hasRows = state.rows.length > 0;
@@ -613,12 +634,12 @@
     var remaining = plan.changeLimit === null ? null : Math.max(0, plan.changeLimit - state.mockChangeUsed);
     var planOptions = Object.keys(MOCK_PLAN_CONFIG).map(function (code) { return '<option value="' + code + '" ' + (state.mockPlan === code ? 'selected' : '') + '>' + esc(MOCK_PLAN_CONFIG[code].label) + '</option>'; }).join('');
     var exchanges = [["all","Tất cả sàn"],["hose","HOSE"],["hnx","HNX"],["upcom","UPCoM"]];
-    var quickSignals = [["","Toàn bộ"],["4of4","4/4"],["3plus","≥3"],["rvol30","RVOL30"]].map(function (item) { return '<button type="button" class="quick-filter ' + (state.signal === item[0] ? 'active' : '') + '" data-filter="signal" data-value="' + esc(item[0]) + '" aria-pressed="' + (state.signal === item[0]) + '">' + esc(item[1]) + '</button>'; }).join('');
+    var quickSignals = [["","Toàn bộ"],["4of4","4/4"],["3plus","≥3"],["2plus","≥2"],["rvol30","RVOL30"]].map(function (item) { return '<button type="button" class="quick-filter ' + (state.signal === item[0] ? 'active' : '') + '" data-filter="signal" data-value="' + esc(item[0]) + '" aria-pressed="' + (state.signal === item[0]) + '">' + esc(item[1]) + '</button>'; }).join('');
     var tableRows = shown.map(function (r) {
       var company = companyDisplayName(r.symbol);
       return '<tr data-symbol="' + esc(r.symbol) + '"><td class="scanner-identity"><div class="table-company">' + logoHtml(r.symbol, 'table-logo') + '<div><b>' + esc(r.symbol) + '</b><span title="' + esc(company) + '">' + esc(company || 'Tên công ty đang cập nhật') + '</span></div></div></td><td class="center muted">' + esc(r.exchange) + '</td><td class="num">' + formatPrice(r.currentPrice) + '</td><td class="num ' + metricClass(r.changePct) + '">' + pct(r.changePct) + '</td><td class="num">' + plainPct(r.dayVolumeRatioPct) + '</td><td class="num ' + metricClass(r.ma10DistancePct) + '">' + pct(r.ma10DistancePct) + '</td><td class="num ' + metricClass(r.ma200DistancePct) + '">' + pct(r.ma200DistancePct) + '</td><td class="num">' + plainPct(r.rvol30Pct) + '</td><td class="center">' + signalRailHtml(r) + '</td><td class="center"><span class="data-status ' + (r.hasMissingData ? 'is-warning' : '') + '">' + (r.hasMissingData ? 'Thiếu dữ liệu' : 'Đầy đủ') + '</span></td></tr>';
     }).join('');
-    var results = shown.length ? '<div class="desktop-table panel scanner-table-panel"><div class="table-shell"><table class="scanner-table scanner-v19-table"><thead><tr><th class="scanner-identity">Công ty</th><th class="center">Sàn</th><th class="num">Giá</th><th class="num">% thay đổi</th><th class="num">KL ngày / KLTB10</th><th class="num">Cách MA10</th><th class="num">Cách MA200</th><th class="num">RVOL30</th><th class="center">Tín hiệu</th><th class="center">Dữ liệu</th></tr></thead><tbody>' + tableRows + '</tbody></table></div></div><div class="mobile-list scanner-mobile-list">' + shown.map(scannerStockCard).join('') + '</div>' : '<div class="empty scanner-empty"><strong>Chưa có mã trong quyền xem phù hợp</strong><span>Thử đổi bộ lọc hoặc chuyển sang Toàn bộ tín hiệu để xem aggregate thị trường.</span></div>';
+    var results = shown.length ? '<div class="desktop-table panel scanner-table-panel"><div class="table-shell"><table class="scanner-table scanner-v19-table"><thead><tr><th class="scanner-identity">Công ty</th><th class="center">Sàn</th><th class="num">Giá</th><th class="num">% thay đổi</th><th class="num">KL ngày / KLTB10</th><th class="num">Cách MA10</th><th class="num">Cách MA200</th><th class="num">RVOL30</th><th class="center">Tín hiệu</th><th class="center">Dữ liệu</th></tr></thead><tbody>' + tableRows + '</tbody></table></div></div><div class="mobile-list scanner-mobile-list">' + shown.map(overviewStockRowHtml).join('') + '</div>' : '<div class="empty scanner-empty"><strong>Chưa có mã trong quyền xem phù hợp</strong><span>Thử đổi bộ lọc hoặc chuyển sang Toàn bộ tín hiệu để xem aggregate thị trường.</span></div>';
     var lockedBlock = lockedCount ? '<section class="locked-market-summary"><div class="locked-market-icon">' + iconSvg('lock') + '</div><div><span>Ngoài quyền xem</span><strong>' + lockedCount + ' mã phù hợp đang được khóa</strong><p>Scanner vẫn quét toàn thị trường. Khối này chỉ hiển thị số lượng, không liệt kê danh tính mã bị khóa.</p></div><div class="locked-actions">' + (remaining > 0 ? '<button type="button" class="secondary-action scanner-replace-trigger">Thay một mã</button>' : '') + '<button type="button" class="primary-action scanner-upgrade-trigger">Tăng phạm vi theo dõi</button></div></section>' : '';
     var capacity = plan.fullMarket ? '<div><small>Quyền xem</small><strong>Toàn scanner universe</strong></div><div><small>Watchlist ưu tiên</small><strong>' + watchlist.length + ' mã mock</strong></div>' : '<div><small>Watchlist</small><strong>' + watchlist.length + '/' + plan.watchlistLimit + ' mã</strong></div><div><small>Lượt đổi còn lại</small><strong>' + remaining + '/' + plan.changeLimit + '</strong></div>';
     var fullCapacityActions = !plan.fullMarket && watchlist.length >= plan.watchlistLimit && remaining > 0 ? '<div class="capacity-actions"><span>Watchlist đã đủ chỗ, nhưng bạn vẫn còn lượt đổi.</span><button type="button" class="secondary-action scanner-replace-trigger">Thay một mã</button><button type="button" class="text-action scanner-upgrade-trigger">Nâng cấp</button></div>' : '';
@@ -644,12 +665,12 @@
     var remaining = plan.changeLimit === null ? null : Math.max(0, plan.changeLimit - state.mockChangeUsed);
     var planOptions = Object.keys(MOCK_PLAN_CONFIG).map(function (code) { return '<option value="' + code + '" ' + (state.mockPlan === code ? 'selected' : '') + '>' + esc(MOCK_PLAN_CONFIG[code].label) + '</option>'; }).join('');
     var exchanges = [["all","Tất cả sàn"],["hose","HOSE"],["hnx","HNX"],["upcom","UPCoM"]];
-    var quickSignals = [["","Toàn bộ"],["4of4","4/4"],["3plus","≥3"],["rvol30","RVOL30"]].map(function (item) { return '<button type="button" class="quick-filter ' + (state.signal === item[0] ? 'active' : '') + '" data-filter="signal" data-value="' + esc(item[0]) + '" aria-pressed="' + (state.signal === item[0]) + '">' + esc(item[1]) + '</button>'; }).join('');
+    var quickSignals = [["","Toàn bộ"],["4of4","4/4"],["3plus","≥3"],["2plus","≥2"],["rvol30","RVOL30"]].map(function (item) { return '<button type="button" class="quick-filter ' + (state.signal === item[0] ? 'active' : '') + '" data-filter="signal" data-value="' + esc(item[0]) + '" aria-pressed="' + (state.signal === item[0]) + '">' + esc(item[1]) + '</button>'; }).join('');
     var tableRows = shown.map(function (r) {
       var company = companyDisplayName(r.symbol) || "Tên công ty đang cập nhật";
       return '<tr data-symbol="' + esc(r.symbol) + '"><td><div class="scanner-company">' + logoHtml(r.symbol, 'table-logo') + '<div><strong>' + esc(r.symbol) + '</strong><span title="' + esc(company) + '">' + esc(company) + '</span><small>' + esc(r.exchange) + '</small></div></div></td><td class="num"><strong>' + formatPrice(r.currentPrice) + '</strong></td><td class="num ' + metricClass(r.changePct) + '"><strong>' + pct(r.changePct) + '</strong></td><td class="num"><strong>' + shortVolume(r.cumVolume) + '</strong></td><td>' + signalRailHtml(r) + '</td></tr>';
     }).join('');
-    var results = shown.length ? '<div class="scanner-table-wrap"><table class="lovable-scanner-table"><colgroup><col class="col-identity"><col class="col-price"><col class="col-change"><col class="col-volume"><col class="col-ccc"></colgroup><thead><tr><th>Công ty</th><th class="num">Giá</th><th class="num">Thay đổi</th><th class="num">KL hiện tại</th><th>CCC</th></tr></thead><tbody>' + tableRows + '</tbody></table></div><div class="scanner-mobile-list">' + shown.map(scannerStockCard).join('') + '</div>' : '<div class="empty-state"><strong>Không có mã phù hợp trong phạm vi</strong><span>Thử đổi bộ lọc hoặc chọn Toàn bộ tín hiệu.</span></div>';
+    var results = shown.length ? '<div class="scanner-table-wrap"><table class="lovable-scanner-table"><colgroup><col class="col-identity"><col class="col-price"><col class="col-change"><col class="col-volume"><col class="col-ccc"></colgroup><thead><tr><th>Công ty</th><th class="num">Giá</th><th class="num">Thay đổi</th><th class="num">KL hiện tại</th><th>CCC</th></tr></thead><tbody>' + tableRows + '</tbody></table></div><div class="scanner-mobile-list">' + shown.map(overviewStockRowHtml).join('') + '</div>' : '<div class="empty-state"><strong>Không có mã phù hợp trong phạm vi</strong><span>Thử đổi bộ lọc hoặc chọn Toàn bộ tín hiệu.</span></div>';
     var lockedBlock = lockedCount ? '<section class="locked-remainder"><div class="locked-remainder-icon">' + iconSvg('lock') + '</div><div><span>NGOÀI PHẠM VI</span><strong>' + lockedCount + ' mã phù hợp đang được bảo vệ</strong><p>Scanner vẫn quét toàn thị trường. Danh tính và Signal Rail của nhóm này không được liệt kê.</p></div><div class="locked-actions">' + (remaining > 0 ? '<button type="button" class="secondary-action scanner-replace-trigger">Thay một mã</button>' : '') + '<button type="button" class="primary-action scanner-upgrade-trigger">Mở rộng phạm vi</button></div></section>' : '';
     var contextBody = '<dl class="rail-kv"><div><dt>Khớp bộ lọc</dt><dd>' + marketMatches.length + '</dd></div><div><dt>Trong phạm vi</dt><dd>' + visibleMatches.length + '</dd></div><div><dt>Ngoài phạm vi</dt><dd>' + lockedCount + '</dd></div><div><dt>Đang hiển thị</dt><dd>' + shown.length + '</dd></div></dl><p class="rail-note">' + iconSvg('shield') + '<span>Bộ lọc frontend không làm thay đổi scanner universe.</span></p>';
     var context = railCardHtml("Ngữ cảnh kết quả", state.scannerMode === "market" ? "Toàn thị trường" : "Watchlist", contextBody, "scanner-context-card");
@@ -914,12 +935,67 @@
     }
     main.appendChild(contentGrid);
   }
+  function enhanceHeaderShell() {
+    var header = app.querySelector(".app-header");
+    if (!header) return;
+    header.classList.toggle("scanner-route", state.route === "list");
+
+    var trust = document.getElementById("data-trust");
+    if (trust && !document.getElementById("header-now")) {
+      var now = document.createElement("span");
+      now.id = "header-now";
+      now.className = "header-now";
+      trust.insertBefore(now, trust.firstChild);
+      var sep = document.createElement("span");
+      sep.className = "trust-separator header-now-separator";
+      sep.setAttribute("aria-hidden", "true");
+      sep.textContent = "·";
+      trust.insertBefore(sep, now.nextSibling);
+    }
+
+    var countdownWrap = trust && trust.querySelector(".trust-countdown");
+    if (countdownWrap) countdownWrap.innerHTML = 'Làm mới sau <b id="countdown">—</b>';
+
+    if (!document.getElementById("mobile-status-row")) {
+      var statusRow = document.createElement("div");
+      statusRow.id = "mobile-status-row";
+      statusRow.className = "mobile-status-row";
+      statusRow.innerHTML =
+        '<div class="mobile-status-primary"><span class="mobile-market"><i class="trust-dot"></i><b id="mobile-market-status">Đang kiểm tra dữ liệu</b></span><span id="mobile-now" class="mobile-now">—</span></div>' +
+        '<div class="mobile-status-secondary"><span>Dữ liệu <b id="mobile-data-time">—</b></span><span>·</span><span>Làm mới <b id="mobile-countdown">—</b></span><span>·</span><span id="mobile-universe-count">— mã</span></div>';
+      var mobileSearch = header.querySelector(".mobile-search-row");
+      if (mobileSearch) header.insertBefore(statusRow, mobileSearch);
+      else header.appendChild(statusRow);
+    }
+
+    updateHeaderClockNow(Date.now());
+  }
+  function enhanceOverviewLayout() {
+    if (state.route !== "overview" || state.selected || state.accountOpen) return;
+    var main = app.querySelector("main.overview-main");
+    if (!main) return;
+    var rail = main.querySelector(".context-rail");
+    var pulse = main.querySelector(".market-pulse");
+    if (rail && pulse) {
+      pulse.classList.add("market-pulse-rail");
+      rail.insertBefore(pulse, rail.firstChild);
+    }
+    if (rail) {
+      var trustCard = rail.querySelector(".data-trust-card");
+      if (trustCard) trustCard.remove();
+      var legend = rail.querySelector(".signal-legend-card");
+      if (legend) legend.classList.add("signal-legend-compact");
+      rail.classList.add("overview-context-rail");
+    }
+  }
   function render() {
     var body = state.route === "list" ? listHtml() : state.route === "industry" ? industryHtml() : state.route === "fundamental" ? fundamentalHtml() : overviewHtml();
     if (state.selected) body = dialogHtml();
     if (state.accountOpen) body = accountDialogHtml();
     app.innerHTML = headerHtml() + body + scannerActionDialogHtml();
     applyPageShellLayout();
+    enhanceHeaderShell();
+    enhanceOverviewLayout();
     bind();
     updateClock();
   }
@@ -1146,7 +1222,7 @@
     return (n>=540&&n<696)||(n>=780&&n<906);
   }
   function setCountdownText(text, mode) {
-    [document.getElementById("countdown")].forEach(function(el){
+    [document.getElementById("countdown"), document.getElementById("mobile-countdown")].forEach(function(el){
       if(!el) return;
       el.textContent=text;
       el.classList.toggle("waiting", mode==="waiting");
@@ -1160,14 +1236,19 @@
     root.className = "data-trust " + trust.tone;
     var values = {
       "trust-status": trust.label,
-      "trust-time": trust.time,
+      "trust-time": "Dữ liệu " + trust.time,
       "trust-count": trust.count,
-      "trust-detail": trust.detail
+      "trust-detail": trust.detail,
+      "mobile-market-status": trust.label,
+      "mobile-data-time": trust.time,
+      "mobile-universe-count": trust.count
     };
     Object.keys(values).forEach(function (id) {
       var el = document.getElementById(id);
       if (el && el.textContent !== values[id]) el.textContent = values[id];
     });
+    var mobileRoot = document.getElementById("mobile-status-row");
+    if (mobileRoot) mobileRoot.className = "mobile-status-row " + trust.tone;
   }
   async function pollLatestVersion() {
     if(state.versionPolling || state.fetching) return;
@@ -1192,9 +1273,10 @@
   }
   function updateClock() {
     var now=Date.now();
+    updateHeaderClockNow(now);
     if(!inAutoRefreshWindow(now)){
       state.waitingForNewData=false;
-      setCountdownText("Ngoài giờ hoạt động","outside");
+      setCountdownText("—","outside");
       updateTrustBar();
       return;
     }
