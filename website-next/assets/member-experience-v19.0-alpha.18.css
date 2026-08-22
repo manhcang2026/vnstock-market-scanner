@@ -1,0 +1,102 @@
+/* CCC v19.0-alpha.18 — Overview + Scanner member experience */
+
+.ccc-anchor-flash{box-shadow:0 0 0 3px var(--focus-ring),var(--shadow-sm)!important;transition:box-shadow .2s ease}
+.ccc-ds-nav-link{cursor:pointer!important}
+
+/* Overview */
+.ccc-overview-reset{margin-left:8px;padding:4px 8px;border:1px solid var(--border-strong);border-radius:999px;background:var(--surface-2);color:var(--foreground);font:inherit;font-size:11.5px;font-weight:700;cursor:pointer}
+.ccc-overview-reset:hover{background:var(--surface-3)}
+.ccc-alpha18-pagination,.ccc-alpha18-mobile-more{display:flex;align-items:center;justify-content:center;gap:12px;padding:14px;border-top:1px solid var(--border)}
+.ccc-alpha18-pagination button,.ccc-alpha18-mobile-more button{min-height:36px;padding:0 12px;border:1px solid var(--border-strong);border-radius:var(--radius-md);background:var(--surface-2);color:var(--foreground);font-weight:700;cursor:pointer}
+.ccc-alpha18-pagination button:disabled{opacity:.45;cursor:not-allowed}
+.ccc-alpha18-pagination span,.ccc-alpha18-mobile-more span,.ccc-alpha18-page-summary{color:var(--muted-foreground);font-size:12px}
+.ccc-alpha18-page-summary{padding:12px;text-align:center;border-top:1px solid var(--border)}
+.ccc-alpha18-stock-row.is-clickable{cursor:pointer}
+.ccc-alpha18-stock-row.is-clickable:hover{background:var(--surface-2)}
+
+/* Scanner page */
+.ccc-alpha18-scanner-tabs{display:flex;gap:8px;margin:12px 0 16px;padding:4px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--surface-1);width:max-content;max-width:100%}
+.ccc-alpha18-scanner-tabs button{min-height:40px;padding:0 15px;border:1px solid transparent;border-radius:var(--radius-md);background:transparent;color:var(--muted-foreground);font-size:13px;font-weight:800;cursor:pointer}
+.ccc-alpha18-scanner-tabs button.active{border-color:var(--border-strong);background:var(--surface-3);color:var(--foreground);box-shadow:var(--shadow-sm)}
+.ccc-alpha18-quick{margin-bottom:12px}
+.ccc-alpha18-quick button{cursor:pointer}
+.ccc-alpha18-quick button.active{border-color:var(--ring)!important;box-shadow:0 0 0 2px var(--focus-ring)!important}
+.ccc-alpha18-filters{display:grid;grid-template-columns:minmax(250px,1.3fr) repeat(3,minmax(145px,.55fr));gap:10px;margin-bottom:14px;padding:14px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--surface-1)}
+.ccc-alpha18-filters label{display:grid;gap:6px;min-width:0}
+.ccc-alpha18-filters label>span{color:var(--muted-foreground);font-size:11px;font-weight:700}
+.ccc-alpha18-filters input,.ccc-alpha18-filters select{width:100%;height:40px;padding:0 10px;border:1px solid var(--input);border-radius:var(--radius-md);background:var(--surface-2);color:var(--foreground);font-size:13px;outline:0}
+.ccc-alpha18-filters input:focus,.ccc-alpha18-filters select:focus{border-color:var(--ring);box-shadow:0 0 0 3px var(--focus-ring)}
+.ccc-alpha18-scanner-results{overflow:hidden;border:1px solid var(--border);border-radius:var(--radius-xl);background:var(--surface-1)}
+.ccc-alpha18-scanner-results>.section-bar{border-bottom:1px solid var(--border)}
+.ccc-alpha18-scanner-list{min-width:0}
+.ccc-alpha18-scanner-results .overview-row-head,.ccc-alpha18-scanner-results .lovable-stock-row{margin-inline:0;border-radius:0;border-left:0;border-right:0}
+.ccc-alpha18-scanner-results .lovable-stock-row:last-child{border-bottom:0}
+
+.ccc-market-basic-head,.ccc-market-basic-row{display:grid;grid-template-columns:minmax(280px,1.5fr) minmax(95px,.5fr) minmax(105px,.55fr) minmax(135px,.72fr) minmax(105px,.55fr) minmax(105px,.55fr);gap:14px;align-items:center}
+.ccc-market-basic-head{padding:10px 16px;border-bottom:1px solid var(--border);background:var(--surface-2);color:var(--muted-foreground);font-size:11px;font-weight:800}
+.ccc-market-basic-row{min-height:70px;padding:11px 16px;border-bottom:1px solid var(--border)}
+.ccc-market-basic-row:last-child{border-bottom:0}
+.ccc-market-company{display:flex;align-items:center;gap:10px;min-width:0}
+.ccc-market-company>div{min-width:0}
+.ccc-market-company strong,.ccc-market-company span,.ccc-market-company small{display:block}
+.ccc-market-company strong{font-size:15px}
+.ccc-market-company span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--foreground);font-size:12.5px}
+.ccc-market-company small{margin-top:2px;color:var(--muted-foreground);font-size:10px}
+.ccc-market-metric{min-width:0}
+.ccc-market-metric small{display:none;color:var(--muted-foreground);font-size:10px}
+.ccc-market-metric strong{font-size:13px;font-variant-numeric:tabular-nums}
+.ccc-alpha18-watchlist-footer{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px;border-top:1px solid var(--border);background:var(--surface-2)}
+.ccc-alpha18-watchlist-footer>span{color:var(--muted-foreground);font-size:12px}
+.ccc-alpha18-watchlist-footer>div{display:flex;gap:8px}
+.ccc-alpha18-watchlist-footer a{display:inline-flex;align-items:center;min-height:36px;padding:0 11px;border:1px solid var(--border-strong);border-radius:var(--radius-md);background:var(--surface-1);color:var(--foreground);font-size:12px;font-weight:800;text-decoration:none}
+.ccc-alpha18-watchlist-footer a:last-child{border-color:var(--primary);background:var(--primary);color:var(--primary-foreground)}
+
+/* VIP dialog (kept from alpha.17 behavior) */
+.ccc-vip-backdrop{position:fixed;inset:0;z-index:2300;display:grid;place-items:center;padding:20px;background:oklch(0 0 0/.58);backdrop-filter:blur(4px)}
+.ccc-vip-dialog{position:relative;width:min(500px,100%);padding:24px;border:1px solid var(--border-strong);border-radius:var(--radius-xl);background:var(--elevated);box-shadow:0 24px 80px oklch(0 0 0/.35)}
+.ccc-vip-close{position:absolute;top:12px;right:12px;width:34px;height:34px;border:1px solid var(--border);border-radius:50%;background:var(--surface-2);color:var(--foreground);font-size:22px}
+.ccc-vip-kicker{display:block;color:var(--rvol);font-size:11px;font-weight:900;letter-spacing:.1em}
+.ccc-vip-dialog h2{margin:7px 42px 8px 0;font-size:22px}
+.ccc-vip-price{display:block;margin-bottom:14px;font-size:24px}.ccc-vip-price small{font-size:12px;color:var(--muted-foreground)}
+.ccc-vip-dialog ul{display:grid;gap:7px;padding-left:20px;font-size:13px;line-height:1.5}
+.ccc-vip-disabled{width:100%;min-height:42px;margin-top:14px;border:1px solid var(--border-strong);border-radius:var(--radius-md);background:var(--surface-2);color:var(--muted-foreground);font-weight:800}
+.ccc-vip-dialog>p{margin:10px 0 0;color:var(--muted-foreground);font-size:10px;line-height:1.5}
+
+@media(max-width:1100px) and (min-width:768px){
+  .ccc-alpha18-filters{grid-template-columns:minmax(220px,1fr) repeat(2,minmax(140px,.55fr))}
+  .ccc-alpha18-filters label:last-child{grid-column:auto}
+  .ccc-market-basic-head,.ccc-market-basic-row{grid-template-columns:minmax(220px,1.35fr) minmax(80px,.48fr) minmax(90px,.5fr) minmax(110px,.62fr) minmax(90px,.5fr)}
+  .ccc-market-basic-head span:last-child,.ccc-market-ma10{display:none}
+}
+
+@media(max-width:767px){
+  .ccc-alpha18-scanner-tabs{width:100%;display:grid;grid-template-columns:1fr 1fr}
+  .ccc-alpha18-scanner-tabs button{padding:0 8px;font-size:12px}
+  .ccc-alpha18-filters{grid-template-columns:1fr 1fr;gap:8px;padding:10px}
+  .ccc-alpha18-search{grid-column:1/-1}
+  .ccc-alpha18-filters input,.ccc-alpha18-filters select{height:42px;font-size:14px}
+  .ccc-alpha18-quick{display:grid!important;grid-template-columns:repeat(5,minmax(0,1fr))!important;gap:5px!important;overflow:visible!important}
+  .ccc-alpha18-quick button{min-width:0!important;padding:7px 4px!important}
+  .ccc-alpha18-quick button span{font-size:10px!important}.ccc-alpha18-quick button strong{font-size:14px!important}
+
+  .ccc-market-basic-head{display:none}
+  .ccc-market-basic-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;padding:12px;border-bottom:1px solid var(--border)}
+  .ccc-market-company{grid-column:1/-1;padding-bottom:8px;border-bottom:1px solid var(--border)}
+  .ccc-market-company span{font-size:12px}
+  .ccc-market-metric small{display:block}
+  .ccc-market-metric strong{display:block;margin-top:2px;font-size:13px}
+  .ccc-market-ma10{display:block}
+  .ccc-alpha18-watchlist-footer{align-items:stretch;flex-direction:column}
+  .ccc-alpha18-watchlist-footer>div{display:grid;grid-template-columns:1fr 1fr}
+  .ccc-alpha18-watchlist-footer a{justify-content:center;text-align:center}
+  .ccc-alpha18-pagination{display:none}
+  .ccc-alpha18-mobile-more{flex-direction:column;gap:8px}
+  .ccc-overview-reset{display:block;margin:7px 0 0}
+}
+
+@media(max-width:390px){
+  .ccc-alpha18-filters{grid-template-columns:1fr}
+  .ccc-alpha18-search{grid-column:auto}
+  .ccc-alpha18-quick{grid-template-columns:repeat(3,minmax(0,1fr))!important}
+  .ccc-market-basic-row{grid-template-columns:1fr 1fr}
+}
