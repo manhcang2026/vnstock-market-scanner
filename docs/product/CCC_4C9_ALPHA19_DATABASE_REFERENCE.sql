@@ -1,0 +1,4 @@
+-- Reference only. Migration already applied.
+-- get_market_basic_page(...) is authenticated-only and returns only basic market fields.
+-- Authenticated direct SELECT on stock_snapshot remains disabled.
+-- get_my_overview_state() now returns selected_watchlist_count and six fixed sample_rows.
