@@ -1,0 +1,134 @@
+-- CCC 4C-4 / 4C-5 database source-of-record
+-- Supabase project: vnstock-scanner
+-- Applied migrations:
+--   20260822072337_harden_auth_membership_foundation
+--   20260822072819_create_watchlist_membership_foundation
+--   add_watchlist_fk_indexes
+--
+-- IMPORTANT:
+-- These migrations have ALREADY BEEN APPLIED to Supabase.
+-- This file is kept in Git for documentation/reference. Do not execute it
+-- blindly against production a second time.
+
+-- ---------------------------------------------------------------------------
+-- Business-critical plan configuration
+-- ---------------------------------------------------------------------------
+-- FREE is the exception:
+--   watchlist_limit = 10
+--   change_limit    = 3
+--
+-- Paid capped plans:
+--   watchlist_limit = N
+--   change_limit    = N
+--
+-- FULL:
+--   watchlist_limit = NULL
+--   change_limit    = NULL
+--   full_market_access = TRUE
+
+-- ---------------------------------------------------------------------------
+-- Security hardening applied
+-- ---------------------------------------------------------------------------
+-- public.handle_new_user():
+--   SECURITY DEFINER trigger helper
+--   EXECUTE revoked from PUBLIC / anon / authenticated
+--
+-- public.save_my_profile(...):
+--   callable by authenticated only
+--   acting user is always auth.uid()
+--
+-- profiles_select_own:
+--   USING ((select auth.uid()) = id)
+--
+-- subscriptions_select_own:
+--   USING ((select auth.uid()) = user_id)
+
+-- ---------------------------------------------------------------------------
+-- Subscription lifecycle fields added
+-- ---------------------------------------------------------------------------
+-- plan_started_at                    timestamptz
+-- anchor_day                         smallint 1..31
+-- quota_cycle_index                  integer >= 0
+-- setup_window_end                   timestamptz
+-- entitlement_end_at                 timestamptz
+-- grace_started_at                   timestamptz
+-- grace_end_at                       timestamptz
+-- upgrade_free_additions_end_at      timestamptz
+-- upgrade_free_peak_count            integer >= 0
+--
+-- GRACE added as a valid subscription status.
+
+-- ---------------------------------------------------------------------------
+-- Tables created
+-- ---------------------------------------------------------------------------
+-- public.user_watchlist
+--   user_id uuid -> auth.users
+--   symbol text -> public.stock_metadata(symbol)
+--   added_at timestamptz
+--   add_source text
+--   added_under_subscription_id uuid -> public.subscriptions
+--   PK(user_id, symbol)
+--
+-- public.watchlist_change_log
+--   id bigint identity
+--   user_id uuid
+--   subscription_id uuid
+--   plan_id smallint
+--   symbol text
+--   action ADD|REMOVE
+--   quota_cost smallint
+--   source text
+--   created_at timestamptz
+--
+-- RLS is enabled on both tables.
+-- authenticated users can SELECT only their own rows.
+-- direct browser INSERT/UPDATE/DELETE is revoked.
+
+-- ---------------------------------------------------------------------------
+-- RPC / helper functions created
+-- ---------------------------------------------------------------------------
+-- public.ccc_plan_cycle_boundary(...)
+--   internal helper, not executable by browser roles
+--   Asia/Ho_Chi_Minh calendar logic
+--   day-31 rule verified:
+--     31/01 -> 01/03 -> 31/03 -> 01/05
+--
+-- public.ccc_resolve_membership(user_id)
+--   internal helper, not executable by browser roles
+--   resets quota only, never monthly Watchlist
+--   handles setup expiry, upgrade free window, GRACE, downgrade to FREE
+--
+-- public.get_my_watchlist_state()
+--   authenticated RPC
+--   identity from auth.uid()
+--
+-- public.replace_my_watchlist(text[])
+--   authenticated atomic RPC
+--   identity from auth.uid()
+--   REMOVE costs 0
+--   ADD costs quota after free windows
+--   rejects whole request if capacity/quota is exceeded
+
+-- ---------------------------------------------------------------------------
+-- New-user FREE behavior
+-- ---------------------------------------------------------------------------
+-- New account receives FREE:
+--   capacity 10
+--   setup window 7 days
+--   change quota 3 per monthly quota cycle
+--   Watchlist persists; only quota resets monthly
+
+-- ---------------------------------------------------------------------------
+-- Performance indexes applied
+-- ---------------------------------------------------------------------------
+-- subscriptions_plan_id_idx
+-- subscriptions_created_by_idx
+-- user_watchlist_user_added_idx
+-- watchlist_change_log_user_created_idx
+-- watchlist_change_log_subscription_idx
+-- user_watchlist_subscription_idx
+-- user_watchlist_symbol_idx
+-- watchlist_change_log_plan_idx
+
+-- For the complete locked business behavior, read:
+-- docs/product/CCC_WATCHLIST_MEMBERSHIP_RULES.md
