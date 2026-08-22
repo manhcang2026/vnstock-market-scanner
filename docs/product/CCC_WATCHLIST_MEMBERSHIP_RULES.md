@@ -914,3 +914,30 @@ Khi business rule thay đổi:
 2. ghi version/date;
 3. sau đó mới sửa database/backend/frontend tương ứng.
 
+
+---
+
+## 33. VIP Day — temporary entitlement overlay (v1.1 addendum, 2026-08-22)
+
+VIP Day có giá **100.000đ / 24 giờ** và cấp quyền FULL tạm thời.
+
+VIP Day không phải subscription nền và không được:
+
+- thay `plan_id` hiện tại;
+- thay Plan Anchor Date;
+- reset `change_used`;
+- tạo setup window mới;
+- xóa hoặc thay DS mã theo dõi nền;
+- thay ngày hết hạn gói nền.
+
+Trong thời gian VIP Day hoạt động, effective technical entitlement = FULL.
+
+Hết 24 giờ, user trở lại đúng subscription, DS mã, quota và chu kỳ đã có trước VIP.
+
+Ví dụ:
+
+`FREE + DS 10 mã -> VIP Day 24h -> FREE + đúng DS 10 mã cũ`
+
+`PLUS + DS 50 mã -> VIP Day 24h -> PLUS + đúng DS 50 mã cũ`
+
+VIP Day không thay đổi các quy tắc Watchlist ở các mục phía trên; nó chỉ tạm thời mở rộng **quyền xem**.
