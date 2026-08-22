@@ -1,0 +1,563 @@
+body.ccc-auth-open{overflow:hidden}
+#ccc-auth-root{position:relative;z-index:1200}
+#ccc-account-page-root{display:none}
+body.ccc-account-route #ccc-account-page-root{display:block}
+body.ccc-account-route #app main.wrap{display:none!important}
+
+.ccc-auth-overlay{position:fixed;inset:0;display:grid;place-items:center;padding:24px;background:oklch(0 0 0 / .58);backdrop-filter:blur(4px)}
+.ccc-auth-dialog{width:min(500px,100%);max-height:min(820px,calc(100dvh - 48px));overflow:auto;border:1px solid var(--border-strong);border-radius:var(--radius-xl);background:var(--elevated);color:var(--foreground);box-shadow:0 24px 80px oklch(0 0 0 / .32)}
+.ccc-auth-head{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;padding:24px 24px 18px;border-bottom:1px solid var(--border)}
+.ccc-auth-head h2{margin:4px 0 6px;font-size:22px;line-height:1.2;letter-spacing:-.02em}
+.ccc-auth-head p{margin:0;color:var(--muted-foreground);font-size:13px;line-height:1.55}
+.ccc-auth-close{width:36px;height:36px;display:grid;flex:none;place-items:center;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface-2);color:var(--foreground);font-size:24px;line-height:1}
+.ccc-auth-close:hover{background:var(--surface-3)}
+.ccc-auth-body{padding:24px}
+.ccc-auth-feedback{margin:18px 24px 0;padding:11px 12px;border:1px solid var(--border);border-radius:var(--radius-md);font-size:13px;line-height:1.5}
+.ccc-auth-feedback.embedded{margin:0}
+.ccc-auth-feedback.error{border-color:var(--negative);background:var(--negative-bg);color:var(--negative)}
+.ccc-auth-feedback.success{border-color:var(--positive);background:var(--positive-bg);color:var(--positive)}
+.ccc-auth-google,.ccc-auth-button{width:100%;min-height:44px;border-radius:var(--radius-md);font-weight:700}
+.ccc-auth-google{display:flex;align-items:center;justify-content:center;gap:10px;border:1px solid var(--border-strong);background:var(--surface-1);color:var(--foreground)}
+.ccc-auth-google:hover:not(:disabled){background:var(--surface-2)}
+.ccc-auth-google-mark{display:grid;width:24px;height:24px;place-items:center;border:1px solid var(--border-strong);border-radius:50%;background:var(--surface-2);font-size:13px;font-weight:800}
+.ccc-auth-divider{display:flex;align-items:center;gap:12px;margin:20px 0;color:var(--muted-foreground);font-size:11px}
+.ccc-auth-divider::before,.ccc-auth-divider::after{height:1px;flex:1;background:var(--border);content:""}
+.ccc-auth-divider span{white-space:nowrap}
+.ccc-auth-form{display:grid;gap:8px}
+.ccc-auth-form label{margin-top:4px;font-size:12px;font-weight:700}
+.ccc-auth-form input{width:100%;height:44px;padding:0 12px;border:1px solid var(--input);border-radius:var(--radius-md);background:var(--surface-2);color:var(--foreground);font-size:14px;outline:0}
+.ccc-auth-form input::placeholder{color:var(--muted-foreground)}
+.ccc-auth-form input:focus{border-color:var(--ring);box-shadow:0 0 0 3px var(--focus-ring)}
+.ccc-auth-button{display:flex;align-items:center;justify-content:center;margin-top:10px;border:1px solid transparent;padding:0 16px;text-decoration:none}
+.ccc-auth-button.primary{background:var(--primary);color:var(--primary-foreground)}
+.ccc-auth-button.primary:hover:not(:disabled){filter:brightness(1.05)}
+.ccc-auth-button.secondary{border-color:var(--border-strong);background:var(--surface-2);color:var(--foreground)}
+.ccc-auth-button.secondary:hover:not(:disabled){background:var(--surface-3)}
+.ccc-auth-button.danger{border-color:var(--negative);color:var(--negative)}
+.ccc-auth-stage-note{margin:18px 0 0;color:var(--muted-foreground);font-size:11px;line-height:1.55}
+.ccc-auth-account{display:grid;gap:16px}
+.ccc-auth-user-row{display:flex;align-items:center;gap:12px;padding:14px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--surface-1)}
+.ccc-auth-user-avatar{display:grid;width:42px;height:42px;flex:none;place-items:center;border-radius:50%;background:var(--primary);color:var(--primary-foreground);font-size:16px;font-weight:800}
+.ccc-auth-user-row strong,.ccc-auth-user-row p{display:block;margin:0;overflow-wrap:anywhere}
+.ccc-auth-user-row strong{font-size:14px}.ccc-auth-user-row p{margin-top:3px;color:var(--muted-foreground);font-size:12px}
+.ccc-auth-membership{display:grid;gap:12px;padding:14px;border:1px solid var(--border-strong);border-radius:var(--radius-lg);background:var(--surface-1)}
+.ccc-auth-plan-head{display:flex;align-items:center;justify-content:space-between;gap:16px}
+.ccc-auth-plan-head>div span{display:block;color:var(--muted-foreground);font-size:10px;font-weight:600}
+.ccc-auth-plan-head>div strong{display:block;margin-top:3px;font-size:18px;line-height:1.2}
+.ccc-auth-plan-code{display:inline-flex;align-items:center;min-height:26px;padding:0 9px;border:1px solid var(--border-strong);border-radius:999px;background:var(--surface-2);font-size:10px;font-weight:800;letter-spacing:.06em}
+.ccc-auth-membership-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:0}
+.ccc-auth-membership-grid>div{padding:10px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface-2)}
+.ccc-auth-membership-grid dt{color:var(--muted-foreground);font-size:10px;font-weight:600;line-height:1.35}
+.ccc-auth-membership-grid dd{margin:5px 0 0;font-size:12px;font-weight:700;line-height:1.35}
+.ccc-auth-membership-loading{display:flex;align-items:center;gap:12px;padding:14px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--surface-1)}
+.ccc-auth-membership-loading strong,.ccc-auth-membership-loading p{display:block;margin:0}
+.ccc-auth-membership-loading strong{font-size:12px}.ccc-auth-membership-loading p{margin-top:3px;color:var(--muted-foreground);font-size:10px}
+.ccc-auth-spinner{width:20px;height:20px;flex:none;border:2px solid var(--border-strong);border-top-color:var(--foreground);border-radius:50%;animation:ccc-auth-spin .7s linear infinite}
+@keyframes ccc-auth-spin{to{transform:rotate(360deg)}}
+
+/* Real account route */
+.ccc-account-page{display:grid;align-content:start;gap:20px}
+.ccc-account-heading{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;min-height:78px}
+.ccc-account-heading h1{margin:4px 0 4px;font-size:26px;line-height:1.15;letter-spacing:-.025em}
+.ccc-account-heading p{margin:0;color:var(--muted-foreground);font-size:13px}
+.ccc-account-identity{display:flex;align-items:center;gap:10px;min-width:0;padding:9px 12px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--surface-1)}
+.ccc-account-avatar{display:grid;width:38px;height:38px;flex:none;place-items:center;border-radius:50%;background:var(--primary);color:var(--primary-foreground);font-weight:800}
+.ccc-account-identity div{min-width:0}.ccc-account-identity strong,.ccc-account-identity span{display:block;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ccc-account-identity strong{font-size:13px}.ccc-account-identity span{margin-top:2px;color:var(--muted-foreground);font-size:11px}
+.ccc-account-layout{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:20px;align-items:start}
+.ccc-account-main,.ccc-account-side{display:grid;gap:20px;min-width:0}
+.ccc-account-card{padding:20px;border:1px solid var(--border);border-radius:var(--radius-xl);background:var(--surface-1);box-shadow:var(--shadow-sm)}
+.ccc-account-card.setup-required{border-color:var(--warning)}
+.ccc-account-card.compact{padding:18px}
+.ccc-account-card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px}
+.ccc-account-card-head h2{margin:3px 0 4px;font-size:18px;line-height:1.2}
+.ccc-account-card-head p{margin:0;color:var(--muted-foreground);font-size:12px;line-height:1.5}
+.ccc-account-kicker{display:block;color:var(--muted-foreground);font-size:10px;font-weight:800;letter-spacing:.08em}
+.ccc-account-status,.ccc-account-plan-badge{display:inline-flex;align-items:center;min-height:26px;flex:none;padding:0 9px;border:1px solid var(--border-strong);border-radius:999px;background:var(--surface-2);font-size:10px;font-weight:800}
+.ccc-account-status.ok{border-color:var(--positive);color:var(--positive)}
+.ccc-account-status.pending{border-color:var(--warning);color:var(--warning)}
+.ccc-account-plan-badge{letter-spacing:.06em}
+.ccc-account-form-message{margin:14px 0 0;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-md);font-size:12px}
+.ccc-account-form-message.error{border-color:var(--negative);background:var(--negative-bg);color:var(--negative)}
+.ccc-account-form-message.success{border-color:var(--positive);background:var(--positive-bg);color:var(--positive)}
+.ccc-account-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:18px}
+.ccc-account-field{display:grid;gap:6px;min-width:0}
+.ccc-account-field.full{grid-column:1/-1}
+.ccc-account-field label{font-size:12px;font-weight:700}.ccc-account-field label b{color:var(--negative)}.ccc-account-field label span{color:var(--muted-foreground);font-size:10px;font-weight:500}
+.ccc-account-field input,.ccc-account-field textarea{width:100%;border:1px solid var(--input);border-radius:var(--radius-md);background:var(--surface-2);color:var(--foreground);outline:0}
+.ccc-account-field input{height:42px;padding:0 11px}.ccc-account-field textarea{padding:10px 11px;resize:vertical;line-height:1.5}
+.ccc-account-field input[readonly]{color:var(--muted-foreground);cursor:not-allowed}
+.ccc-account-field input:focus:not([readonly]),.ccc-account-field textarea:focus{border-color:var(--ring);box-shadow:0 0 0 3px var(--focus-ring)}
+.ccc-account-field small{color:var(--muted-foreground);font-size:10px}
+.ccc-account-form-actions{grid-column:1/-1;display:flex;justify-content:flex-end}
+.ccc-account-primary,.ccc-account-secondary{min-height:42px;padding:0 16px;border-radius:var(--radius-md);font-weight:700}
+.ccc-account-primary{border:1px solid var(--primary);background:var(--primary);color:var(--primary-foreground)}
+.ccc-account-secondary{width:100%;margin-top:14px;border:1px solid var(--border-strong);background:var(--surface-2);color:var(--foreground)}
+.ccc-account-secondary.danger{border-color:var(--negative);color:var(--negative)}
+.ccc-account-metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:18px}
+.ccc-account-metrics>div{padding:12px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface-2)}
+.ccc-account-metrics span,.ccc-account-metrics strong{display:block}.ccc-account-metrics span{color:var(--muted-foreground);font-size:10px}.ccc-account-metrics strong{margin-top:4px;font-size:13px}
+.ccc-account-cycle{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)}
+.ccc-account-cycle span{color:var(--muted-foreground);font-size:10px}.ccc-account-cycle strong{font-size:11px}
+.ccc-account-placeholder{margin-top:14px;padding:14px;border:1px dashed var(--border-strong);border-radius:var(--radius-md);color:var(--muted-foreground);font-size:11px;text-align:center}
+.ccc-account-security-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--border);font-size:11px}
+.ccc-account-security-row span{color:var(--muted-foreground)}.ccc-account-security-row strong{font-size:11px}
+.ccc-account-loading,.ccc-account-empty{display:grid;max-width:560px;min-height:280px;place-items:center;align-content:center;gap:10px;margin:40px auto;padding:32px;border:1px solid var(--border);border-radius:var(--radius-xl);background:var(--surface-1);text-align:center}
+.ccc-account-loading{grid-template-columns:auto 1fr;place-items:center start;text-align:left}
+.ccc-account-loading strong,.ccc-account-loading p{display:block;margin:0}.ccc-account-loading p{margin-top:4px;color:var(--muted-foreground);font-size:11px}
+.ccc-account-empty-icon{display:grid;width:54px;height:54px;place-items:center;border-radius:50%;background:var(--primary);color:var(--primary-foreground);font-size:18px;font-weight:800}
+.ccc-account-empty h2{margin:4px 0 0;font-size:20px}.ccc-account-empty p{max-width:400px;margin:0;color:var(--muted-foreground);font-size:12px}
+
+@media (max-width:1023px){
+  .ccc-account-layout{grid-template-columns:1fr}
+  .ccc-account-side{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:767px){
+  .ccc-auth-overlay{align-items:end;padding:0;background:oklch(0 0 0 / .52)}
+  .ccc-auth-dialog{width:100%;max-height:92dvh;border-right:0;border-bottom:0;border-left:0;border-radius:var(--radius-xl) var(--radius-xl) 0 0;padding-bottom:env(safe-area-inset-bottom)}
+  .ccc-auth-head{padding:20px 18px 16px}.ccc-auth-body{padding:20px 18px}.ccc-auth-feedback{margin:16px 18px 0}.ccc-auth-feedback.embedded{margin:0}
+  .ccc-auth-head h2{font-size:20px}.ccc-auth-form input{font-size:16px}
+  .ccc-account-page{padding-top:18px}
+  .ccc-account-heading{align-items:flex-start;flex-direction:column;gap:12px}
+  .ccc-account-heading h1{font-size:23px}
+  .ccc-account-identity{width:100%}
+  .ccc-account-identity strong,.ccc-account-identity span{max-width:calc(100vw - 120px)}
+  .ccc-account-card{padding:16px}
+  .ccc-account-card-head{align-items:flex-start}
+  .ccc-account-form{grid-template-columns:1fr;gap:14px}
+  .ccc-account-field.full,.ccc-account-form-actions{grid-column:auto}
+  .ccc-account-form-actions{justify-content:stretch}.ccc-account-primary{width:100%}
+  .ccc-account-side{grid-template-columns:1fr}
+}
+@media (max-width:390px){
+  .ccc-auth-membership-grid,.ccc-account-metrics{grid-template-columns:1fr}
+  .ccc-account-cycle{align-items:flex-start;flex-direction:column;gap:3px}
+}
+@media (prefers-reduced-motion:no-preference){.ccc-auth-dialog{animation:ccc-auth-in .16s ease-out}@keyframes ccc-auth-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}}
+
+body.ccc-real-membership .mock-plan-control{display:none!important}
+body.ccc-real-membership #mock-plan-select{display:none!important}
+.ccc-real-plan-chip{display:inline-flex;align-items:center;min-height:28px;padding:0 10px;border:1px solid var(--border-strong);border-radius:999px;background:var(--surface-2);color:var(--foreground);font-size:10px;font-weight:800;letter-spacing:.03em;white-space:nowrap}
+
+/* 4C-3.1: membership lives in Account, not market sidebars */
+body.ccc-real-membership .plan-scope-card{display:none!important}
+body.ccc-real-membership .page-heading-meta label:has(#mock-plan-select){display:none!important}
+
+/* Account plan explorer */
+.ccc-plan-explorer{margin-top:18px;padding-top:18px;border-top:1px solid var(--border)}
+.ccc-plan-explorer-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px}
+.ccc-plan-explorer-head h3{margin:3px 0 0;font-size:15px}
+.ccc-plan-explorer-head>span{color:var(--muted-foreground);font-size:10px}
+.ccc-plan-choices{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin-top:14px}
+.ccc-plan-choice{display:grid;gap:4px;min-width:0;padding:10px 9px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface-2);color:var(--foreground);text-align:left}
+.ccc-plan-choice:hover{border-color:var(--border-strong);background:var(--surface-3)}
+.ccc-plan-choice.active{border-color:var(--ring);box-shadow:0 0 0 2px var(--focus-ring)}
+.ccc-plan-choice.current{background:var(--surface-1)}
+.ccc-plan-choice span{font-size:11px;font-weight:800}
+.ccc-plan-choice strong{overflow:hidden;text-overflow:ellipsis;font-size:10px;white-space:nowrap}
+.ccc-plan-choice small{color:var(--muted-foreground);font-size:9px}
+.ccc-plan-preview{margin-top:10px;padding:14px;border:1px solid var(--border-strong);border-radius:var(--radius-lg);background:var(--surface-2)}
+.ccc-plan-preview-main{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.ccc-plan-preview-main>div span,.ccc-plan-preview-main>div strong,.ccc-plan-preview-main>div small{display:block}
+.ccc-plan-preview-main>div span{color:var(--muted-foreground);font-size:10px}
+.ccc-plan-preview-main>div strong{margin-top:2px;font-size:17px}
+.ccc-plan-preview-main>div small{margin-top:3px;font-size:12px;font-weight:700}
+.ccc-plan-preview-main em{padding:4px 8px;border:1px solid var(--positive);border-radius:999px;color:var(--positive);font-size:9px;font-style:normal;font-weight:800}
+.ccc-plan-preview-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:12px 0 0}
+.ccc-plan-preview-grid>div{padding:9px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface-1)}
+.ccc-plan-preview-grid dt{color:var(--muted-foreground);font-size:9px}
+.ccc-plan-preview-grid dd{margin:4px 0 0;font-size:11px;font-weight:700}
+.ccc-plan-register{width:100%;min-height:40px;margin-top:12px;border:1px solid var(--primary);border-radius:var(--radius-md);background:var(--primary);color:var(--primary-foreground);font-weight:800}
+.ccc-plan-register.current{border-color:var(--border-strong);background:var(--surface-1);color:var(--foreground)}
+.ccc-plan-register:disabled{opacity:.72;cursor:not-allowed}
+.ccc-plan-register-note{margin:6px 0 0;color:var(--muted-foreground);font-size:9px;text-align:center}
+
+@media (max-width:900px){
+  .ccc-plan-choices{display:flex;overflow-x:auto;padding-bottom:4px;scrollbar-width:thin}
+  .ccc-plan-choice{min-width:120px}
+}
+@media (max-width:520px){
+  .ccc-plan-explorer-head{align-items:flex-start;flex-direction:column;gap:4px}
+  .ccc-plan-preview-grid{grid-template-columns:1fr}
+}
+
+
+/* ================================================================
+   4C-3.2 — readability, header, signal naming, account SPA polish
+   ================================================================ */
+
+html{font-size:16px}
+body.ccc-ui-polish{font-size:15px;line-height:1.5}
+
+/* Global readable type floor */
+body.ccc-ui-polish .nav-label,
+body.ccc-ui-polish .shell-nav-link{font-size:15px}
+body.ccc-ui-polish .shell-nav-link small{font-size:12.5px}
+body.ccc-ui-polish .page-heading h1,
+body.ccc-ui-polish .page-intro h1{font-size:30px;line-height:1.15}
+body.ccc-ui-polish .page-heading p,
+body.ccc-ui-polish .page-intro p{font-size:15px;line-height:1.55}
+body.ccc-ui-polish .eyebrow{font-size:12.5px}
+body.ccc-ui-polish .section-bar h2{font-size:18px}
+body.ccc-ui-polish .section-bar span,
+body.ccc-ui-polish .section-bar small{font-size:13px}
+body.ccc-ui-polish .filter-label{font-size:14px}
+body.ccc-ui-polish .filter-help,
+body.ccc-ui-polish .result-info,
+body.ccc-ui-polish .disclaimer{font-size:13px}
+
+/* Header: keep the useful status, data time and refresh cadence */
+body.ccc-ui-polish #trust-count,
+body.ccc-ui-polish .trust-count,
+body.ccc-ui-polish .trust-detail,
+body.ccc-ui-polish .trust-source,
+body.ccc-ui-polish .trust-countdown,
+body.ccc-ui-polish #mobile-universe-count{display:none!important}
+body.ccc-ui-polish .data-trust{gap:8px}
+body.ccc-ui-polish .trust-primary strong,
+body.ccc-ui-polish .trust-item,
+body.ccc-ui-polish .ccc-refresh-indicator{font-size:12.5px}
+body.ccc-ui-polish .ccc-refresh-indicator{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+body.ccc-ui-polish .ccc-refresh-indicator b{font-variant-numeric:tabular-nums;font-size:12.5px}
+body.ccc-ui-polish .ccc-mobile-refresh-indicator{white-space:nowrap}
+body.ccc-ui-polish .ccc-mobile-refresh-indicator b{font-variant-numeric:tabular-nums}
+body.ccc-ui-polish .mobile-status-secondary{font-size:12.5px}
+
+/* Remove source branding from visible Market Pulse cards; metadata stays in backend */
+body.ccc-ui-polish .market-live-source,
+body.ccc-ui-polish .market-tile footer{display:none!important}
+body.ccc-ui-polish .market-tile header strong{font-size:15px}
+body.ccc-ui-polish .market-live-price{font-size:27px}
+body.ccc-ui-polish .market-live-change{font-size:14px}
+body.ccc-ui-polish .market-live-meta{font-size:12.5px}
+
+/* Overview readability */
+body.ccc-ui-polish .density-tile>span{font-size:14px}
+body.ccc-ui-polish .density-tile>strong{font-size:28px}
+body.ccc-ui-polish .density-tile em,
+body.ccc-ui-polish .density-tile b{font-size:12.5px}
+body.ccc-ui-polish .overview-row-head{font-size:12.5px}
+body.ccc-ui-polish .overview-stock-row{font-size:14px}
+body.ccc-ui-polish .overview-stock-row .overview-symbol,
+body.ccc-ui-polish .overview-stock-row .stock-symbol{font-size:16px}
+body.ccc-ui-polish .reason-list span{font-size:13px}
+body.ccc-ui-polish .ccc-rail b{font-size:13px}
+
+/* Signal legend markers should look like the square CCC segments */
+body.ccc-ui-polish .signal-legend .ccc-segment{
+  width:12px!important;
+  min-width:12px!important;
+  height:12px!important;
+  border-radius:3px!important;
+  flex:0 0 12px!important;
+}
+body.ccc-ui-polish .signal-legend dt{font-size:13.5px}
+body.ccc-ui-polish .signal-legend dd{font-size:12.5px}
+body.ccc-ui-polish .signal-state-list b{font-size:13.5px}
+body.ccc-ui-polish .signal-state-list span{font-size:12.5px}
+
+/* Scanner readability. Keep Total / In scope / Locked result stats untouched. */
+body.ccc-ui-polish .scanner-stock-card{font-size:14px}
+body.ccc-ui-polish .scanner-stock-card header strong{font-size:16px}
+body.ccc-ui-polish .scanner-card-quote small{font-size:12.5px}
+body.ccc-ui-polish .scanner-card-quote strong{font-size:16px}
+body.ccc-ui-polish .scanner-head-stats small,
+body.ccc-ui-polish .capacity-values small{font-size:12.5px}
+body.ccc-ui-polish .scanner-head-stats strong,
+body.ccc-ui-polish .capacity-values strong{font-size:15px}
+
+/* Account: much closer to Lovable's comfortable density */
+body.ccc-account-route .ccc-account-page{font-size:15px}
+body.ccc-account-route .ccc-account-heading h1{font-size:30px}
+body.ccc-account-route .ccc-account-heading p{font-size:15px}
+body.ccc-account-route .ccc-account-identity strong{font-size:15px}
+body.ccc-account-route .ccc-account-identity span{font-size:13px}
+body.ccc-account-route .ccc-account-kicker{font-size:12.5px}
+body.ccc-account-route .ccc-account-card-head h2{font-size:20px;line-height:1.25}
+body.ccc-account-route .ccc-account-card-head p{font-size:14px;line-height:1.5}
+body.ccc-account-route .ccc-account-form label>span{font-size:13px}
+body.ccc-account-route .ccc-account-form input,
+body.ccc-account-route .ccc-account-form textarea{font-size:15px}
+body.ccc-account-route .ccc-account-metrics span,
+body.ccc-account-route .ccc-account-cycle span,
+body.ccc-account-route .ccc-account-security-row span{font-size:13px}
+body.ccc-account-route .ccc-account-metrics strong,
+body.ccc-account-route .ccc-account-cycle strong,
+body.ccc-account-route .ccc-account-security-row strong{font-size:15px}
+body.ccc-account-route .ccc-plan-explorer-head h3{font-size:18px}
+body.ccc-account-route .ccc-plan-explorer-head>span{font-size:12.5px}
+body.ccc-account-route .ccc-plan-choice{min-height:82px;padding:12px 11px}
+body.ccc-account-route .ccc-plan-choice span{font-size:13px}
+body.ccc-account-route .ccc-plan-choice strong{font-size:12.5px}
+body.ccc-account-route .ccc-plan-choice small{font-size:11.5px}
+body.ccc-account-route .ccc-plan-preview-main>div span{font-size:12.5px}
+body.ccc-account-route .ccc-plan-preview-main>div strong{font-size:20px}
+body.ccc-account-route .ccc-plan-preview-main>div small{font-size:14px}
+body.ccc-account-route .ccc-plan-preview-grid dt{font-size:12px}
+body.ccc-account-route .ccc-plan-preview-grid dd{font-size:14px}
+body.ccc-account-route .ccc-plan-register{font-size:14px}
+body.ccc-account-route .ccc-plan-register-note,
+body.ccc-account-route .ccc-account-placeholder{font-size:12.5px}
+
+/* The old shell trust countdown exists but 4C-3.2 owns the new 5-minute timer */
+body.ccc-ui-polish .ccc-refresh-separator{display:inline}
+
+/* Compact responsive type without falling back to 9–10px */
+@media (max-width:767px){
+  body.ccc-ui-polish{font-size:14px}
+  body.ccc-ui-polish .page-heading h1,
+  body.ccc-ui-polish .page-intro h1,
+  body.ccc-account-route .ccc-account-heading h1{font-size:26px}
+  body.ccc-ui-polish .section-bar h2{font-size:17px}
+  body.ccc-ui-polish .market-live-price{font-size:24px}
+  body.ccc-account-route .ccc-account-card-head h2{font-size:18px}
+  body.ccc-account-route .ccc-plan-choice{min-width:132px}
+}
+
+/* Avoid showing an empty heading meta column after Scanner · 800 mã is removed */
+body.ccc-ui-polish .page-heading-meta:empty{display:none!important}
+
+
+/* ================================================================
+   4C-3.3 — final Auth / Overview UI polish
+   ================================================================ */
+
+/* Hide staging plan selector from users but keep it in DOM for plan sync. */
+body.ccc-ui-polish #mock-plan-select,
+body.ccc-ui-polish .mock-plan-control,
+body.ccc-ui-polish .page-heading-meta label:has(#mock-plan-select){
+  position:absolute!important;
+  width:1px!important;
+  height:1px!important;
+  margin:-1px!important;
+  padding:0!important;
+  overflow:hidden!important;
+  clip:rect(0,0,0,0)!important;
+  white-space:nowrap!important;
+  border:0!important;
+}
+body.ccc-ui-polish:not(.ccc-real-membership) .page-heading-meta{
+  display:none!important;
+}
+
+/* Keep website header visible throughout the Account route. */
+body.ccc-account-route .app-header{
+  position:fixed!important;
+  inset:0 0 auto 0!important;
+  z-index:1500!important;
+}
+body.ccc-account-route #ccc-account-page-root{
+  padding-top:var(--ccc-sticky-header-height,var(--header-height));
+}
+
+/* Account compaction */
+body.ccc-account-route .ccc-account-heading{margin-top:0}
+body.ccc-account-route .ccc-account-heading h1{margin-top:0}
+body.ccc-account-route .ccc-current-plan-head{align-items:center}
+body.ccc-account-route .ccc-current-plan-head h2{margin-bottom:0}
+body.ccc-account-route .ccc-current-plan-strip{
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:10px;
+  margin-top:14px;
+}
+body.ccc-account-route .ccc-current-plan-strip>div{
+  min-width:0;
+  padding:12px 14px;
+  border:1px solid var(--border);
+  border-radius:var(--radius-md);
+  background:var(--surface-2);
+}
+body.ccc-account-route .ccc-current-plan-strip span{
+  display:block;
+  color:var(--muted-foreground);
+  font-size:12.5px;
+}
+body.ccc-account-route .ccc-current-plan-strip strong{
+  display:block;
+  margin-top:3px;
+  font-size:15px;
+  line-height:1.3;
+}
+body.ccc-account-route .ccc-account-cycle.compact{
+  margin-top:12px;
+  padding-top:12px;
+}
+body.ccc-account-route .compact-membership .ccc-plan-explorer{
+  margin-top:14px;
+  padding-top:14px;
+}
+body.ccc-account-route .compact-membership .ccc-plan-choices{
+  grid-template-columns:repeat(4,minmax(0,1fr));
+}
+body.ccc-account-route .ccc-plan-preview-empty{
+  margin-top:10px;
+  padding:12px 14px;
+  border:1px dashed var(--border-strong);
+  border-radius:var(--radius-md);
+  color:var(--muted-foreground);
+  background:var(--surface-2);
+  font-size:12.5px;
+  text-align:center;
+}
+body.ccc-account-route .ccc-plan-preview.is-selected{margin-top:10px}
+
+/* Market Pulse -> Toàn cảnh thị trường */
+body.ccc-ui-polish .market-live-price{
+  font-size:22px!important;
+  line-height:1.08!important;
+}
+body.ccc-ui-polish .market-tile.is-primary .market-live-price{
+  font-size:23px!important;
+}
+body.ccc-ui-polish .market-live-quote{
+  align-items:center!important;
+  gap:12px!important;
+}
+body.ccc-ui-polish .market-live-change{
+  display:flex!important;
+  flex-direction:column!important;
+  align-items:flex-end!important;
+  justify-content:center!important;
+  gap:1px!important;
+  font-size:12px!important;
+  line-height:1.2!important;
+  white-space:nowrap!important;
+}
+body.ccc-ui-polish .ccc-market-change-value,
+body.ccc-ui-polish .ccc-market-change-pct{
+  display:block;
+  font-variant-numeric:tabular-nums lining-nums;
+}
+body.ccc-ui-polish .ccc-market-change-pct{font-weight:700}
+body.ccc-ui-polish .market-change-basis{
+  margin-left:3px;
+  font-size:8px;
+}
+body.ccc-ui-polish .market-live-meta{
+  font-size:11.5px!important;
+}
+
+/* MA10 reference only — never part of CCC 4/4. */
+body.ccc-ui-polish .ccc-card-ma10{display:none}
+
+@media(max-width:767px){
+  /* Balanced mobile header */
+  body.ccc-ui-polish .app-header-inner{padding:0 12px}
+  body.ccc-ui-polish .app-brand .brand-copy strong{
+    font-size:12px;
+    letter-spacing:.01em;
+  }
+  body.ccc-ui-polish .mobile-status-row{
+    gap:6px;
+    padding:8px 12px;
+    background:var(--surface-1);
+  }
+  body.ccc-ui-polish .mobile-status-primary{
+    align-items:center;
+    gap:10px;
+  }
+  body.ccc-ui-polish .mobile-market b{
+    max-width:none;
+    font-size:12px;
+    font-weight:700;
+  }
+  body.ccc-ui-polish .mobile-now{
+    margin-left:auto;
+    font-size:10.5px;
+    white-space:nowrap;
+  }
+  body.ccc-ui-polish .mobile-status-secondary{
+    display:grid;
+    grid-template-columns:1fr auto;
+    align-items:center;
+    gap:12px;
+    width:100%;
+    font-size:11.5px;
+  }
+  body.ccc-ui-polish .ccc-mobile-data,
+  body.ccc-ui-polish .ccc-mobile-refresh-indicator{
+    display:inline-flex;
+    align-items:center;
+    gap:4px;
+    white-space:nowrap;
+  }
+  body.ccc-ui-polish .ccc-mobile-refresh-indicator{justify-self:end}
+  body.ccc-ui-polish .mobile-status-secondary b{
+    font-size:11.5px;
+    font-variant-numeric:tabular-nums;
+  }
+
+  /* Market overview hierarchy */
+  body.ccc-ui-polish .market-live-price,
+  body.ccc-ui-polish .market-tile.is-primary .market-live-price{
+    font-size:20px!important;
+  }
+  body.ccc-ui-polish .market-live-change{font-size:11px!important}
+  body.ccc-ui-polish .market-live-meta{font-size:10.5px!important}
+
+  /* Stock card: CCC left, MA10 reference right */
+  body.ccc-ui-polish .universal-stock-card .stock-row-ccc{
+    display:grid!important;
+    grid-template-columns:auto minmax(0,1fr)!important;
+    align-items:center!important;
+    gap:10px!important;
+  }
+  body.ccc-ui-polish .ccc-card-ma10{
+    display:flex;
+    align-items:center;
+    justify-content:flex-end;
+    gap:7px;
+    min-width:0;
+    color:var(--muted-foreground);
+    white-space:nowrap;
+  }
+  body.ccc-ui-polish .ccc-card-ma10 span{
+    position:relative;
+    padding-left:13px;
+    font-size:11px;
+  }
+  body.ccc-ui-polish .ccc-card-ma10 span::before{
+    position:absolute;
+    left:0;
+    top:50%;
+    width:7px;
+    height:7px;
+    border-radius:50%;
+    background:var(--neutral);
+    translate:0 -50%;
+    content:"";
+  }
+  body.ccc-ui-polish .ccc-card-ma10 strong{
+    font-size:13px;
+    font-weight:700;
+  }
+  body.ccc-ui-polish .ccc-card-ma10.positive strong{color:var(--positive)}
+  body.ccc-ui-polish .ccc-card-ma10.negative strong{color:var(--negative)}
+
+  body.ccc-account-route .ccc-current-plan-strip{
+    grid-template-columns:1fr;
+    gap:8px;
+  }
+  body.ccc-account-route .compact-membership .ccc-plan-choices{
+    display:flex;
+    overflow-x:auto;
+    grid-template-columns:none;
+    gap:8px;
+    padding-bottom:4px;
+    scrollbar-width:thin;
+  }
+  body.ccc-account-route .compact-membership .ccc-plan-choice{
+    min-width:132px;
+  }
+}
+
+@media(max-width:420px){
+  body.ccc-ui-polish .mobile-status-row{padding-inline:10px}
+  body.ccc-ui-polish .mobile-market b{font-size:11.5px}
+  body.ccc-ui-polish .mobile-now{font-size:10px}
+  body.ccc-ui-polish .mobile-status-secondary{font-size:11px}
+  body.ccc-ui-polish .ccc-card-ma10{gap:5px}
+  body.ccc-ui-polish .ccc-card-ma10 span{font-size:10.5px}
+  body.ccc-ui-polish .ccc-card-ma10 strong{font-size:12.5px}
+}
