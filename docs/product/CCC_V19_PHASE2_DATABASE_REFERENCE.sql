@@ -1,0 +1,21 @@
+-- CCC v19.1 Phase 2 database reference
+-- IMPORTANT: migration already applied to Supabase.
+-- Do not execute blindly against production.
+
+-- Migration: add_public_overview_demo_state
+-- Adds public.get_public_overview_state()
+--
+-- Guest-safe return contract:
+-- - market_total
+-- - market_counts (aggregate only)
+-- - last_updated_at
+-- - sample_symbols = VCB,FPT,HPG,VIC,VNM,GAS
+-- - sample_rows = technical rows for exactly those six fixed demo symbols
+--
+-- Permissions:
+-- anon          EXECUTE: yes
+-- authenticated EXECUTE: yes
+-- public         EXECUTE: revoked
+--
+-- Existing public.get_my_overview_state() remains authenticated-only.
+-- No direct stock_snapshot grant is added by this migration.
