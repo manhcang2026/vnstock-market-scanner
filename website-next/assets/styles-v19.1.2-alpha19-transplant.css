@@ -1,0 +1,297 @@
+/*
+  CCC Phase 2.5 — Alpha.19 visual transplant bridge.
+  Visual donor files are loaded unchanged before this file.
+  This file contains ONLY:
+  1) Phase 2A state/loading compatibility,
+  2) locked Golden exceptions,
+  3) small semantic bridge rules for the clean single-writer app.
+*/
+
+/* Golden typography rule wins over Alpha.19 code where essential text was too small. */
+body{font-size:14.5px}
+.transplant-state{min-height:190px;display:flex;align-items:center;justify-content:center;gap:12px;padding:24px;text-align:left}
+.transplant-state p,.transplant-placeholder p{margin:4px 0 0;color:var(--muted-foreground);font-size:13px}
+.transplant-placeholder{padding:24px}
+.transplant-spinner{width:20px;height:20px;border:2px solid var(--border-strong);border-top-color:var(--trend);border-radius:50%;animation:transplant-spin .8s linear infinite}
+@keyframes transplant-spin{to{transform:rotate(360deg)}}
+.transplant-rail-link{display:flex;align-items:center;justify-content:center;text-decoration:none}
+.overview-chip{display:inline-flex;padding:2px 7px;border:1px solid var(--ring);border-radius:999px;background:var(--surface-2);color:var(--trend);font-weight:700}
+
+/* Alpha.19 final screenshots: compact page title without marketing eyebrow. */
+.overview-main>.page-header .eyebrow{display:none}
+
+/* Locked exception from Golden UI Reference: MA10 is reference only, never signal #5. */
+.stock-row-ma10{display:none}
+.stock-row-ccc-main{display:inline-flex;min-width:0}
+
+/* Avoid any state badge collision in the CCC column. */
+.stock-row-ccc{min-width:0}
+.ccc-rail{max-width:100%}
+.ccc-rail em{overflow:hidden;max-width:92px;text-overflow:ellipsis}
+
+/* Market rail title is the approved Vietnamese label. */
+.market-pulse-rail .section-bar h2{font-size:16px}
+.market-pulse-rail .section-bar>small{line-height:1.35}
+
+/* We intentionally keep the donor KPI grid behavior: 4 across desktop, 2x2 mobile. */
+@media(max-width:767px){
+  body{font-size:15px}
+  .overview-main>.page-header{display:block}
+  .overview-main>.page-header h1{font-size:28px;line-height:1.15}
+  .overview-main>.page-header p{font-size:15px;line-height:1.7}
+  .section-bar h2{font-size:16px}
+  .section-bar span,.section-bar small{font-size:13px}
+  .density-tile>span{font-size:14px}
+  .density-tile>strong{font-size:30px}
+  .density-tile>strong small{font-size:13px}
+  .density-tile em,.density-tile b{font-size:12.5px}
+  .density-grid{grid-template-columns:repeat(2,minmax(0,1fr));overflow:visible}
+  .overview-density-trigger{min-width:0}
+  .overview-rows{padding:10px}
+  .universal-stock-card .stock-row-identity strong{font-size:16px}
+  .universal-stock-card .stock-row-identity span{font-size:13px}
+  .universal-stock-card .stock-row-identity small{font-size:11px}
+  .universal-stock-card .stock-row-price strong{font-size:20px}
+  .universal-stock-card .stock-row-price span{font-size:13px}
+  .universal-stock-card .stock-row-volume small{font-size:12px}
+  .universal-stock-card .stock-row-volume strong{font-size:17px}
+  .universal-stock-card .stock-row-volume .volume-ratio{font-size:13px}
+  .universal-stock-card .stock-row-highlight-line>span{font-size:12px}
+  .universal-stock-card .stock-row-highlight-line>strong{font-size:13px}
+
+  /* Row 4 locked: CCC left / MA10 right. */
+  .universal-stock-card .stock-row-ccc{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:10px;
+  }
+  .stock-row-ma10{
+    display:inline-flex;
+    flex:none;
+    align-items:center;
+    gap:5px;
+    color:var(--positive);
+    font-size:12px;
+    white-space:nowrap;
+  }
+  .stock-row-ma10 i{
+    width:7px;height:7px;border-radius:50%;background:var(--muted-foreground)
+  }
+  .stock-row-ma10 span{color:var(--positive);font-size:12px}
+  .stock-row-ma10 strong{font-size:13px;font-variant-numeric:tabular-nums}
+  .stock-row-ma10 strong.negative{color:var(--negative)!important}
+  .stock-row-ma10 strong:not(.positive):not(.negative){color:var(--muted-foreground)}
+
+  /* Golden mobile flow: market rail + legend + plan stack below main content. */
+  .overview-context-rail{grid-template-columns:1fr}
+  .market-pulse-rail{order:-3}
+  .signal-legend-compact{order:-2}
+  .plan-scope-card{order:-1}
+
+  /* Final Alpha.19 mobile screenshot shows one compact status row. */
+  .mobile-status-row{gap:0}
+  .mobile-status-primary{align-items:center}
+  .mobile-now{font-size:12px}
+  .mobile-now b{color:var(--foreground)}
+}
+
+/* At 375–390 the KPI section must remain 2x2, never horizontal-scrolling. */
+@media(max-width:390px){
+  .density-grid{grid-template-columns:repeat(2,minmax(0,1fr));overflow:visible}
+  .density-tile{min-width:0}
+}
+
+/* ==========================================================
+   Phase 2.5 micro polish #1 — PO-approved scope only
+   ========================================================== */
+
+/* A. One square standard for the four CCC segments everywhere. */
+.ccc-segments{display:inline-flex;align-items:center;gap:2px}
+.ccc-segment{
+  width:15px;
+  height:15px;
+  min-width:15px;
+  flex:0 0 15px;
+  border-radius:3px;
+  box-sizing:border-box;
+}
+.signal-legend .ccc-segment{
+  width:15px;
+  height:15px;
+  min-width:15px;
+  flex-basis:15px;
+  border-radius:3px;
+}
+
+/* B. Concise CCC status badges must remain inside the CCC column. */
+.ccc-rail em{
+  display:inline-flex;
+  min-height:22px;
+  max-width:86px;
+  align-items:center;
+  overflow:hidden;
+  border-radius:5px;
+  padding:0 6px;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+
+/* C. KPI tiles: same Alpha.19 geometry, clearer hierarchy + distinct accents. */
+.density-tile{
+  --kpi-accent:var(--trend);
+  position:relative;
+  isolation:isolate;
+  overflow:hidden;
+  transition:background-color .18s ease,border-color .18s ease,box-shadow .18s ease,transform .18s ease;
+}
+.density-tile[data-overview-group="4of4"]{--kpi-accent:var(--positive)}
+.density-tile[data-overview-group="3plus"]{--kpi-accent:#18b6b2}
+.density-tile[data-overview-group="2plus"]{--kpi-accent:#4f9bd1}
+.density-tile[data-overview-group="rvol30"]{--kpi-accent:#9b70df}
+.density-tile::before{
+  position:absolute;
+  z-index:2;
+  top:0;
+  right:0;
+  left:0;
+  height:3px;
+  background:var(--kpi-accent);
+  content:"";
+  opacity:.32;
+}
+.density-tile::after{
+  position:absolute;
+  z-index:2;
+  top:14px;
+  right:12px;
+  width:7px;
+  height:7px;
+  border-radius:50%;
+  background:var(--kpi-accent);
+  box-shadow:0 0 0 4px color-mix(in srgb,var(--kpi-accent) 13%,transparent);
+  content:"";
+  opacity:.42;
+}
+.density-tile:hover{
+  background:color-mix(in srgb,var(--kpi-accent) 5%,var(--surface));
+}
+.density-tile.active{
+  border-color:color-mix(in srgb,var(--kpi-accent) 58%,var(--border-strong));
+  background:color-mix(in srgb,var(--kpi-accent) 10%,var(--surface));
+  box-shadow:inset 0 3px 0 var(--kpi-accent),0 0 0 1px color-mix(in srgb,var(--kpi-accent) 16%,transparent);
+}
+.density-tile.active::before,.density-tile.active::after{opacity:1}
+.density-tile.active>strong{color:var(--foreground)}
+.density-tile>div>em{font-weight:600}
+
+/* D. Mobile card alignment: MA200 and MA10 share the exact same right edge. */
+@media(max-width:767px){
+  .universal-stock-card .stock-row-highlights{
+    display:grid;
+    grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+    align-items:center;
+  }
+  .universal-stock-card .stock-row-highlight-line.highlight-rvol{
+    justify-self:start;
+    justify-content:flex-start;
+    text-align:left;
+  }
+  .universal-stock-card .stock-row-highlight-line.highlight-trend{
+    justify-self:end;
+    justify-content:flex-end;
+    text-align:right;
+  }
+  .universal-stock-card .stock-row-highlight-line.highlight-trend>span,
+  .universal-stock-card .stock-row-highlight-line.highlight-trend>strong{
+    text-align:right;
+  }
+  .universal-stock-card .stock-row-ma10{
+    min-width:max-content;
+    justify-content:flex-end;
+    text-align:right;
+  }
+  .density-tile:hover{transform:none}
+}
+
+/* ==========================================================
+   Phase 2.5 FINAL POLISH — approved visual lock
+   ========================================================== */
+
+/* Shared semantic accent palette. */
+.density-tile[data-overview-group="4of4"],
+.overview-group-4of4{--group-accent:#35b85a;--group-soft:color-mix(in srgb,#35b85a 18%,var(--surface))}
+.density-tile[data-overview-group="3plus"],
+.overview-group-3plus{--group-accent:#d59b32;--group-soft:color-mix(in srgb,#d59b32 17%,var(--surface))}
+.density-tile[data-overview-group="2plus"],
+.overview-group-2plus{--group-accent:#4e95cf;--group-soft:color-mix(in srgb,#4e95cf 18%,var(--surface))}
+.density-tile[data-overview-group="rvol30"],
+.overview-group-rvol30{--group-accent:#9d6de2;--group-soft:color-mix(in srgb,#9d6de2 18%,var(--surface))}
+
+/* KPI: old Alpha.19 behavior — active color occupies the full tile. */
+.density-tile::before,.density-tile::after{opacity:0}
+.density-tile.active{
+  background:var(--group-soft);
+  border-color:color-mix(in srgb,var(--group-accent) 74%,var(--border-strong));
+  box-shadow:inset 0 3px 0 var(--group-accent),0 0 0 1px color-mix(in srgb,var(--group-accent) 26%,transparent);
+}
+.density-tile.active::before,.density-tile.active::after{opacity:1;background:var(--group-accent)}
+.density-tile.active>span,.density-tile.active>strong,.density-tile.active>div>em{color:var(--foreground)}
+.density-tile.active>div>b{color:color-mix(in srgb,var(--group-accent) 64%,var(--foreground))}
+.density-tile:hover:not(.active){background:color-mix(in srgb,var(--group-accent) 5%,var(--surface))}
+
+/* Selected filter chip + results left accent always follow the active KPI. */
+.in-scope-results[class*="overview-group-"]{
+  box-shadow:inset 4px 0 0 var(--group-accent);
+}
+.in-scope-results[class*="overview-group-"] .overview-chip{
+  border-color:color-mix(in srgb,var(--group-accent) 72%,var(--border-strong));
+  background:color-mix(in srgb,var(--group-accent) 15%,var(--surface-2));
+  color:var(--group-accent);
+}
+
+/* Per-stock state badges use matching semantic colors. */
+.ccc-rail.is-forming em{
+  border-color:color-mix(in srgb,#4e95cf 72%,var(--border-strong));
+  background:color-mix(in srgb,#4e95cf 13%,var(--surface));
+  color:#6eb5e8;
+}
+.ccc-rail.is-converging em{
+  border-color:color-mix(in srgb,#d59b32 75%,var(--border-strong));
+  background:color-mix(in srgb,#d59b32 13%,var(--surface));
+  color:#e7ad45;
+}
+.ccc-rail.is-confluent em{
+  border-color:color-mix(in srgb,#35b85a 76%,var(--border-strong));
+  background:color-mix(in srgb,#35b85a 13%,var(--surface));
+  color:#48ca6b;
+}
+.ccc-rail.is-forming .ccc-segments{outline:1px solid color-mix(in srgb,#4e95cf 64%,transparent);outline-offset:1px}
+.ccc-rail.is-converging .ccc-segments{outline:1px solid color-mix(in srgb,#d59b32 64%,transparent);outline-offset:1px}
+.ccc-rail.is-confluent .ccc-segments{outline:1px solid color-mix(in srgb,#35b85a 64%,transparent);outline-offset:1px}
+
+/* Signal legend: square color keys exactly match card rail geometry. */
+.signal-legend .ccc-segment{
+  width:15px;height:15px;min-width:15px;flex:0 0 15px;border-radius:3px;
+}
+.signal-state-list b{white-space:nowrap}
+
+/* Light theme keeps the same semantic accents, with a softer full-tile wash. */
+:root[data-theme="light"] .density-tile.active{
+  background:color-mix(in srgb,var(--group-accent) 10%,var(--surface));
+}
+
+@media(max-width:767px){
+  /* Keep KPI locked as 2×2; no horizontal rail. */
+  .density-grid{grid-template-columns:repeat(2,minmax(0,1fr));overflow:visible}
+  .density-tile{min-width:0}
+
+  /* MA200 and MA10 share the same right edge. */
+  .universal-stock-card .stock-row-highlight-line.highlight-trend,
+  .universal-stock-card .stock-row-ma10{
+    justify-self:end;
+    justify-content:flex-end;
+    text-align:right;
+  }
+}
+
