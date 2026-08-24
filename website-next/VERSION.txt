@@ -1,1 +1,6 @@
-v19.5.0-phase5a-stock-detail-transplant-1
+v19.6.4-phase5b-screener-workflow
+- Phase 5B Screener workflow polish.
+- Fundamental filters now appear before scoring methodology.
+- Scoring methodology remains complete but is collapsed by default as progressive disclosure.
+- Active Screener filters can be cleared with one action.
+- Research result tables/cards, pagination, scoring logic and backend data contracts are unchanged.
