@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import multiprocessing as mp
 import os
 from datetime import date, datetime, timedelta
 from time import monotonic, sleep
@@ -12,10 +13,10 @@ from vnstock.api.quote import Quote
 
 from common import load_watchlist, now_vn, records
 
-PRIMARY_SOURCE = "VCI"
-FALLBACK_SOURCE = "KBS"
+PRIMARY_SOURCE = "KBS"
+FALLBACK_SOURCE = "VCI"
 # Neu nguon chinh co phien cu hon run_date qua nguong nay, thu nguon du phong.
-# 4 ngay van bao phu cuoi tuan + 1 ngay nghi le lien ke, tranh hoi KBS vo ich.
+# 4 ngay van bao phu cuoi tuan + 1 ngay nghi le lien ke.
 SOURCE_STALE_AFTER_DAYS = 4
 MA_SESSIONS = 200
 MA10_SESSIONS = 10
@@ -23,11 +24,17 @@ AVG_VOLUME_SESSIONS = 10
 LOOKBACK_DAYS = 500
 
 # VNStock Community: 60 request/phut.
-# VCI la nguon chinh; KBS chi duoc goi khi VCI loi/empty/qua cu.
+# KBS la nguon chinh; VCI chi duoc goi khi KBS loi/empty/qua cu.
 # 1.25 giay/request ~= 48 request/phut, de lai bien an toan.
 REQUEST_INTERVAL_SECONDS = 1.25
 SOURCE_MAX_RETRIES = 3
 RATE_LIMIT_WAIT_SECONDS = 65
+
+# Bao ve ben NGOAI vnstock/vnai. Neu provider/thu vien tu retry qua lau,
+# process con se bi terminate de mot ma khong the treo ca Daily Baseline.
+HISTORY_HARD_TIMEOUT_SECONDS = 15
+SOURCE_BREAKER_TIMEOUT_THRESHOLD = 3
+SOURCE_BREAKER_COOLDOWN_SECONDS = 300
 
 # Sau luot dau, chi retry cac ma loi. Tong cong: 1 luot dau + 3 luot retry.
 SYMBOL_RETRY_ROUNDS = 3
@@ -97,6 +104,8 @@ SUPABASE_KEY = (
 )
 
 _last_request_started_at: float | None = None
+_source_timeout_streak: dict[str, int] = {}
+_source_breaker_until: dict[str, float] = {}
 
 
 def verify_vnstock_api_access() -> None:
@@ -153,6 +162,119 @@ def wait_for_request_slot() -> None:
     _last_request_started_at = monotonic()
 
 
+def _history_worker(
+    connection,
+    symbol: str,
+    source: str,
+    start: str,
+    end: str,
+) -> None:
+    """Chay call vnstock trong process rieng de parent co the kill neu bi treo."""
+    try:
+        data = Quote(symbol=symbol, source=source).history(
+            start=start,
+            end=end,
+            interval="1D",
+        )
+        connection.send(("ok", data))
+    except BaseException as exc:
+        try:
+            connection.send(("error", f"{type(exc).__name__}: {exc}"))
+        except Exception:
+            pass
+    finally:
+        connection.close()
+
+
+def _breaker_remaining_seconds(source: str) -> float:
+    until = _source_breaker_until.get(source, 0.0)
+    return max(0.0, until - monotonic())
+
+
+def _record_source_timeout(source: str) -> None:
+    streak = _source_timeout_streak.get(source, 0) + 1
+    _source_timeout_streak[source] = streak
+    if streak >= SOURCE_BREAKER_TIMEOUT_THRESHOLD:
+        _source_breaker_until[source] = (
+            monotonic() + SOURCE_BREAKER_COOLDOWN_SECONDS
+        )
+        _source_timeout_streak[source] = 0
+        print(
+            f"  -> {source} circuit breaker OPEN "
+            f"{SOURCE_BREAKER_COOLDOWN_SECONDS}s sau "
+            f"{SOURCE_BREAKER_TIMEOUT_THRESHOLD} hard-timeout lien tiep."
+        )
+
+
+def _record_source_success(source: str) -> None:
+    _source_timeout_streak[source] = 0
+    _source_breaker_until.pop(source, None)
+
+
+def fetch_history_with_hard_timeout(
+    symbol: str,
+    source: str,
+    start: str,
+    end: str,
+) -> pd.DataFrame:
+    remaining = _breaker_remaining_seconds(source)
+    if remaining > 0:
+        raise RuntimeError(
+            f"{source} circuit breaker dang OPEN, con {remaining:.0f}s"
+        )
+
+    # GitHub Actions production la Linux: fork nhanh va child ke thua env/API key.
+    # Fallback spawn giup code van co the import/test o platform khac.
+    try:
+        context = mp.get_context("fork")
+    except ValueError:
+        context = mp.get_context("spawn")
+
+    recv_conn, send_conn = context.Pipe(duplex=False)
+    process = context.Process(
+        target=_history_worker,
+        args=(send_conn, symbol, source, start, end),
+        daemon=True,
+    )
+    process.start()
+    send_conn.close()
+
+    deadline = monotonic() + HISTORY_HARD_TIMEOUT_SECONDS
+    result = None
+    while monotonic() < deadline:
+        if recv_conn.poll(0.2):
+            result = recv_conn.recv()
+            break
+        if not process.is_alive():
+            break
+
+    if result is None and process.is_alive():
+        process.terminate()
+        process.join(timeout=2)
+        recv_conn.close()
+        _record_source_timeout(source)
+        raise TimeoutError(
+            f"{source} hard-timeout sau {HISTORY_HARD_TIMEOUT_SECONDS}s"
+        )
+
+    process.join(timeout=2)
+    if result is None and recv_conn.poll():
+        result = recv_conn.recv()
+    recv_conn.close()
+
+    if result is None:
+        raise RuntimeError(
+            f"{source} worker ket thuc khong tra ket qua; exit={process.exitcode}"
+        )
+
+    status, payload = result
+    if status != "ok":
+        raise RuntimeError(str(payload))
+
+    _record_source_success(source)
+    return payload
+
+
 def prepare_history(data: pd.DataFrame, run_date: date) -> pd.DataFrame:
     required = {"time", "close", "volume"}
     missing = required.difference(data.columns)
@@ -201,11 +323,7 @@ def fetch_source_history(
     for attempt in range(1, SOURCE_MAX_RETRIES + 1):
         try:
             wait_for_request_slot()
-            data = Quote(symbol=symbol, source=source).history(
-                start=start,
-                end=end,
-                interval="1D",
-            )
+            data = fetch_history_with_hard_timeout(symbol, source, start, end)
             if data is None or data.empty:
                 raise RuntimeError("empty")
             return normalize_price_unit(prepare_history(data, run_date))
@@ -237,11 +355,11 @@ def get_history(
     run_date: date,
 ) -> tuple[pd.DataFrame, str]:
     """
-    Uu tien VCI de giam gan mot nua so request.
+    Uu tien KBS; VCI la nguon rescue.
 
-    - VCI hop le va khong qua cu: dung ngay, KHONG goi KBS.
-    - VCI loi/empty: goi KBS fallback.
-    - VCI co du lieu nhung qua cu: thu KBS; neu KBS khong tot hon thi van giu VCI.
+    - KBS hop le va khong qua cu: dung ngay, KHONG goi VCI.
+    - KBS loi/empty: goi VCI fallback.
+    - KBS co du lieu nhung qua cu: thu VCI; neu VCI khong tot hon thi van giu KBS.
     """
     primary_history: pd.DataFrame | None = None
     primary_error: str | None = None
@@ -279,7 +397,7 @@ def get_history(
         if fallback_date > primary_date:
             return fallback_history, FALLBACK_SOURCE
 
-        # KBS khong moi hon: giu VCI de tranh thay doi nguon khong can thiet.
+        # Fallback khong moi hon: giu primary de tranh thay doi nguon khong can thiet.
         return primary_history, PRIMARY_SOURCE
     except Exception as fallback_exc:
         if primary_history is not None:
