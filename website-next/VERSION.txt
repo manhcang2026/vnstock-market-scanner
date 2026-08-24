@@ -1,6 +1,11 @@
-v19.6.4-phase5b-screener-workflow
-- Phase 5B Screener workflow polish.
-- Fundamental filters now appear before scoring methodology.
-- Scoring methodology remains complete but is collapsed by default as progressive disclosure.
-- Active Screener filters can be cleared with one action.
-- Research result tables/cards, pagination, scoring logic and backend data contracts are unchanged.
+v19.7.2-phase5c-canonical-detail
+- Phase 5C-1: one canonical Stock Detail route: /co-phieu/{SYMBOL}.
+- Header Search suggestions and submit open canonical Stock Detail.
+- Overview, Scanner and Research rows/cards all open the same Stock Detail renderer.
+- Phase 5C-2: Browser Back/Forward, in-page Quay lại and direct URL are synchronized.
+- Detail tabs are deep-linkable with ?tab=technical|fundamental|financials.
+- Returning from Detail restores the prior in-app route and scroll position when available.
+- Direct Detail links fall back to Tổng quan when Quay lại is used without an in-app source.
+- No duplicate/legacy detail renderer is introduced; existing stockDetailPageHtml remains the single writer.
+- Technical entitlement behavior is unchanged: guest demo, personal watchlist, FULL/VIP market access.
+- Touched Stock Detail copy uses Vietnamese except product plan names.

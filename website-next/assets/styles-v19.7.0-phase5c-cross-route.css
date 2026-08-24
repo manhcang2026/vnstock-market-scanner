@@ -1,0 +1,3942 @@
+/*
+  CCC Phase 2.5 — Alpha.19 visual transplant bridge.
+  Visual donor files are loaded unchanged before this file.
+  This file contains ONLY:
+  1) Phase 2A state/loading compatibility,
+  2) locked Golden exceptions,
+  3) small semantic bridge rules for the clean single-writer app.
+*/
+
+/* Golden typography rule wins over Alpha.19 code where essential text was too small. */
+body{font-size:14.5px}
+.transplant-state{min-height:190px;display:flex;align-items:center;justify-content:center;gap:12px;padding:24px;text-align:left}
+.transplant-state p,.transplant-placeholder p{margin:4px 0 0;color:var(--muted-foreground);font-size:13px}
+.transplant-placeholder{padding:24px}
+.transplant-spinner{width:20px;height:20px;border:2px solid var(--border-strong);border-top-color:var(--trend);border-radius:50%;animation:transplant-spin .8s linear infinite}
+@keyframes transplant-spin{to{transform:rotate(360deg)}}
+.transplant-rail-link{display:flex;align-items:center;justify-content:center;text-decoration:none}
+.overview-chip{display:inline-flex;padding:2px 7px;border:1px solid var(--ring);border-radius:999px;background:var(--surface-2);color:var(--trend);font-weight:700}
+
+/* Alpha.19 final screenshots: compact page title without marketing eyebrow. */
+.overview-main>.page-header .eyebrow{display:none}
+
+/* Locked exception from Golden UI Reference: MA10 is reference only, never signal #5. */
+.stock-row-ma10{display:none}
+.stock-row-ccc-main{display:inline-flex;min-width:0}
+
+/* Avoid any state badge collision in the CCC column. */
+.stock-row-ccc{min-width:0}
+.ccc-rail{max-width:100%}
+.ccc-rail em{overflow:hidden;max-width:92px;text-overflow:ellipsis}
+
+/* Market rail title is the approved Vietnamese label. */
+.market-pulse-rail .section-bar h2{font-size:16px}
+.market-pulse-rail .section-bar>small{line-height:1.35}
+
+/* We intentionally keep the donor KPI grid behavior: 4 across desktop, 2x2 mobile. */
+@media(max-width:767px){
+  body{font-size:15px}
+  .overview-main>.page-header{display:block}
+  .overview-main>.page-header h1{font-size:28px;line-height:1.15}
+  .overview-main>.page-header p{font-size:15px;line-height:1.7}
+  .section-bar h2{font-size:16px}
+  .section-bar span,.section-bar small{font-size:13px}
+  .density-tile>span{font-size:14px}
+  .density-tile>strong{font-size:30px}
+  .density-tile>strong small{font-size:13px}
+  .density-tile em,.density-tile b{font-size:12.5px}
+  .density-grid{grid-template-columns:repeat(2,minmax(0,1fr));overflow:visible}
+  .overview-density-trigger{min-width:0}
+  .overview-rows{padding:10px}
+  .universal-stock-card .stock-row-identity strong{font-size:16px}
+  .universal-stock-card .stock-row-identity span{font-size:13px}
+  .universal-stock-card .stock-row-identity small{font-size:11px}
+  .universal-stock-card .stock-row-price strong{font-size:20px}
+  .universal-stock-card .stock-row-price span{font-size:13px}
+  .universal-stock-card .stock-row-volume small{font-size:12px}
+  .universal-stock-card .stock-row-volume strong{font-size:17px}
+  .universal-stock-card .stock-row-volume .volume-ratio{font-size:13px}
+  .universal-stock-card .stock-row-highlight-line>span{font-size:12px}
+  .universal-stock-card .stock-row-highlight-line>strong{font-size:13px}
+
+  /* Row 4 locked: CCC left / MA10 right. */
+  .universal-stock-card .stock-row-ccc{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:10px;
+  }
+  .stock-row-ma10{
+    display:inline-flex;
+    flex:none;
+    align-items:center;
+    gap:5px;
+    color:var(--positive);
+    font-size:12px;
+    white-space:nowrap;
+  }
+  .stock-row-ma10 i{
+    width:7px;height:7px;border-radius:50%;background:var(--muted-foreground)
+  }
+  .stock-row-ma10 span{color:var(--positive);font-size:12px}
+  .stock-row-ma10 strong{font-size:13px;font-variant-numeric:tabular-nums}
+  .stock-row-ma10 strong.negative{color:var(--negative)!important}
+  .stock-row-ma10 strong:not(.positive):not(.negative){color:var(--muted-foreground)}
+
+  /* Golden mobile flow: market rail + legend + plan stack below main content. */
+  .overview-context-rail{grid-template-columns:1fr}
+  .market-pulse-rail{order:-3}
+  .signal-legend-compact{order:-2}
+  .plan-scope-card{order:-1}
+
+  /* Final Alpha.19 mobile screenshot shows one compact status row. */
+  .mobile-status-row{gap:0}
+  .mobile-status-primary{align-items:center}
+  .mobile-now{font-size:12px}
+  .mobile-now b{color:var(--foreground)}
+}
+
+/* At 375–390 the KPI section must remain 2x2, never horizontal-scrolling. */
+@media(max-width:390px){
+  .density-grid{grid-template-columns:repeat(2,minmax(0,1fr));overflow:visible}
+  .density-tile{min-width:0}
+}
+
+/* ==========================================================
+   Phase 2.5 micro polish #1 — PO-approved scope only
+   ========================================================== */
+
+/* A. One square standard for the four CCC segments everywhere. */
+.ccc-segments{display:inline-flex;align-items:center;gap:2px}
+.ccc-segment{
+  width:15px;
+  height:15px;
+  min-width:15px;
+  flex:0 0 15px;
+  border-radius:3px;
+  box-sizing:border-box;
+}
+.signal-legend .ccc-segment{
+  width:15px;
+  height:15px;
+  min-width:15px;
+  flex-basis:15px;
+  border-radius:3px;
+}
+
+/* B. Concise CCC status badges must remain inside the CCC column. */
+.ccc-rail em{
+  display:inline-flex;
+  min-height:22px;
+  max-width:86px;
+  align-items:center;
+  overflow:hidden;
+  border-radius:5px;
+  padding:0 6px;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+
+/* C. KPI tiles: same Alpha.19 geometry, clearer hierarchy + distinct accents. */
+.density-tile{
+  --kpi-accent:var(--trend);
+  position:relative;
+  isolation:isolate;
+  overflow:hidden;
+  transition:background-color .18s ease,border-color .18s ease,box-shadow .18s ease,transform .18s ease;
+}
+.density-tile[data-overview-group="4of4"]{--kpi-accent:var(--positive)}
+.density-tile[data-overview-group="3plus"]{--kpi-accent:#18b6b2}
+.density-tile[data-overview-group="2plus"]{--kpi-accent:#4f9bd1}
+.density-tile[data-overview-group="rvol30"]{--kpi-accent:#9b70df}
+.density-tile::before{
+  position:absolute;
+  z-index:2;
+  top:0;
+  right:0;
+  left:0;
+  height:3px;
+  background:var(--kpi-accent);
+  content:"";
+  opacity:.32;
+}
+.density-tile::after{
+  position:absolute;
+  z-index:2;
+  top:14px;
+  right:12px;
+  width:7px;
+  height:7px;
+  border-radius:50%;
+  background:var(--kpi-accent);
+  box-shadow:0 0 0 4px color-mix(in srgb,var(--kpi-accent) 13%,transparent);
+  content:"";
+  opacity:.42;
+}
+.density-tile:hover{
+  background:color-mix(in srgb,var(--kpi-accent) 5%,var(--surface));
+}
+.density-tile.active{
+  border-color:color-mix(in srgb,var(--kpi-accent) 58%,var(--border-strong));
+  background:color-mix(in srgb,var(--kpi-accent) 10%,var(--surface));
+  box-shadow:inset 0 3px 0 var(--kpi-accent),0 0 0 1px color-mix(in srgb,var(--kpi-accent) 16%,transparent);
+}
+.density-tile.active::before,.density-tile.active::after{opacity:1}
+.density-tile.active>strong{color:var(--foreground)}
+.density-tile>div>em{font-weight:600}
+
+/* D. Mobile card alignment: MA200 and MA10 share the exact same right edge. */
+@media(max-width:767px){
+  .universal-stock-card .stock-row-highlights{
+    display:grid;
+    grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+    align-items:center;
+  }
+  .universal-stock-card .stock-row-highlight-line.highlight-rvol{
+    justify-self:start;
+    justify-content:flex-start;
+    text-align:left;
+  }
+  .universal-stock-card .stock-row-highlight-line.highlight-trend{
+    justify-self:end;
+    justify-content:flex-end;
+    text-align:right;
+  }
+  .universal-stock-card .stock-row-highlight-line.highlight-trend>span,
+  .universal-stock-card .stock-row-highlight-line.highlight-trend>strong{
+    text-align:right;
+  }
+  .universal-stock-card .stock-row-ma10{
+    min-width:max-content;
+    justify-content:flex-end;
+    text-align:right;
+  }
+  .density-tile:hover{transform:none}
+}
+
+/* ==========================================================
+   Phase 2.5 FINAL POLISH — approved visual lock
+   ========================================================== */
+
+/* Shared semantic accent palette. */
+.density-tile[data-overview-group="4of4"],
+.overview-group-4of4{--group-accent:#35b85a;--group-soft:color-mix(in srgb,#35b85a 18%,var(--surface))}
+.density-tile[data-overview-group="3plus"],
+.overview-group-3plus{--group-accent:#d59b32;--group-soft:color-mix(in srgb,#d59b32 17%,var(--surface))}
+.density-tile[data-overview-group="2plus"],
+.overview-group-2plus{--group-accent:#4e95cf;--group-soft:color-mix(in srgb,#4e95cf 18%,var(--surface))}
+.density-tile[data-overview-group="rvol30"],
+.overview-group-rvol30{--group-accent:#9d6de2;--group-soft:color-mix(in srgb,#9d6de2 18%,var(--surface))}
+
+/* KPI: old Alpha.19 behavior — active color occupies the full tile. */
+.density-tile::before,.density-tile::after{opacity:0}
+.density-tile.active{
+  background:var(--group-soft);
+  border-color:color-mix(in srgb,var(--group-accent) 74%,var(--border-strong));
+  box-shadow:inset 0 3px 0 var(--group-accent),0 0 0 1px color-mix(in srgb,var(--group-accent) 26%,transparent);
+}
+.density-tile.active::before,.density-tile.active::after{opacity:1;background:var(--group-accent)}
+.density-tile.active>span,.density-tile.active>strong,.density-tile.active>div>em{color:var(--foreground)}
+.density-tile.active>div>b{color:color-mix(in srgb,var(--group-accent) 64%,var(--foreground))}
+.density-tile:hover:not(.active){background:color-mix(in srgb,var(--group-accent) 5%,var(--surface))}
+
+/* Selected filter chip + results left accent always follow the active KPI. */
+.in-scope-results[class*="overview-group-"]{
+  box-shadow:inset 4px 0 0 var(--group-accent);
+}
+.in-scope-results[class*="overview-group-"] .overview-chip{
+  border-color:color-mix(in srgb,var(--group-accent) 72%,var(--border-strong));
+  background:color-mix(in srgb,var(--group-accent) 15%,var(--surface-2));
+  color:var(--group-accent);
+}
+
+/* Per-stock state badges use matching semantic colors. */
+.ccc-rail.is-forming em{
+  border-color:color-mix(in srgb,#4e95cf 72%,var(--border-strong));
+  background:color-mix(in srgb,#4e95cf 13%,var(--surface));
+  color:#6eb5e8;
+}
+.ccc-rail.is-converging em{
+  border-color:color-mix(in srgb,#d59b32 75%,var(--border-strong));
+  background:color-mix(in srgb,#d59b32 13%,var(--surface));
+  color:#e7ad45;
+}
+.ccc-rail.is-confluent em{
+  border-color:color-mix(in srgb,#35b85a 76%,var(--border-strong));
+  background:color-mix(in srgb,#35b85a 13%,var(--surface));
+  color:#48ca6b;
+}
+.ccc-rail.is-forming .ccc-segments{outline:1px solid color-mix(in srgb,#4e95cf 64%,transparent);outline-offset:1px}
+.ccc-rail.is-converging .ccc-segments{outline:1px solid color-mix(in srgb,#d59b32 64%,transparent);outline-offset:1px}
+.ccc-rail.is-confluent .ccc-segments{outline:1px solid color-mix(in srgb,#35b85a 64%,transparent);outline-offset:1px}
+
+/* Signal legend: square color keys exactly match card rail geometry. */
+.signal-legend .ccc-segment{
+  width:15px;height:15px;min-width:15px;flex:0 0 15px;border-radius:3px;
+}
+.signal-state-list b{white-space:nowrap}
+
+/* Light theme keeps the same semantic accents, with a softer full-tile wash. */
+:root[data-theme="light"] .density-tile.active{
+  background:color-mix(in srgb,var(--group-accent) 10%,var(--surface));
+}
+
+@media(max-width:767px){
+  /* Keep KPI locked as 2×2; no horizontal rail. */
+  .density-grid{grid-template-columns:repeat(2,minmax(0,1fr));overflow:visible}
+  .density-tile{min-width:0}
+
+  /* MA200 and MA10 share the same right edge. */
+  .universal-stock-card .stock-row-highlight-line.highlight-trend,
+  .universal-stock-card .stock-row-ma10{
+    justify-self:end;
+    justify-content:flex-end;
+    text-align:right;
+  }
+}
+
+/* ==========================================================
+   Phase 3A — Scanner foundation
+   Whole market = public basic data only.
+   Watchlist = CCC technical data within account scope.
+   ========================================================== */
+
+.scanner-main{padding-top:20px}
+.scanner-main .scanner-controls{margin-bottom:20px}
+.scanner-mode-note{
+  border-top:1px solid var(--border);
+  color:var(--muted-foreground);
+  padding:10px 14px 0;
+  font-size:12px;
+}
+.scanner-mode-note strong{color:var(--foreground)}
+.scanner-layout{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) 286px;
+  align-items:start;
+  gap:24px;
+}
+.scanner-layout-main{min-width:0}
+.scanner-context-rail{position:sticky;top:84px}
+.scanner-market-filters{grid-template-columns:minmax(180px,1fr) minmax(220px,1.3fr) auto}
+.scanner-results{overflow:hidden}
+.scanner-results .section-bar{min-height:58px}
+.scanner-table-wrap{overflow-x:auto}
+.lovable-scanner-table{width:100%;border-collapse:collapse}
+.lovable-scanner-table th,
+.lovable-scanner-table td{border-bottom:1px solid var(--border);padding:13px 14px}
+.lovable-scanner-table th{color:var(--muted-foreground);font-size:11px;font-weight:600;text-transform:uppercase}
+.lovable-scanner-table td{font-size:13px}
+.lovable-scanner-table .num{text-align:right}
+.lovable-scanner-table td>small{display:block;margin-top:2px;color:var(--muted-foreground);font-size:10px}
+.scanner-company{display:flex;min-width:220px;align-items:center;gap:10px}
+.scanner-company>div{display:grid;min-width:0}
+.scanner-company strong{font-size:15px}
+.scanner-company span{overflow:hidden;color:var(--muted-foreground);font-size:12px;text-overflow:ellipsis;white-space:nowrap}
+.scanner-company small{color:var(--muted-foreground);font-size:10px}
+.scanner-mobile-list{display:none}
+.market-basic-card{
+  border:1px solid var(--border);
+  border-radius:10px;
+  background:var(--surface);
+  padding:12px;
+}
+.market-basic-head{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:start;gap:10px}
+.market-basic-id{display:grid;min-width:0}
+.market-basic-id strong{font-size:16px}
+.market-basic-id span{overflow:hidden;color:var(--muted-foreground);font-size:12px;text-overflow:ellipsis;white-space:nowrap}
+.market-basic-id small{color:var(--muted-foreground);font-size:10px}
+.market-basic-quote{display:grid;justify-items:end}
+.market-basic-quote strong{font-size:20px}
+.market-basic-quote span{font-size:12px;font-weight:700}
+.market-basic-volume{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  border-top:1px solid var(--border);margin-top:11px;padding:10px 0
+}
+.market-basic-volume>span{color:var(--muted-foreground);font-size:11px}
+.market-basic-volume>div{display:grid;justify-items:end}
+.market-basic-volume strong{font-size:16px}
+.market-basic-volume small{color:var(--volume);font-size:12px;font-weight:700}
+.market-basic-ma{
+  display:grid;grid-template-columns:1fr 1fr;align-items:center;
+  border-top:1px solid var(--border);padding-top:9px
+}
+.market-basic-ma>span{display:flex;align-items:center;gap:5px;color:var(--muted-foreground);font-size:12px}
+.market-basic-ma>span:last-child{justify-self:end}
+.market-basic-ma i{width:7px;height:7px;border-radius:50%;background:var(--trend)}
+.market-basic-ma strong{font-size:13px}
+.scanner-auth-required{
+  display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:14px;padding:24px
+}
+.scanner-auth-icon{
+  display:grid;width:44px;height:44px;place-items:center;border:1px solid var(--border);
+  border-radius:50%;background:var(--surface-2)
+}
+.scanner-auth-required p{margin-top:4px;color:var(--muted-foreground);font-size:12px}
+.scanner-account-link{display:inline-flex;align-items:center;justify-content:center;text-decoration:none}
+.scanner-source-card .rail-kv dd{font-weight:700}
+
+@media(max-width:1023px){
+  .scanner-layout{grid-template-columns:1fr}
+  .scanner-context-rail{position:static;grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media(max-width:767px){
+  .scanner-main{padding-top:12px}
+  .scanner-main .scanner-controls{margin:0 8px 16px}
+  .scanner-mode{display:grid;grid-template-columns:1fr 1fr}
+  .scanner-search-row{
+    display:grid;
+    grid-template-columns:minmax(0,1fr) auto;
+    gap:8px;
+  }
+  .scanner-search-row .search-box{grid-column:1}
+  #scanner-search-btn{grid-column:2}
+  #scanner-clear-btn{grid-column:1/-1}
+  .scanner-market-filters,.scanner-filter-controls{
+    grid-template-columns:1fr;
+  }
+  .scanner-mode-note{font-size:11px;line-height:1.5}
+  .scanner-layout{display:block}
+  .scanner-context-rail{display:grid;grid-template-columns:1fr;margin-top:16px}
+  .scanner-table-wrap{display:none}
+  .scanner-mobile-list{display:grid;gap:10px;padding:10px}
+  .scanner-results .section-bar{align-items:flex-start}
+  .scanner-results .section-bar>small{max-width:72px;text-align:right}
+  .scanner-auth-required{grid-template-columns:1fr;text-align:center}
+  .scanner-auth-icon{justify-self:center}
+  .scanner-account-link{width:100%}
+  .quick-filters{overflow-x:auto;white-space:nowrap;scrollbar-width:none}
+  .quick-filters::-webkit-scrollbar{display:none}
+}
+
+/* ==========================================================
+   Phase 3A desktop refinement — approved scope
+   ========================================================== */
+@media(min-width:768px){
+  .scanner-mode{
+    display:inline-grid;
+    grid-template-columns:1fr 1fr;
+    width:min(100%,430px);
+    gap:4px;
+    border:1px solid var(--border);
+    border-radius:9px;
+    background:var(--surface-2);
+    padding:4px;
+  }
+  .scanner-mode button{
+    min-height:42px;
+    border:0;
+    border-radius:7px;
+    background:transparent;
+    color:var(--muted-foreground);
+    padding:0 16px;
+    font:inherit;
+    font-size:13px;
+    font-weight:600;
+    cursor:pointer;
+  }
+  .scanner-mode button.active{
+    background:var(--surface);
+    color:var(--foreground);
+    box-shadow:0 0 0 1px var(--border-strong),0 3px 12px color-mix(in srgb,#000 12%,transparent);
+  }
+  .scanner-mode-note{
+    padding:11px 14px 12px;
+    font-size:12.5px;
+    line-height:1.5;
+  }
+  .scanner-filter-controls,
+  .scanner-market-filters{
+    display:grid;
+    grid-template-columns:minmax(210px,.9fr) minmax(340px,1.5fr) 104px;
+    align-items:end;
+    gap:10px;
+  }
+  .scanner-filter-controls label{
+    display:grid;
+    gap:6px;
+    min-width:0;
+  }
+  .scanner-filter-controls label>span{
+    color:var(--muted-foreground);
+    font-size:11px;
+    font-weight:600;
+    letter-spacing:.02em;
+    text-transform:uppercase;
+  }
+  .scanner-filter-controls select,
+  .scanner-filter-controls .clear-filters{
+    width:100%;
+    height:44px;
+    min-height:44px;
+    box-sizing:border-box;
+    border-radius:8px;
+    font-size:13px;
+  }
+  .scanner-filter-controls select{
+    border:1px solid var(--border-strong);
+    background:var(--surface);
+    color:var(--foreground);
+    padding:0 38px 0 12px;
+  }
+  .scanner-filter-controls .clear-filters{
+    padding:0 12px;
+    white-space:nowrap;
+  }
+  .scanner-signal-filters{
+    display:flex;
+    flex-wrap:wrap;
+    gap:7px;
+    border-top:1px solid var(--border);
+    padding:12px 14px 2px;
+  }
+  .scanner-signal-chip{
+    --chip-accent:var(--muted-foreground);
+    min-width:62px;
+    height:34px;
+    border:1px solid var(--border-strong);
+    border-radius:8px;
+    background:var(--surface);
+    color:var(--muted-foreground);
+    padding:0 12px;
+    font:inherit;
+    font-size:12px;
+    font-weight:700;
+    cursor:pointer;
+    transition:background .15s ease,border-color .15s ease,color .15s ease,box-shadow .15s ease;
+  }
+  .scanner-signal-chip[data-signal-tone="pass"]{--chip-accent:#35b85a}
+  .scanner-signal-chip[data-signal-tone="converge"]{--chip-accent:#d59b32}
+  .scanner-signal-chip[data-signal-tone="forming"]{--chip-accent:#4e95cf}
+  .scanner-signal-chip[data-signal-tone="money"]{--chip-accent:#9d6de2}
+  .scanner-signal-chip:hover{
+    border-color:color-mix(in srgb,var(--chip-accent) 48%,var(--border-strong));
+    background:color-mix(in srgb,var(--chip-accent) 6%,var(--surface));
+    color:var(--foreground);
+  }
+  .scanner-signal-chip.active{
+    border-color:color-mix(in srgb,var(--chip-accent) 72%,var(--border-strong));
+    background:color-mix(in srgb,var(--chip-accent) 14%,var(--surface));
+    color:var(--foreground);
+    box-shadow:inset 0 2px 0 var(--chip-accent);
+  }
+  .scanner-signal-chip[data-signal-tone="all"].active{--chip-accent:var(--trend)}
+}
+
+/* ==========================================================
+   Phase 3A UI polish #2 — scanner-only
+   ========================================================== */
+
+/* Custom dropdown: identical in Dark/Light, desktop/mobile. */
+.scanner-controls{overflow:visible}
+.scanner-filter-controls{position:relative;z-index:8}
+.scanner-custom-field{display:grid;min-width:0;gap:6px}
+.scanner-field-label{
+  color:var(--muted-foreground);
+  font-size:11px;
+  font-weight:600;
+  letter-spacing:.02em;
+  text-transform:uppercase;
+}
+.scanner-custom-select{position:relative;min-width:0}
+.scanner-custom-select.is-open{z-index:60}
+.scanner-select-trigger{
+  display:flex;
+  width:100%;
+  height:44px;
+  min-height:44px;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  box-sizing:border-box;
+  border:1px solid var(--border-strong);
+  border-radius:8px;
+  background:var(--surface);
+  color:var(--foreground);
+  padding:0 12px;
+  font:inherit;
+  font-size:13px;
+  font-weight:600;
+  text-align:left;
+  cursor:pointer;
+}
+.scanner-select-trigger:hover{
+  border-color:color-mix(in srgb,var(--trend) 45%,var(--border-strong));
+  background:color-mix(in srgb,var(--trend) 3%,var(--surface));
+}
+.scanner-custom-select.is-open .scanner-select-trigger{
+  border-color:color-mix(in srgb,var(--trend) 68%,var(--border-strong));
+  box-shadow:0 0 0 2px color-mix(in srgb,var(--trend) 14%,transparent);
+}
+.scanner-select-chevron{
+  width:8px;
+  height:8px;
+  flex:0 0 8px;
+  border-right:1.7px solid currentColor;
+  border-bottom:1.7px solid currentColor;
+  transform:translateY(-2px) rotate(45deg);
+  transition:transform .15s ease;
+  opacity:.78;
+}
+.scanner-custom-select.is-open .scanner-select-chevron{
+  transform:translateY(2px) rotate(225deg);
+}
+.scanner-select-menu{
+  position:absolute;
+  top:calc(100% + 6px);
+  right:0;
+  left:0;
+  display:none;
+  max-height:min(360px,52vh);
+  overflow:auto;
+  border:1px solid var(--border-strong);
+  border-radius:10px;
+  background:var(--surface);
+  box-shadow:0 18px 38px color-mix(in srgb,#000 34%,transparent);
+  padding:5px;
+}
+.scanner-custom-select.is-open .scanner-select-menu{display:grid;gap:2px}
+.scanner-select-option{
+  display:flex;
+  width:100%;
+  min-height:38px;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  border:0;
+  border-radius:7px;
+  background:transparent;
+  color:var(--foreground);
+  padding:8px 10px;
+  font:inherit;
+  font-size:13px;
+  text-align:left;
+  cursor:pointer;
+}
+.scanner-select-option:hover,
+.scanner-select-option:focus-visible{
+  outline:none;
+  background:var(--surface-2);
+}
+.scanner-select-option.selected{
+  background:color-mix(in srgb,var(--trend) 12%,var(--surface));
+  color:var(--foreground);
+}
+.scanner-select-option.selected b{color:var(--trend);font-size:13px}
+
+/* Signal chips: one visual language on both desktop and mobile. */
+.quick-filters.scanner-signal-filters{
+  overflow:visible;
+  white-space:normal;
+}
+.scanner-signal-filters{
+  display:flex;
+  flex-wrap:wrap;
+  gap:7px;
+  border-top:1px solid var(--border);
+  padding:12px 14px 2px;
+}
+.scanner-signal-chip{
+  --chip-accent:var(--muted-foreground);
+  min-width:62px;
+  height:34px;
+  border:1px solid var(--border-strong);
+  border-radius:8px;
+  background:var(--surface);
+  color:var(--muted-foreground);
+  padding:0 12px;
+  font:inherit;
+  font-size:12px;
+  font-weight:700;
+  white-space:nowrap;
+  cursor:pointer;
+}
+.scanner-signal-chip[data-signal-tone="pass"]{--chip-accent:#35b85a}
+.scanner-signal-chip[data-signal-tone="converge"]{--chip-accent:#d59b32}
+.scanner-signal-chip[data-signal-tone="forming"]{--chip-accent:#4e95cf}
+.scanner-signal-chip[data-signal-tone="money"]{--chip-accent:#9d6de2}
+.scanner-signal-chip:hover{
+  border-color:color-mix(in srgb,var(--chip-accent) 48%,var(--border-strong));
+  background:color-mix(in srgb,var(--chip-accent) 6%,var(--surface));
+  color:var(--foreground);
+}
+.scanner-signal-chip.active{
+  border-color:color-mix(in srgb,var(--chip-accent) 72%,var(--border-strong));
+  background:color-mix(in srgb,var(--chip-accent) 14%,var(--surface));
+  color:var(--foreground);
+  box-shadow:inset 0 2px 0 var(--chip-accent);
+}
+.scanner-signal-chip[data-signal-tone="all"].active{--chip-accent:var(--trend)}
+
+/* Watchlist table: CCC gets enough room; status badge never clips. */
+.scanner-watchlist-table{table-layout:fixed}
+.scanner-watchlist-table col.col-company{width:31%}
+.scanner-watchlist-table col.col-price{width:11%}
+.scanner-watchlist-table col.col-change{width:13%}
+.scanner-watchlist-table col.col-volume{width:17%}
+.scanner-watchlist-table col.col-ccc{width:28%}
+.scanner-watchlist-table td:last-child{overflow:visible}
+.scanner-watchlist-table .ccc-rail{
+  display:flex;
+  width:100%;
+  max-width:none;
+  align-items:center;
+  justify-content:flex-start;
+  gap:8px;
+  white-space:nowrap;
+}
+.scanner-watchlist-table .ccc-rail em{
+  min-width:78px;
+  max-width:none;
+  flex:0 0 auto;
+  justify-content:center;
+  overflow:visible;
+  text-overflow:clip;
+}
+
+/* Scanner mobile header: no redundant route label beside search. */
+.mobile-search-row.is-search-only{
+  grid-template-columns:minmax(0,1fr);
+}
+.mobile-search-row.is-search-only .mobile-global-search{
+  grid-column:1/-1;
+  width:100%;
+  min-width:0;
+}
+
+/* Keep reset button aligned with custom fields. */
+.scanner-filter-controls>.clear-filters{
+  height:44px;
+  min-height:44px;
+  align-self:end;
+}
+
+@media(max-width:767px){
+  .scanner-signal-filters{
+    display:grid;
+    grid-template-columns:1fr .8fr .8fr .8fr 1.25fr;
+    gap:5px;
+    padding:10px 0 3px;
+  }
+  .scanner-signal-chip{
+    width:100%;
+    min-width:0;
+    height:36px;
+    padding:0 5px;
+    font-size:11.5px;
+  }
+  .scanner-filter-controls{
+    overflow:visible;
+  }
+  .scanner-custom-field{gap:5px}
+  .scanner-select-trigger{height:44px;font-size:13px}
+  .scanner-select-menu{
+    max-height:46vh;
+    border-radius:9px;
+  }
+  .scanner-select-option{min-height:40px;font-size:13px}
+}
+
+/* ==========================================================
+   Phase 3A v19.2.3 — SAFE NATIVE DROPDOWN
+   Reverts fragile custom popup. Browser-native menu is kept,
+   while dark/light colors are explicitly coordinated.
+   ========================================================== */
+
+.scanner-filter-controls label{
+  position:relative;
+  min-width:0;
+}
+.scanner-filter-controls select{
+  display:block;
+  width:100%;
+  height:44px;
+  min-height:44px;
+  box-sizing:border-box;
+  border:1px solid var(--border-strong);
+  border-radius:8px;
+  background:var(--surface);
+  color:var(--foreground);
+  padding:0 38px 0 12px;
+  font:inherit;
+  font-size:13px;
+  font-weight:600;
+  line-height:44px;
+  cursor:pointer;
+  outline:none;
+}
+.scanner-filter-controls select:hover{
+  border-color:color-mix(in srgb,var(--trend) 42%,var(--border-strong));
+}
+.scanner-filter-controls select:focus{
+  border-color:color-mix(in srgb,var(--trend) 70%,var(--border-strong));
+  box-shadow:0 0 0 2px color-mix(in srgb,var(--trend) 14%,transparent);
+}
+
+/* Chromium/Edge on Windows respects color-scheme for native popup UI. */
+:root[data-theme="dark"] .scanner-filter-controls select{
+  color-scheme:dark;
+  background:#0b111d;
+  color:#f4f6fb;
+}
+:root[data-theme="dark"] .scanner-filter-controls select option{
+  background:#0b111d;
+  color:#f4f6fb;
+}
+
+:root[data-theme="light"] .scanner-filter-controls select{
+  color-scheme:light;
+  background:#ffffff;
+  color:#111827;
+}
+:root[data-theme="light"] .scanner-filter-controls select option{
+  background:#ffffff;
+  color:#111827;
+}
+
+/* Keep the filter geometry identical between market and personal list. */
+.scanner-filter-controls,
+.scanner-market-filters{
+  align-items:end;
+}
+.scanner-filter-controls>.clear-filters{
+  height:44px;
+  min-height:44px;
+  align-self:end;
+}
+
+/* Disable the abandoned custom-dropdown visuals if stale markup is ever cached. */
+.scanner-custom-field,
+.scanner-custom-select,
+.scanner-select-menu{
+  display:none !important;
+}
+
+@media(max-width:767px){
+  .scanner-filter-controls select{
+    height:44px;
+    min-height:44px;
+    font-size:13px;
+  }
+}
+
+/* ==========================================================
+   Phase 3A v19.2.4 — MOBILE INLINE DROPDOWN
+   Desktop keeps the stable native select.
+   Mobile opens options in normal document flow, never overlaying
+   or extending beyond the filter card.
+   ========================================================== */
+
+.scanner-mobile-filter-controls{display:none}
+
+@media(max-width:767px){
+  .scanner-desktop-filter-controls{display:none !important}
+  .scanner-mobile-filter-controls{
+    display:grid;
+    grid-template-columns:minmax(0,1fr);
+    gap:10px;
+    margin-top:10px;
+  }
+
+  .scanner-mobile-inline-field{
+    display:grid;
+    min-width:0;
+    gap:5px;
+  }
+
+  .scanner-mobile-inline-field .scanner-field-label{
+    padding-left:2px;
+    color:var(--muted-foreground);
+    font-size:11px;
+    font-weight:600;
+    letter-spacing:.02em;
+    text-transform:uppercase;
+  }
+
+  .scanner-inline-trigger{
+    display:flex;
+    width:100%;
+    min-width:0;
+    height:46px;
+    align-items:center;
+    justify-content:space-between;
+    gap:12px;
+    box-sizing:border-box;
+    border:1px solid var(--border-strong);
+    border-radius:10px;
+    background:var(--surface);
+    color:var(--foreground);
+    padding:0 14px;
+    font:inherit;
+    font-size:13px;
+    font-weight:600;
+    text-align:left;
+    cursor:pointer;
+  }
+
+  .scanner-inline-trigger:hover{
+    border-color:color-mix(in srgb,var(--trend) 42%,var(--border-strong));
+  }
+
+  .scanner-inline-trigger.is-open{
+    border-color:color-mix(in srgb,var(--trend) 68%,var(--border-strong));
+    background:color-mix(in srgb,var(--trend) 4%,var(--surface));
+    box-shadow:0 0 0 2px color-mix(in srgb,var(--trend) 12%,transparent);
+    border-bottom-left-radius:8px;
+    border-bottom-right-radius:8px;
+  }
+
+  .scanner-inline-trigger i{
+    width:8px;
+    height:8px;
+    flex:0 0 8px;
+    border-right:1.7px solid currentColor;
+    border-bottom:1.7px solid currentColor;
+    transform:translateY(-2px) rotate(45deg);
+    opacity:.78;
+    transition:transform .15s ease;
+  }
+
+  .scanner-inline-trigger.is-open i{
+    transform:translateY(2px) rotate(225deg);
+  }
+
+  .scanner-inline-options{
+    display:none;
+    width:100%;
+    min-width:0;
+    max-height:286px;
+    overflow:auto;
+    box-sizing:border-box;
+    border:1px solid var(--border-strong);
+    border-radius:10px;
+    background:var(--surface);
+    padding:5px;
+    box-shadow:0 8px 20px color-mix(in srgb,#000 18%,transparent);
+  }
+
+  .scanner-inline-options.is-open{
+    display:grid;
+    gap:3px;
+  }
+
+  .scanner-inline-option{
+    display:flex;
+    width:100%;
+    min-width:0;
+    min-height:40px;
+    align-items:center;
+    justify-content:space-between;
+    gap:12px;
+    box-sizing:border-box;
+    border:0;
+    border-radius:8px;
+    background:transparent;
+    color:var(--foreground);
+    padding:8px 11px;
+    font:inherit;
+    font-size:13px;
+    text-align:left;
+    cursor:pointer;
+  }
+
+  .scanner-inline-option span{
+    min-width:0;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+  }
+
+  .scanner-inline-option:hover,
+  .scanner-inline-option:focus-visible{
+    outline:none;
+    background:var(--surface-2);
+  }
+
+  .scanner-inline-option.selected{
+    background:color-mix(in srgb,var(--trend) 12%,var(--surface));
+    color:var(--foreground);
+  }
+
+  .scanner-inline-option.selected b{
+    flex:0 0 auto;
+    color:var(--trend);
+    font-size:13px;
+  }
+
+  .scanner-mobile-reset{
+    width:100%;
+    height:44px;
+    min-height:44px;
+    border-radius:10px;
+  }
+}
+
+/* ==========================================================
+   Phase 3 — Responsive table polish v19.2.5
+   Goal:
+   - Comfortable visual rhythm across wide desktop / laptop / tablet.
+   - Numeric columns share a clean right edge.
+   - Company gets the most semantic space.
+   - CCC never sacrifices its status badge.
+   - Mobile cards remain unchanged.
+   ========================================================== */
+
+/* Shared table behavior */
+.scanner-market-table,
+.scanner-watchlist-table{
+  width:100%;
+  table-layout:fixed;
+}
+
+.scanner-market-table .scanner-company,
+.scanner-watchlist-table .scanner-company{
+  width:100%;
+  min-width:0;
+}
+
+.scanner-market-table .scanner-company>div,
+.scanner-watchlist-table .scanner-company>div{
+  min-width:0;
+  max-width:100%;
+}
+
+.scanner-market-table .scanner-company span,
+.scanner-watchlist-table .scanner-company span{
+  display:block;
+  max-width:100%;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+
+.scanner-market-table th.num,
+.scanner-market-table td.num,
+.scanner-watchlist-table th.num,
+.scanner-watchlist-table td.num{
+  text-align:right;
+  font-variant-numeric:tabular-nums;
+}
+
+.scanner-market-table td.num strong,
+.scanner-watchlist-table td.num strong{
+  display:block;
+  white-space:nowrap;
+}
+
+/* Wide desktop >= 1440: semantic proportions */
+@media(min-width:1440px){
+  .scanner-market-table col.col-company{width:29%}
+  .scanner-market-table col.col-price{width:11%}
+  .scanner-market-table col.col-change{width:13%}
+  .scanner-market-table col.col-volume{width:21%}
+  .scanner-market-table col.col-ma200{width:13%}
+  .scanner-market-table col.col-ma10{width:13%}
+
+  .scanner-watchlist-table col.col-company{width:30%}
+  .scanner-watchlist-table col.col-price{width:11%}
+  .scanner-watchlist-table col.col-change{width:12%}
+  .scanner-watchlist-table col.col-volume{width:19%}
+  .scanner-watchlist-table col.col-ccc{width:28%}
+}
+
+/* Normal desktop 1200–1439: compact numbers, preserve company + CCC */
+@media(min-width:1200px) and (max-width:1439px){
+  .scanner-layout{
+    grid-template-columns:minmax(0,1fr) 270px;
+    gap:18px;
+  }
+
+  .scanner-market-table col.col-company{width:28%}
+  .scanner-market-table col.col-price{width:10%}
+  .scanner-market-table col.col-change{width:13%}
+  .scanner-market-table col.col-volume{width:23%}
+  .scanner-market-table col.col-ma200{width:13%}
+  .scanner-market-table col.col-ma10{width:13%}
+
+  .scanner-watchlist-table col.col-company{width:29%}
+  .scanner-watchlist-table col.col-price{width:10%}
+  .scanner-watchlist-table col.col-change{width:12%}
+  .scanner-watchlist-table col.col-volume{width:20%}
+  .scanner-watchlist-table col.col-ccc{width:29%}
+
+  .lovable-scanner-table th,
+  .lovable-scanner-table td{
+    padding-left:12px;
+    padding-right:12px;
+  }
+}
+
+/* Laptop / tablet landscape 768–1199:
+   right rail moves below, table gets the full content width. */
+@media(min-width:768px) and (max-width:1199px){
+  .scanner-layout{
+    grid-template-columns:minmax(0,1fr);
+    gap:18px;
+  }
+
+  .scanner-context-rail{
+    position:static;
+    display:grid;
+    grid-template-columns:repeat(2,minmax(0,1fr));
+    gap:14px;
+  }
+
+  .scanner-market-table col.col-company{width:29%}
+  .scanner-market-table col.col-price{width:10%}
+  .scanner-market-table col.col-change{width:12%}
+  .scanner-market-table col.col-volume{width:23%}
+  .scanner-market-table col.col-ma200{width:13%}
+  .scanner-market-table col.col-ma10{width:13%}
+
+  .scanner-watchlist-table col.col-company{width:30%}
+  .scanner-watchlist-table col.col-price{width:10%}
+  .scanner-watchlist-table col.col-change{width:12%}
+  .scanner-watchlist-table col.col-volume{width:19%}
+  .scanner-watchlist-table col.col-ccc{width:29%}
+
+  .lovable-scanner-table th,
+  .lovable-scanner-table td{
+    padding:11px 10px;
+  }
+
+  .scanner-company{gap:8px}
+  .scanner-company strong{font-size:14px}
+  .scanner-company span{font-size:11.5px}
+}
+
+/* Narrow tablet: retain readable table geometry and allow local horizontal
+   scroll instead of crushing values. This does not affect mobile cards. */
+@media(min-width:768px) and (max-width:899px){
+  .scanner-market-table{min-width:760px}
+  .scanner-watchlist-table{min-width:720px}
+  .scanner-table-wrap{
+    overflow-x:auto;
+    overscroll-behavior-inline:contain;
+  }
+  .scanner-context-rail{
+    grid-template-columns:1fr;
+  }
+}
+
+/* CCC column: rail + score + badge remain one coherent unit. */
+@media(min-width:768px){
+  .scanner-watchlist-table td:last-child{
+    padding-left:10px;
+    padding-right:10px;
+  }
+
+  .scanner-watchlist-table .ccc-rail{
+    gap:7px;
+    min-width:0;
+  }
+
+  .scanner-watchlist-table .ccc-rail em{
+    min-width:76px;
+    padding-left:7px;
+    padding-right:7px;
+    white-space:nowrap;
+  }
+}
+
+/* Mobile: preserve approved card layout; only tighten inline dropdown rows. */
+@media(max-width:767px){
+  .scanner-inline-options{
+    max-height:260px;
+    padding:4px;
+  }
+
+  .scanner-inline-options.is-open{
+    gap:2px;
+  }
+
+  .scanner-inline-option{
+    min-height:36px;
+    padding:6px 10px;
+  }
+}
+
+/* ==========================================================
+   Phase 3 v19.2.6 — Shared stock search autocomplete
+   ========================================================== */
+
+.stock-search-host{
+  position:relative;
+  overflow:visible;
+}
+
+.stock-suggestions{
+  position:absolute;
+  z-index:120;
+  top:calc(100% + 6px);
+  left:0;
+  width:100%;
+  max-height:318px;
+  overflow:auto;
+  box-sizing:border-box;
+  border:1px solid var(--border-strong);
+  border-radius:10px;
+  background:var(--surface);
+  box-shadow:0 16px 34px color-mix(in srgb,#000 30%,transparent);
+  padding:5px;
+}
+
+.stock-suggestions[hidden]{
+  display:none !important;
+}
+
+.stock-suggestion-item{
+  display:grid;
+  grid-template-columns:52px minmax(0,1fr);
+  width:100%;
+  min-height:48px;
+  align-items:center;
+  gap:10px;
+  box-sizing:border-box;
+  border:0;
+  border-radius:8px;
+  background:transparent;
+  color:var(--foreground);
+  padding:7px 9px;
+  font:inherit;
+  text-align:left;
+  cursor:pointer;
+}
+
+.stock-suggestion-item:hover,
+.stock-suggestion-item:focus-visible{
+  outline:none;
+  background:var(--surface-2);
+}
+
+.stock-suggestion-symbol{
+  display:inline-flex;
+  min-width:0;
+  justify-content:center;
+  align-items:center;
+  border:1px solid var(--border);
+  border-radius:7px;
+  background:var(--surface-2);
+  padding:6px 5px;
+  color:var(--foreground);
+  font-size:12px;
+  font-weight:800;
+  letter-spacing:.01em;
+}
+
+.stock-suggestion-copy{
+  display:grid;
+  min-width:0;
+  gap:2px;
+}
+
+.stock-suggestion-copy strong{
+  overflow:hidden;
+  color:var(--foreground);
+  font-size:12.5px;
+  font-weight:600;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+
+.stock-suggestion-copy small{
+  color:var(--muted-foreground);
+  font-size:10.5px;
+}
+
+.stock-suggestion-empty{
+  padding:12px 10px;
+  color:var(--muted-foreground);
+  font-size:12px;
+  text-align:center;
+}
+
+.global-search .stock-suggestions{
+  min-width:100%;
+}
+
+.scanner-search-row .search-box{
+  overflow:visible;
+}
+
+@media(max-width:767px){
+  .scanner-search-row .stock-suggestions{
+    width:100%;
+    max-height:270px;
+    border-radius:9px;
+  }
+
+  .stock-suggestion-item{
+    min-height:44px;
+    grid-template-columns:48px minmax(0,1fr);
+    padding:6px 8px;
+  }
+
+  .stock-suggestion-copy strong{
+    font-size:12px;
+  }
+
+  .stock-suggestion-copy small{
+    font-size:10px;
+  }
+}
+
+/* ==========================================================
+   Phase 3 v19.2.7 — SAFE SEARCH SUGGESTIONS
+   Scanner suggestions: inline, never overlap page content.
+   Header suggestions: compact floating panel, opaque background.
+   ========================================================== */
+
+.stock-suggestions{
+  background:#0b111d;
+  color:#f4f6fb;
+}
+
+:root[data-theme="light"] .stock-suggestions{
+  background:#ffffff;
+  color:#111827;
+}
+
+:root[data-theme="dark"] .stock-suggestions{
+  background:#0b111d;
+  color:#f4f6fb;
+}
+
+/* Scanner autocomplete is part of normal document flow. */
+.scanner-search-stack{
+  display:grid;
+  gap:0;
+}
+
+.scanner-search-stack .scanner-search-row{
+  margin-bottom:0;
+}
+
+.scanner-stock-suggestions{
+  position:static !important;
+  top:auto !important;
+  left:auto !important;
+  width:100% !important;
+  max-height:248px;
+  margin-top:6px;
+  overflow:auto;
+  border-radius:10px;
+  box-shadow:none;
+  z-index:auto;
+}
+
+/* Keep header/global autocomplete compact and visually detached. */
+.global-search.stock-search-host,
+.mobile-global-search.stock-search-host{
+  overflow:visible;
+}
+
+.global-search .stock-suggestions,
+.mobile-global-search .stock-suggestions{
+  max-height:258px;
+  border-radius:10px;
+  box-shadow:0 16px 34px rgba(0,0,0,.34);
+}
+
+/* Strong opaque item states so underlying page never bleeds through. */
+.stock-suggestion-item{
+  background:transparent;
+}
+
+.stock-suggestion-item:hover,
+.stock-suggestion-item:focus-visible{
+  background:#141c2a;
+}
+
+.stock-suggestion-item.selected{
+  background:#141c2a;
+}
+
+:root[data-theme="light"] .stock-suggestion-item:hover,
+:root[data-theme="light"] .stock-suggestion-item:focus-visible{
+  background:#f1f5f9;
+}
+
+.stock-suggestion-symbol{
+  background:#111827;
+  border-color:#263246;
+}
+
+:root[data-theme="light"] .stock-suggestion-symbol{
+  background:#f8fafc;
+  border-color:#d8dee9;
+}
+
+/* Scanner controls below should be pushed down cleanly when suggestions open. */
+.scanner-search-stack + .scanner-mode-note,
+.scanner-search-stack + .scanner-signal-filters,
+.scanner-search-stack + .scanner-filter-controls{
+  position:relative;
+}
+
+/* Mobile: compact rows and spacing. */
+@media(max-width:767px){
+  .scanner-stock-suggestions{
+    max-height:220px;
+    margin-top:5px;
+    border-radius:9px;
+    padding:4px;
+  }
+
+  .stock-suggestion-item{
+    min-height:40px;
+    grid-template-columns:46px minmax(0,1fr);
+    gap:8px;
+    padding:5px 7px;
+  }
+
+  .stock-suggestion-symbol{
+    padding:5px 4px;
+    font-size:11.5px;
+  }
+
+  .stock-suggestion-copy strong{
+    font-size:11.8px;
+  }
+
+  .stock-suggestion-copy small{
+    font-size:9.8px;
+  }
+}
+
+/* ==========================================================
+   Phase 4 v19.3.0 — Account clean port
+   Golden source: Alpha.19 visual contract.
+   No MutationObserver / DOM patch stack.
+   ========================================================== */
+
+.phase4-account-page{
+  padding-bottom:28px;
+}
+
+.phase4-account-layout{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) 330px;
+  gap:20px;
+  align-items:start;
+}
+
+.phase4-account-main,
+.phase4-account-rail{
+  display:grid;
+  min-width:0;
+  gap:20px;
+}
+
+.phase4-account-rail{
+  position:sticky;
+  top:84px;
+}
+
+.phase4-profile-card,
+.phase4-watchlist-card,
+.phase4-plan-card,
+.phase4-security-card,
+.phase4-source-card{
+  min-width:0;
+}
+
+.phase4-plan-metrics{
+  display:grid;
+  gap:0;
+  margin-top:14px;
+  border:1px solid var(--border);
+  border-radius:var(--radius-md);
+  overflow:hidden;
+}
+
+.phase4-plan-metrics>div{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  padding:10px 11px;
+  border-bottom:1px solid var(--border);
+}
+
+.phase4-plan-metrics>div:last-child{border-bottom:0}
+.phase4-plan-metrics span{color:var(--muted-foreground);font-size:11px}
+.phase4-plan-metrics strong{font-size:12px;text-align:right}
+
+.phase4-vip{
+  margin-top:14px;
+  padding:12px;
+  border:1px solid color-mix(in srgb,#a855f7 42%,var(--border));
+  border-radius:var(--radius-lg);
+  background:color-mix(in srgb,#a855f7 8%,var(--surface-1));
+}
+
+.phase4-vip>div{display:grid;gap:3px}
+.phase4-vip span{color:#b479ff;font-size:10px;font-weight:800;letter-spacing:.07em}
+.phase4-vip strong{font-size:13px}
+.phase4-vip small{color:var(--muted-foreground);font-size:10.5px;line-height:1.45}
+.phase4-vip button{
+  width:100%;
+  min-height:38px;
+  margin-top:10px;
+  border:1px solid var(--border-strong);
+  border-radius:var(--radius-md);
+  background:var(--surface-2);
+  color:var(--muted-foreground);
+  font-weight:700;
+}
+
+.phase4-upgrade{
+  margin-top:14px;
+  padding-top:14px;
+  border-top:1px solid var(--border);
+}
+
+.phase4-upgrade-head h3{margin:3px 0 2px;font-size:17px}
+.phase4-upgrade-head p{margin:0;color:var(--muted-foreground);font-size:11px}
+.phase4-upgrade-grid{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:8px;
+  margin-top:12px;
+}
+.phase4-plan-choice{
+  display:grid;
+  gap:4px;
+  min-width:0;
+  padding:10px;
+  border:1px solid var(--border);
+  border-radius:var(--radius-md);
+  background:var(--surface-2);
+}
+.phase4-plan-choice strong{font-size:12px}
+.phase4-plan-choice b{overflow:hidden;font-size:11px;text-overflow:ellipsis;white-space:nowrap}
+.phase4-plan-choice span{color:var(--muted-foreground);font-size:10px}
+.phase4-upgrade-note{
+  margin-top:8px;
+  padding:9px;
+  border:1px dashed var(--border-strong);
+  border-radius:var(--radius-md);
+  color:var(--muted-foreground);
+  font-size:10.5px;
+  line-height:1.45;
+  text-align:center;
+}
+
+.phase4-source-note{
+  margin:12px 0 0;
+  color:var(--muted-foreground);
+  font-size:10.5px;
+  line-height:1.55;
+}
+
+/* Final watchlist editor from Alpha.19 screenshots: one row per symbol. */
+.phase4-watchlist-card .ccc-wl-selected-list{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:8px;
+  max-height:440px;
+  overflow:auto;
+}
+.phase4-watchlist-card .ccc-wl-selected-row{
+  display:grid;
+  grid-template-columns:auto minmax(0,1fr) 32px;
+  align-items:center;
+  gap:9px;
+  min-width:0;
+  padding:10px;
+  border:1px solid var(--border);
+  border-radius:var(--radius-md);
+  background:var(--surface-2);
+}
+.phase4-watchlist-card .ccc-wl-selected-row>div{min-width:0}
+.phase4-watchlist-card .ccc-wl-selected-row strong,
+.phase4-watchlist-card .ccc-wl-selected-row span,
+.phase4-watchlist-card .ccc-wl-selected-row small{display:block}
+.phase4-watchlist-card .ccc-wl-selected-row span{
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  font-size:11.5px;
+}
+.phase4-watchlist-card .ccc-wl-selected-row small{color:var(--muted-foreground);font-size:10px}
+.phase4-watchlist-card .ccc-wl-selected-row>button{
+  width:30px;
+  height:30px;
+  display:grid;
+  place-items:center;
+  border:1px solid var(--border);
+  border-radius:50%;
+  background:transparent;
+  color:var(--muted-foreground);
+  font-size:16px;
+}
+.phase4-watchlist-card .ccc-wl-selected-row>button:hover{
+  border-color:var(--negative);
+  color:var(--negative);
+}
+
+/* Avoid the old absolute dropdown behavior; search results expand inside the card. */
+.phase4-wl-suggestions{
+  position:static!important;
+  top:auto!important;
+  right:auto!important;
+  left:auto!important;
+  width:100%!important;
+  max-height:250px;
+  margin-top:6px;
+  background:var(--surface-1)!important;
+  box-shadow:none!important;
+}
+.phase4-wl-suggestions[hidden]{display:none!important}
+.phase4-wl-suggestions .ccc-wl-result{
+  display:grid;
+  grid-template-columns:auto minmax(0,1fr) auto;
+}
+.phase4-wl-suggestions .ccc-wl-result-copy{
+  display:grid;
+  min-width:0;
+}
+.phase4-wl-suggestions .ccc-wl-result-copy small{
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.phase4-wl-suggestions .ccc-wl-result-copy em{
+  color:var(--muted-foreground);
+  font-size:10px;
+  font-style:normal;
+}
+
+/* Donor CSS uses width:100% on secondary buttons. Account action rows need local sizing. */
+.phase4-watchlist-card .ccc-wl-actions .ccc-account-secondary{
+  margin-top:0;
+  width:auto;
+}
+.phase4-watchlist-card .ccc-wl-actions .ccc-account-primary{
+  width:100%;
+}
+
+/* Auth overlay belongs to the single writer now. */
+.phase4-auth-overlay{
+  z-index:1400;
+}
+
+@media(max-width:1199px){
+  .phase4-account-layout{
+    grid-template-columns:minmax(0,1fr) 300px;
+    gap:16px;
+  }
+}
+
+@media(max-width:1023px){
+  .phase4-account-layout{
+    display:grid;
+    grid-template-columns:1fr;
+  }
+  .phase4-account-main,
+  .phase4-account-rail{
+    display:contents;
+  }
+  .phase4-profile-card{order:1}
+  .phase4-plan-card{order:2}
+  .phase4-watchlist-card{order:3}
+  .phase4-security-card{order:4}
+  .phase4-source-card{order:5}
+  .phase4-account-rail{position:static}
+}
+
+@media(max-width:767px){
+  .phase4-account-page{padding-top:18px}
+  .phase4-account-page .ccc-account-heading{
+    gap:12px;
+  }
+  .phase4-account-page .ccc-account-heading h1{
+    font-size:28px;
+  }
+  .phase4-profile-card,
+  .phase4-watchlist-card,
+  .phase4-plan-card,
+  .phase4-security-card,
+  .phase4-source-card{
+    padding:16px;
+  }
+  .phase4-watchlist-card .ccc-wl-selected-list{
+    grid-template-columns:1fr;
+    max-height:none;
+  }
+  .phase4-watchlist-card .ccc-wl-metrics{
+    grid-template-columns:1fr;
+  }
+  .phase4-watchlist-card .ccc-wl-actions{
+    grid-template-columns:1fr;
+  }
+  .phase4-watchlist-card .ccc-wl-actions .ccc-account-secondary{
+    width:100%;
+  }
+  .phase4-plan-metrics>div{
+    min-height:48px;
+  }
+  .phase4-upgrade-grid{
+    grid-template-columns:repeat(2,minmax(0,1fr));
+  }
+  .phase4-auth-overlay{
+    align-items:end;
+  }
+}
+
+@media(max-width:390px){
+  .phase4-upgrade-grid{
+    grid-template-columns:1fr 1fr;
+  }
+}
+
+
+
+/* ==========================================================
+   Phase 4D — Account polish + VIP Day presentation
+   Scoped to account components. No global layout redesign.
+   ========================================================== */
+
+.phase4-watchlist-card .ccc-wl-search-wrap{
+  position:relative;
+  display:grid;
+  gap:7px;
+  width:100%;
+  margin-top:16px;
+}
+.phase4-watchlist-card .ccc-wl-search-wrap>label{
+  font-weight:700;
+  color:var(--foreground);
+}
+.phase4-watchlist-card #account-wl-search{
+  width:100%;
+  min-height:46px;
+  padding:0 14px;
+  border:1px solid var(--border);
+  border-radius:var(--radius-md);
+  background:var(--surface-2);
+  color:var(--foreground);
+  font:inherit;
+  outline:none;
+}
+.phase4-watchlist-card #account-wl-search:focus{
+  border-color:var(--ring);
+  box-shadow:0 0 0 2px color-mix(in srgb,var(--ring) 22%,transparent);
+}
+.phase4-watchlist-card .phase4-wl-suggestions{
+  border:1px solid var(--border);
+  border-radius:var(--radius-md);
+  overflow:auto;
+}
+
+.phase4-watchlist-card .ccc-wl-actions{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:10px;
+  margin-top:14px;
+}
+.phase4-watchlist-card .ccc-wl-actions .ccc-account-secondary,
+.phase4-watchlist-card .ccc-wl-actions .ccc-account-primary{
+  width:100%;
+  min-height:44px;
+  margin:0;
+}
+
+.phase4-vip.active{
+  border-color:color-mix(in srgb,#a855f7 72%,var(--border));
+  background:color-mix(in srgb,#a855f7 14%,var(--surface-1));
+}
+.phase4-vip button:not(:disabled){
+  cursor:pointer;
+  border-color:color-mix(in srgb,#a855f7 56%,var(--border));
+  color:var(--foreground);
+}
+.phase4-vip button:not(:disabled):hover{
+  background:color-mix(in srgb,#a855f7 12%,var(--surface-2));
+}
+.phase4-vip-note{
+  margin:10px 0 0;
+  padding-top:9px;
+  border-top:1px solid color-mix(in srgb,#a855f7 28%,var(--border));
+  color:var(--muted-foreground);
+  font-size:11px;
+  line-height:1.5;
+}
+
+.phase4-alert-card{min-width:0}
+.phase4-channel-list{
+  display:grid;
+  gap:0;
+  margin-top:12px;
+  border:1px solid var(--border);
+  border-radius:var(--radius-md);
+  overflow:hidden;
+}
+.phase4-channel-list>div{
+  display:grid;
+  grid-template-columns:minmax(72px,.7fr) minmax(0,1.4fr);
+  gap:4px 10px;
+  padding:10px 11px;
+  border-bottom:1px solid var(--border);
+}
+.phase4-channel-list>div:last-child{border-bottom:0}
+.phase4-channel-list span{
+  color:var(--muted-foreground);
+  font-size:11px;
+}
+.phase4-channel-list strong{
+  min-width:0;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  text-align:right;
+  font-size:11.5px;
+}
+.phase4-channel-list small{
+  grid-column:1/-1;
+  color:var(--muted-foreground);
+  font-size:10px;
+  line-height:1.45;
+}
+.phase4-channel-note{
+  margin:10px 0 0;
+  color:var(--muted-foreground);
+  font-size:10.5px;
+  line-height:1.45;
+}
+
+.phase4-security-actions{
+  display:grid;
+  gap:8px;
+  margin-top:12px;
+}
+.phase4-security-actions .ccc-account-secondary{
+  width:100%;
+  margin:0;
+}
+.phase4-password-open{
+  border-color:var(--border-strong);
+}
+.phase4-security-note{
+  margin:10px 0 0;
+  color:var(--muted-foreground);
+  font-size:10.5px;
+  line-height:1.45;
+}
+.phase4-password-dialog{max-width:500px}
+.phase4-password-form{
+  display:grid;
+  gap:10px;
+  padding:20px 22px 22px;
+}
+.phase4-password-form label{
+  font-weight:700;
+  color:var(--foreground);
+}
+.phase4-password-form input{
+  width:100%;
+  min-height:44px;
+  padding:0 12px;
+  border:1px solid var(--border);
+  border-radius:var(--radius-md);
+  background:var(--surface-2);
+  color:var(--foreground);
+  font:inherit;
+}
+
+@media(max-width:1023px){
+  .phase4-alert-card{order:3}
+  .phase4-watchlist-card{order:4}
+  .phase4-security-card{order:5}
+  .phase4-source-card{order:6}
+}
+
+@media(max-width:767px){
+  .phase4-alert-card{padding:16px}
+  .phase4-watchlist-card .ccc-wl-actions{
+    grid-template-columns:1fr;
+  }
+  .phase4-watchlist-card #account-wl-search{
+    min-height:46px;
+  }
+  .phase4-password-dialog{
+    width:min(100%,560px);
+    max-width:none;
+  }
+}
+
+
+/* ==========================================================
+   Phase 4D.2 — Guest / Member onboarding semantics
+   ========================================================== */
+
+.guest-onboarding-cta,
+.member-empty-onboarding{
+  display:grid;
+  gap:14px;
+  margin-top:16px;
+  padding:16px;
+  border:1px solid var(--border);
+  border-radius:var(--radius-lg);
+  background:var(--surface-2);
+}
+.guest-onboarding-kicker,
+.member-empty-onboarding>div>span{
+  color:var(--muted-foreground);
+  font-size:10px;
+  font-weight:800;
+  letter-spacing:.07em;
+}
+.guest-onboarding-cta h3,
+.member-empty-onboarding h3{
+  margin:4px 0 4px;
+  font-size:18px;
+}
+.guest-onboarding-cta p,
+.member-empty-onboarding p{
+  margin:0;
+  color:var(--muted-foreground);
+  font-size:12px;
+  line-height:1.55;
+}
+.guest-onboarding-actions{
+  display:flex;
+  flex-wrap:wrap;
+  gap:9px;
+}
+.guest-onboarding-actions .primary-action,
+.guest-onboarding-actions .secondary-action,
+.member-empty-onboarding .primary-action{
+  min-height:42px;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  text-decoration:none;
+}
+
+.guest-plan-preview{
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:8px;
+  padding-top:12px;
+  border-top:1px solid var(--border);
+}
+.guest-plan-preview>div{
+  display:grid;
+  gap:3px;
+  min-width:0;
+  padding:10px;
+  border:1px solid var(--border);
+  border-radius:var(--radius-md);
+  background:var(--surface-1);
+}
+.guest-plan-preview b{font-size:11px}
+.guest-plan-preview span{
+  overflow:hidden;
+  color:var(--foreground);
+  font-size:10.5px;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.guest-plan-preview small{
+  color:var(--muted-foreground);
+  font-size:9.5px;
+}
+.guest-plan-preview .vip{
+  border-color:color-mix(in srgb,#a855f7 45%,var(--border));
+}
+
+.guest-access-card .rail-card-body{display:grid;gap:10px}
+.guest-access-kv dd{font-weight:700}
+.guest-rail-auth{
+  width:100%;
+  min-height:38px;
+  cursor:pointer;
+}
+.member-empty-onboarding{
+  margin:8px 0 0;
+}
+.member-empty-onboarding .primary-action{
+  justify-self:start;
+}
+
+@media(max-width:767px){
+  .guest-onboarding-cta,
+  .member-empty-onboarding{
+    padding:14px;
+  }
+  .guest-onboarding-actions{
+    display:grid;
+    grid-template-columns:1fr;
+  }
+  .guest-onboarding-actions .primary-action,
+  .guest-onboarding-actions .secondary-action,
+  .member-empty-onboarding .primary-action{
+    width:100%;
+  }
+  .guest-plan-preview{
+    grid-template-columns:repeat(2,minmax(0,1fr));
+  }
+}
+
+
+/* ==========================================================
+   Phase 4D.2 FINAL — Overview ALL + paged scope + contextual upsell
+   ========================================================== */
+
+.overview-context-upsell{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  gap:14px;
+  align-items:center;
+  margin:0 0 14px;
+  padding:12px 14px;
+  border:1px solid color-mix(in srgb,#a855f7 34%,var(--border));
+  border-radius:var(--radius-lg);
+  background:color-mix(in srgb,#a855f7 7%,var(--surface-1));
+}
+.overview-context-upsell>div:first-child{
+  display:grid;
+  gap:3px;
+  min-width:0;
+}
+.overview-context-upsell strong{font-size:12px}
+.overview-context-upsell span{
+  color:var(--muted-foreground);
+  font-size:11px;
+  line-height:1.45;
+}
+
+.overview-upsell-actions{
+  display:grid;
+  grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);
+  gap:9px;
+  min-width:min(100%,360px);
+}
+.overview-upsell-actions.is-compact{
+  grid-template-columns:auto auto;
+  min-width:0;
+}
+.overview-vip-primary,
+.overview-upgrade-secondary{
+  min-height:42px;
+  padding:0 14px;
+  border-radius:var(--radius-md);
+  font:inherit;
+  font-size:11px;
+  font-weight:800;
+  cursor:pointer;
+}
+.overview-vip-primary{
+  border:1px solid color-mix(in srgb,#a855f7 70%,var(--border));
+  background:color-mix(in srgb,#a855f7 20%,var(--surface-2));
+  color:var(--foreground);
+  box-shadow:inset 0 0 0 1px color-mix(in srgb,#a855f7 10%,transparent);
+}
+.overview-vip-primary:hover{
+  background:color-mix(in srgb,#a855f7 28%,var(--surface-2));
+}
+.overview-upgrade-secondary{
+  border:1px solid var(--border);
+  background:var(--surface-2);
+  color:var(--foreground);
+}
+.overview-upgrade-secondary:hover{border-color:var(--border-strong)}
+
+.overview-member-cta,
+.overview-member-status{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  gap:12px 16px;
+  align-items:center;
+  margin-top:16px;
+  padding:15px;
+  border:1px solid var(--border);
+  border-radius:var(--radius-lg);
+  background:var(--surface-2);
+}
+.overview-member-cta>div:first-child,
+.overview-member-status>div:first-child{
+  display:grid;
+  gap:3px;
+}
+.overview-member-cta span,
+.overview-member-status span{
+  color:var(--muted-foreground);
+  font-size:9.5px;
+  font-weight:800;
+  letter-spacing:.06em;
+}
+.overview-member-cta strong,
+.overview-member-status strong{font-size:13px}
+.overview-member-cta small,
+.overview-member-status small{
+  color:var(--muted-foreground);
+  font-size:10.5px;
+  line-height:1.45;
+}
+.overview-manage-link,
+.overview-auth-link{
+  grid-column:1/-1;
+  justify-self:start;
+  border:0;
+  background:none;
+  color:var(--muted-foreground);
+  font:inherit;
+  font-size:10.5px;
+  text-decoration:underline;
+  text-underline-offset:3px;
+  cursor:pointer;
+}
+.overview-member-status.vip-active{
+  border-color:color-mix(in srgb,#a855f7 45%,var(--border));
+  background:color-mix(in srgb,#a855f7 9%,var(--surface-2));
+}
+
+.overview-all-reset{
+  appearance:none;
+  cursor:pointer;
+  font:inherit;
+}
+.overview-all-reset.is-all{
+  border-color:var(--border-strong);
+  color:var(--foreground);
+}
+.overview-server-pager{
+  padding-top:12px;
+}
+.overview-server-pager button{
+  min-width:86px;
+}
+
+.guest-onboarding-cta>.overview-upsell-actions{
+  margin-top:2px;
+}
+.guest-onboarding-cta .overview-auth-link{
+  justify-self:start;
+}
+
+.phase4-vip.is-intent,
+.phase4-upgrade.is-intent{
+  outline:2px solid color-mix(in srgb,#a855f7 65%,transparent);
+  outline-offset:3px;
+}
+
+@media(max-width:767px){
+  .overview-context-upsell{
+    grid-template-columns:1fr;
+  }
+  .overview-context-upsell .overview-upsell-actions,
+  .overview-upsell-actions,
+  .overview-upsell-actions.is-compact{
+    grid-template-columns:1fr;
+    width:100%;
+  }
+  .overview-member-cta,
+  .overview-member-status{
+    grid-template-columns:1fr;
+  }
+  .overview-member-cta>.overview-upsell-actions{
+    width:100%;
+  }
+  .overview-server-pager{
+    display:grid;
+    grid-template-columns:1fr auto 1fr;
+    gap:8px;
+    align-items:center;
+  }
+  .overview-server-pager button{
+    min-width:0;
+    width:100%;
+  }
+}
+
+
+/* ==========================================================
+   Phase 4D.2 CTA polish — clearer hierarchy, no duplicate upsell
+   ========================================================== */
+.overview-context-upsell{
+  padding:15px 16px;
+  gap:16px;
+}
+.overview-context-upsell>div:first-child{gap:5px}
+.overview-context-upsell strong{
+  font-size:14px;
+  line-height:1.35;
+}
+.overview-context-upsell span{
+  font-size:12.5px;
+  line-height:1.55;
+}
+.overview-vip-primary,
+.overview-upgrade-secondary{
+  min-height:46px;
+  padding:0 16px;
+  font-size:12.5px;
+  letter-spacing:.005em;
+}
+.overview-vip-primary{
+  border-color:color-mix(in srgb,#a855f7 78%,var(--border));
+  background:color-mix(in srgb,#a855f7 25%,var(--surface-2));
+  box-shadow:inset 0 0 0 1px color-mix(in srgb,#a855f7 14%,transparent),0 4px 16px color-mix(in srgb,#a855f7 9%,transparent);
+}
+.overview-vip-primary:hover{background:color-mix(in srgb,#a855f7 32%,var(--surface-2))}
+.overview-member-cta,
+.overview-member-status{
+  padding:17px;
+  gap:14px 18px;
+}
+.overview-member-cta>div:first-child,
+.overview-member-status>div:first-child{gap:5px}
+.overview-member-cta span,
+.overview-member-status span{font-size:10.5px}
+.overview-member-cta strong,
+.overview-member-status strong{
+  font-size:15px;
+  line-height:1.35;
+}
+.overview-member-cta small,
+.overview-member-status small{
+  font-size:12.25px;
+  line-height:1.55;
+}
+.guest-onboarding-cta{
+  padding:18px;
+  gap:16px;
+}
+.guest-onboarding-kicker{font-size:10.5px}
+.guest-onboarding-cta h3{
+  margin:5px 0 6px;
+  font-size:19px;
+  line-height:1.3;
+}
+.guest-onboarding-cta p{
+  font-size:13px;
+  line-height:1.6;
+}
+.guest-onboarding-cta .overview-auth-link{
+  font-size:12.5px;
+  font-weight:700;
+  color:var(--foreground);
+  text-decoration-thickness:1px;
+}
+.overview-manage-link{font-size:11.5px}
+.overview-filter-footer{
+  display:flex;
+  justify-content:flex-end;
+  margin-top:10px;
+  padding:2px 2px 0;
+}
+.overview-filter-footer .overview-manage-link{
+  grid-column:auto;
+  justify-self:auto;
+  color:var(--muted-foreground);
+}
+.plan-scope-card .rail-kv dt,
+.plan-scope-card .rail-kv dd{font-size:11px}
+.plan-scope-card .rail-note{
+  font-size:10.75px;
+  line-height:1.5;
+}
+.plan-scope-card .rail-action{
+  min-height:39px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-size:11.25px;
+  font-weight:750;
+}
+@media(max-width:767px){
+  .overview-context-upsell{padding:14px}
+  .overview-context-upsell strong{font-size:13.5px}
+  .overview-context-upsell span{font-size:12px}
+  .overview-vip-primary,
+  .overview-upgrade-secondary{
+    min-height:46px;
+    font-size:12.5px;
+  }
+  .overview-member-cta,
+  .overview-member-status,
+  .guest-onboarding-cta{padding:15px}
+  .guest-onboarding-cta h3{font-size:18px}
+}
+
+
+/* ==========================================================
+   Phase 4D.2 FINAL LOCK — Guest FREE-first, member value-first
+   ========================================================== */
+.guest-free-first{
+  border-color:color-mix(in srgb,#22c55e 38%,var(--border));
+  background:color-mix(in srgb,#22c55e 7%,var(--surface-1));
+}
+.guest-context-actions{
+  display:grid;
+  gap:7px;
+  min-width:min(100%,300px);
+}
+.overview-free-primary{
+  min-height:46px;
+  padding:0 16px;
+  border:1px solid color-mix(in srgb,#22c55e 65%,var(--border));
+  border-radius:var(--radius-md);
+  background:color-mix(in srgb,#22c55e 18%,var(--surface-2));
+  color:var(--foreground);
+  font:inherit;
+  font-size:12.5px;
+  font-weight:800;
+  cursor:pointer;
+}
+.overview-free-primary:hover{
+  background:color-mix(in srgb,#22c55e 25%,var(--surface-2));
+}
+.overview-paid-text{
+  border:0;
+  background:none;
+  color:var(--muted-foreground);
+  font:inherit;
+  font-size:11.25px;
+  text-align:left;
+  text-decoration:underline;
+  text-underline-offset:3px;
+  cursor:pointer;
+}
+.guest-free-onboarding{
+  border-color:color-mix(in srgb,#22c55e 42%,var(--border));
+  background:color-mix(in srgb,#22c55e 6%,var(--surface-2));
+}
+.guest-free-main{
+  width:min(100%,430px);
+  min-height:48px;
+  font-size:13px;
+}
+.guest-paid-options{
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:6px;
+  color:var(--muted-foreground);
+  font-size:11.5px;
+  line-height:1.5;
+}
+.guest-paid-options button{
+  padding:0;
+  border:0;
+  background:none;
+  color:var(--foreground);
+  font:inherit;
+  font-weight:700;
+  text-decoration:underline;
+  text-underline-offset:3px;
+  cursor:pointer;
+}
+.guest-paid-options button:first-of-type{
+  color:color-mix(in srgb,#c084fc 82%,var(--foreground));
+}
+@media(max-width:767px){
+  .guest-context-actions{
+    width:100%;
+    min-width:0;
+  }
+  .overview-free-primary{
+    width:100%;
+  }
+  .guest-paid-options{gap:5px}
+}
+
+
+/* ==========================================================
+   Phase 4D.2 FINAL FOUNDATION
+   Overview = top 10 discovery
+   Scanner technical scopes = same universal stock row/card
+   ========================================================== */
+
+.overview-see-all{
+  display:flex;
+  justify-content:center;
+  padding:14px 0 2px;
+}
+.overview-see-all a{
+  display:inline-flex;
+  align-items:center;
+  gap:7px;
+  min-height:40px;
+  padding:0 14px;
+  border:1px solid var(--border);
+  border-radius:var(--radius-md);
+  background:var(--surface-2);
+  color:var(--foreground);
+  font-size:12px;
+  font-weight:800;
+  text-decoration:none;
+}
+.overview-see-all a:hover{
+  border-color:var(--border-strong);
+  background:var(--surface-1);
+}
+
+.scanner-universal-head{
+  margin-top:0;
+}
+.scanner-universal-rows{
+  width:100%;
+}
+.scanner-universal-rows .universal-stock-card{
+  width:100%;
+}
+.scanner-server-pager{
+  margin-top:14px;
+}
+.scanner-mode button{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap:7px;
+}
+.scanner-mode-badge,
+.scanner-mode-count{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  min-width:20px;
+  min-height:18px;
+  padding:0 6px;
+  border-radius:999px;
+  font-size:9px;
+  font-weight:800;
+  line-height:1;
+}
+.scanner-mode-badge{
+  border:1px solid color-mix(in srgb,#a855f7 50%,var(--border));
+  background:color-mix(in srgb,#a855f7 14%,var(--surface-2));
+}
+.scanner-mode-count{
+  border:1px solid var(--border);
+  background:var(--surface-2);
+}
+.scanner-mode-note strong{
+  font-weight:800;
+}
+
+@media(max-width:767px){
+  .overview-see-all a{
+    width:100%;
+    justify-content:center;
+    min-height:44px;
+    font-size:12.5px;
+  }
+  .scanner-universal-head{
+    display:none;
+  }
+  .scanner-server-pager{
+    display:grid;
+    grid-template-columns:1fr auto 1fr;
+    gap:8px;
+    align-items:center;
+  }
+  .scanner-server-pager button{
+    width:100%;
+    min-width:0;
+  }
+}
+
+
+/* ==========================================================
+   Phase 4D.2 VIP STATE HOTFIX
+   ========================================================== */
+.access-state-notice{
+  position:sticky;
+  top:0;
+  z-index:35;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:8px;
+  margin:0;
+  padding:9px 16px;
+  border-bottom:1px solid color-mix(in srgb,#a855f7 35%,var(--border));
+  background:color-mix(in srgb,#a855f7 11%,var(--surface-1));
+  color:var(--foreground);
+  font-size:11.5px;
+}
+.access-state-notice .ui-icon{
+  width:15px;
+  height:15px;
+}
+.plan-scope-card.is-vip-active{
+  border-color:color-mix(in srgb,#a855f7 45%,var(--border));
+}
+.plan-scope-card .rail-vip-row dd{
+  color:color-mix(in srgb,#c084fc 88%,var(--foreground));
+  font-weight:800;
+}
+.plan-scope-card .vip-note{
+  border-color:color-mix(in srgb,#a855f7 35%,var(--border));
+  background:color-mix(in srgb,#a855f7 8%,var(--surface-2));
+}
+.account-action small{
+  white-space:nowrap;
+}
+@media(max-width:767px){
+  .access-state-notice{
+    position:relative;
+    padding:8px 12px;
+    text-align:center;
+    font-size:10.75px;
+  }
+}
+
+/* Phase 5A — Stock Detail transplant
+   Alpha.19 remains the visual donor. These rules only apply the locked
+   right-rail correction and current CCC readability thresholds. */
+
+.phase5a-stock-detail .phase5a-detail-layout{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) 300px;
+  gap:20px;
+  align-items:start;
+}
+.phase5a-stock-detail .phase5a-detail-context-rail{
+  display:grid;
+  grid-template-columns:1fr;
+  gap:12px;
+  position:sticky;
+  top:84px;
+  align-self:start;
+}
+.phase5a-stock-detail .stock-detail-workspace{min-width:0}
+.phase5a-stock-detail .stock-public-identity .company-logo{
+  width:52px;
+  height:52px;
+  flex:0 0 52px;
+  border-radius:12px;
+}
+.phase5a-stock-detail [data-symbol],
+.lovable-stock-row[data-symbol],
+.market-basic-card[data-symbol],
+tr[data-symbol]{cursor:pointer}
+.phase5a-stock-detail .stock-public-identity p{font-size:13.5px;color:var(--foreground)}
+.phase5a-stock-detail .stock-public-identity small{font-size:11.5px}
+.phase5a-stock-detail .stock-public-identity span{font-size:11px}
+.phase5a-stock-detail .detail-tabs button{font-size:13.5px}
+.phase5a-stock-detail .detail-panel>header h3{font-size:14.5px}
+.phase5a-stock-detail .detail-panel>header span{font-size:12px}
+.phase5a-stock-detail .detail-metric small{font-size:11.5px}
+.phase5a-stock-detail .detail-metric strong{font-size:15px}
+.phase5a-stock-detail .detail-notice{font-size:12.5px;line-height:1.5}
+.phase5a-stock-detail .technical-signal header span{font-size:11.5px}
+.phase5a-stock-detail .technical-signal header b{font-size:10.5px}
+.phase5a-stock-detail .technical-signal>strong{font-size:17px}
+.phase5a-stock-detail .technical-locked>strong{font-size:15px}
+.phase5a-stock-detail .technical-locked p{font-size:13px;line-height:1.5}
+.phase5a-stock-detail .analysis-badge{font-size:11px}
+.phase5a-stock-detail .score-part b{font-size:12px}
+.phase5a-stock-detail .score-part small{font-size:11px;line-height:1.4}
+.phase5a-stock-detail .score-part>strong{font-size:13px}
+.phase5a-stock-detail .quarter-table th,
+.phase5a-stock-detail .quarter-table td{font-size:12px}
+.phase5a-stock-detail .bctc-action strong{font-size:12.5px}
+.phase5a-stock-detail .bctc-action span,
+.phase5a-stock-detail .bctc-action a{font-size:11.5px}
+.phase5a-stock-detail .detail-locked-actions{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  justify-content:center;
+}
+.phase5a-stock-detail .detail-locked-actions a{text-decoration:none}
+.phase5a-stock-detail .detail-access-card .rail-note{margin-top:10px}
+
+@media(max-width:1100px){
+  .phase5a-stock-detail .phase5a-detail-layout{
+    grid-template-columns:minmax(0,1fr) 250px;
+    gap:14px;
+  }
+}
+@media(max-width:900px){
+  .phase5a-stock-detail .phase5a-detail-layout{grid-template-columns:1fr}
+  .phase5a-stock-detail .phase5a-detail-context-rail{
+    position:static;
+    grid-template-columns:repeat(2,minmax(0,1fr));
+  }
+  .phase5a-stock-detail .phase5a-detail-context-rail .detail-source-card{grid-column:1/-1}
+}
+@media(max-width:767px){
+  .phase5a-stock-detail .phase5a-detail-layout{display:block}
+  .phase5a-stock-detail .phase5a-detail-context-rail{display:none}
+  .phase5a-stock-detail .stock-public-identity .company-logo{width:46px;height:46px;flex-basis:46px}
+  .phase5a-stock-detail .stock-public-identity p{font-size:15px}
+  .phase5a-stock-detail .stock-public-identity small{font-size:12.5px}
+  .phase5a-stock-detail .detail-tabs button{font-size:14px}
+  .phase5a-stock-detail .detail-panel>header h3{font-size:15px}
+  .phase5a-stock-detail .detail-panel>header span{font-size:12.5px}
+  .phase5a-stock-detail .detail-metric small{font-size:12px}
+  .phase5a-stock-detail .detail-metric strong{font-size:15px}
+  .phase5a-stock-detail .technical-signal header span{font-size:12px}
+  .phase5a-stock-detail .technical-signal header b{font-size:11px}
+  .phase5a-stock-detail .quarter-table th,
+  .phase5a-stock-detail .quarter-table td{font-size:12.5px}
+}
+
+/* ==========================================================
+   Phase 5A Stock Detail polish #2
+   Right rail keeps all existing cards and reuses the exact Overview
+   "Tín hiệu CCC" component. Member locked CTA is capacity/quota aware.
+   ========================================================== */
+
+.phase5a-stock-detail .detail-lock-cta{
+  display:grid;
+  width:min(100%,620px);
+  gap:10px;
+  margin:14px auto 0;
+}
+.phase5a-stock-detail .detail-lock-context{
+  padding:10px 12px;
+  border:1px solid var(--border);
+  border-radius:var(--radius-md);
+  background:var(--surface-2);
+  text-align:left;
+}
+.phase5a-stock-detail .detail-lock-context strong{
+  display:block;
+  color:var(--muted-foreground);
+  font-size:12px;
+  font-weight:600;
+  line-height:1.55;
+}
+.phase5a-stock-detail .detail-lock-feedback{
+  padding:9px 11px;
+  border:1px solid color-mix(in srgb,var(--negative) 48%,var(--border));
+  border-radius:var(--radius-md);
+  background:color-mix(in srgb,var(--negative) 8%,var(--surface-2));
+  color:var(--negative);
+  font-size:11.5px;
+  line-height:1.45;
+  text-align:left;
+}
+.phase5a-stock-detail .detail-locked-actions{
+  display:grid;
+  grid-template-columns:minmax(0,1.45fr) minmax(150px,.8fr);
+  width:100%;
+  gap:9px;
+  justify-content:stretch;
+}
+.phase5a-stock-detail .detail-locked-actions .primary-action,
+.phase5a-stock-detail .detail-locked-actions .secondary-action{
+  display:flex;
+  width:100%;
+  min-width:0;
+  min-height:44px;
+  align-items:center;
+  justify-content:center;
+  margin:0;
+  padding:8px 14px;
+  border-radius:var(--radius-md);
+  font:inherit;
+  font-size:12.5px;
+  font-weight:800;
+  line-height:1.3;
+  text-align:center;
+  white-space:normal;
+  cursor:pointer;
+}
+.phase5a-stock-detail .detail-locked-actions .detail-lock-primary{
+  text-decoration:none;
+}
+.phase5a-stock-detail .detail-locked-actions .detail-vip-secondary{
+  border-color:color-mix(in srgb,#a855f7 46%,var(--border));
+  background:color-mix(in srgb,#a855f7 8%,var(--surface-2));
+  color:var(--foreground);
+}
+.phase5a-stock-detail .detail-locked-actions .detail-vip-secondary:hover{
+  background:color-mix(in srgb,#a855f7 14%,var(--surface-2));
+}
+.phase5a-stock-detail .detail-manage-link{
+  justify-self:center;
+  color:var(--muted-foreground);
+  font-size:11.5px;
+  font-weight:650;
+  text-decoration:underline;
+  text-underline-offset:3px;
+}
+.phase5a-stock-detail .detail-signal-card{min-width:0}
+
+@media(max-width:900px) and (min-width:768px){
+  .phase5a-stock-detail .phase5a-detail-context-rail .detail-source-card{
+    grid-column:auto;
+  }
+}
+
+@media(max-width:767px){
+  .phase5a-stock-detail .detail-lock-cta{
+    width:100%;
+    margin-top:12px;
+  }
+  .phase5a-stock-detail .detail-locked-actions{
+    grid-template-columns:1fr;
+  }
+  .phase5a-stock-detail .detail-locked-actions .primary-action,
+  .phase5a-stock-detail .detail-locked-actions .secondary-action{
+    min-height:46px;
+    font-size:13px;
+  }
+  .phase5a-stock-detail .detail-manage-link{font-size:12px}
+}
+
+
+/* ==========================================================
+   Phase 5A Stock Detail polish #3
+   PO-approved micro polish only:
+   - clearer Vietnamese locked-state wording;
+   - tighter Back navigation rhythm;
+   - compact locked CTA, especially on mobile;
+   - reset donor icon styles from leaking into the CTA wrapper.
+   ========================================================== */
+
+.phase5a-stock-detail.stock-detail-page{
+  padding-top:18px;
+}
+
+.phase5a-stock-detail .stock-detail-navigation{
+  display:flex;
+  min-height:0;
+  align-items:center;
+  margin:0 0 12px;
+  padding:0;
+}
+
+.phase5a-stock-detail .stock-detail-navigation .back-action{
+  display:inline-flex;
+  min-height:34px;
+  align-items:center;
+  gap:6px;
+  margin:0;
+  padding:0 4px;
+}
+
+.phase5a-stock-detail .technical-locked{
+  display:flex;
+  width:100%;
+  height:auto;
+  min-height:0;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  gap:8px;
+  overflow:visible;
+  box-sizing:border-box;
+  padding:22px 20px 20px;
+  text-align:center;
+}
+
+.phase5a-stock-detail .technical-locked>.technical-lock-icon{
+  display:grid;
+  width:48px;
+  height:48px;
+  min-width:48px;
+  min-height:48px;
+  place-items:center;
+  margin:0 0 2px;
+  border-radius:50%;
+}
+
+.phase5a-stock-detail .technical-locked>strong{
+  margin:0;
+  font-size:16px;
+  line-height:1.35;
+}
+
+.phase5a-stock-detail .technical-locked>p{
+  max-width:720px;
+  margin:0;
+  line-height:1.55;
+}
+
+/* Alpha.19 donor styled every direct <div> inside .technical-locked as the
+   lock icon. The new CTA wrapper is also a direct div, so fully reset it. */
+.phase5a-stock-detail .technical-locked>.detail-lock-cta{
+  display:grid;
+  width:min(100%,620px);
+  height:auto;
+  min-width:0;
+  min-height:0;
+  place-items:initial;
+  gap:8px;
+  margin:8px auto 0;
+  padding:0;
+  border:0;
+  border-radius:0;
+  background:transparent;
+  box-shadow:none;
+}
+
+.phase5a-stock-detail .detail-lock-context{
+  padding:9px 11px;
+}
+
+.phase5a-stock-detail .detail-lock-context strong{
+  font-size:11.75px;
+  line-height:1.5;
+}
+
+.phase5a-stock-detail .detail-locked-actions{
+  gap:8px;
+}
+
+.phase5a-stock-detail .detail-locked-actions .primary-action,
+.phase5a-stock-detail .detail-locked-actions .secondary-action{
+  min-height:42px;
+}
+
+.phase5a-stock-detail .detail-manage-link{
+  margin-top:1px;
+}
+
+.phase5a-stock-detail .detail-guest-auth{
+  min-height:42px;
+  margin-top:8px;
+}
+
+@media(max-width:767px){
+  .phase5a-stock-detail.stock-detail-page{
+    padding-top:14px;
+  }
+
+  .phase5a-stock-detail .stock-detail-navigation{
+    margin-bottom:10px;
+  }
+
+  .phase5a-stock-detail .stock-detail-navigation .back-action{
+    min-height:32px;
+    padding:0 2px;
+  }
+
+  .phase5a-stock-detail .technical-locked{
+    gap:7px;
+    padding:17px 13px 15px;
+  }
+
+  .phase5a-stock-detail .technical-locked>.technical-lock-icon{
+    width:44px;
+    height:44px;
+    min-width:44px;
+    min-height:44px;
+  }
+
+  .phase5a-stock-detail .technical-locked>strong{
+    font-size:15.5px;
+  }
+
+  .phase5a-stock-detail .technical-locked>p{
+    max-width:330px;
+    font-size:12.5px;
+    line-height:1.5;
+  }
+
+  .phase5a-stock-detail .technical-locked>.detail-lock-cta{
+    width:100%;
+    gap:7px;
+    margin-top:7px;
+  }
+
+  .phase5a-stock-detail .detail-lock-context{
+    padding:8px 10px;
+  }
+
+  .phase5a-stock-detail .detail-lock-context strong{
+    font-size:11.25px;
+    line-height:1.45;
+  }
+
+  .phase5a-stock-detail .detail-locked-actions{
+    grid-template-columns:1fr;
+    gap:6px;
+  }
+
+  .phase5a-stock-detail .detail-locked-actions .primary-action{
+    min-height:44px;
+    font-size:12.75px;
+  }
+
+  .phase5a-stock-detail .detail-locked-actions .detail-vip-secondary{
+    min-height:36px;
+    border-color:transparent;
+    background:transparent;
+    color:color-mix(in srgb,#c084fc 86%,var(--foreground));
+    font-size:12px;
+    text-decoration:underline;
+    text-underline-offset:3px;
+  }
+
+  .phase5a-stock-detail .detail-locked-actions .detail-vip-secondary:hover{
+    background:color-mix(in srgb,#a855f7 7%,transparent);
+  }
+
+  .phase5a-stock-detail .detail-manage-link{
+    margin-top:0;
+    font-size:11.5px;
+  }
+
+  .phase5a-stock-detail .detail-guest-auth{
+    width:100%;
+    min-height:44px;
+  }
+}
+
+
+/* ==========================================================
+   Phase 5B — Public Fundamental Research restore
+   Golden/Alpha.19 donor with locked readability + right-rail corrections.
+   User-approved navigation order is handled in shared JS nav.
+   ========================================================== */
+
+.research-main{--page-working-width:var(--wide-working-width)}
+.research-main .research-hero{padding:0;min-height:64px}
+.research-main .research-hero h1{margin:4px 0 4px;font-size:24px;line-height:1.2}
+.research-main .research-hero p{max-width:880px;font-size:13.5px;line-height:1.6}
+.phase5b-research-tabs{width:max-content;max-width:100%}
+.phase5b-research-grid{
+  grid-template-columns:minmax(0,1fr) 300px;
+  align-items:start;
+  gap:20px;
+}
+.research-context-rail{
+  position:sticky;
+  top:84px;
+  display:grid;
+  grid-template-columns:1fr;
+  gap:12px;
+}
+.research-context-card .rail-kv dd,
+.research-source-card .rail-kv dd{max-width:155px;text-align:right}
+
+/* Industry selector: full visibility on desktop, fast horizontal access on mobile. */
+.research-industry-grid{
+  display:grid;
+  grid-template-columns:repeat(4,minmax(0,1fr));
+  gap:8px;
+  padding:0;
+}
+.research-industry-grid .industry-chip{
+  min-width:0;
+  min-height:46px;
+  justify-content:space-between;
+  gap:8px;
+  padding:8px 10px;
+  border:1px solid var(--border);
+  border-radius:var(--radius-md);
+  background:var(--surface-1);
+  color:var(--foreground);
+  text-align:left;
+}
+.research-industry-grid .industry-chip span{
+  min-width:0;
+  overflow:hidden;
+  font-size:12.5px;
+  font-weight:650;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.research-industry-grid .industry-chip b{flex:none;font-size:10.5px}
+.research-industry-grid .industry-chip:hover{border-color:var(--border-strong);background:var(--surface-2)}
+.research-industry-grid .industry-chip.active{
+  border-color:color-mix(in srgb,var(--trend) 70%,var(--border-strong));
+  background:color-mix(in srgb,var(--trend) 11%,var(--surface-1));
+  box-shadow:inset 0 2px 0 var(--trend);
+}
+
+.phase5b-industry-panel,
+.phase5b-fund-filters,
+.phase5b-screener-panel,
+.phase5b-score-method{padding:16px}
+.research-main .section-title h2,
+.research-main .score-method-head h2{font-size:16px}
+.research-main .section-title p,
+.research-main .score-method-head p{font-size:12px;line-height:1.55}
+
+/* Tables: restore Alpha.19 hierarchy but keep essential text readable. */
+.research-main .fundamental-table{min-width:940px;table-layout:auto}
+.research-main .fundamental-table th,
+.research-main .fundamental-table td{padding:11px 10px;font-size:12px;vertical-align:middle}
+.research-main .fundamental-table th{font-size:11px;line-height:1.3}
+.research-main .fundamental-table th.num,
+.research-main .fundamental-table td.num{text-align:right;font-variant-numeric:tabular-nums}
+.research-main .fundamental-table td.center{text-align:center}
+.research-main .th-main{font-size:11px;font-weight:700;color:var(--foreground)}
+.research-main .th-sub{margin-top:3px;font-size:9.5px;line-height:1.25}
+.research-main .score-coverage{font-size:9.5px;line-height:1.35}
+.research-score{display:block;font-size:13px;font-variant-numeric:tabular-nums}
+.research-company-cell{display:flex;min-width:210px;align-items:center;gap:9px;text-align:left}
+.research-company-cell>div{display:grid;min-width:0}
+.research-company-cell strong{font-size:13px}
+.research-company-cell span{max-width:230px;overflow:hidden;color:var(--muted-foreground);font-size:11px;text-overflow:ellipsis;white-space:nowrap}
+.research-company-cell small{color:var(--muted-foreground);font-size:9.5px}
+.research-company-cell .company-logo{width:34px;height:34px;flex:0 0 34px}
+.research-main .industry-name-cell{max-width:170px;font-size:11px}
+.research-main .freshness-tag{font-size:10px;white-space:nowrap}
+.score-good{color:var(--positive)!important}.score-mid{color:var(--warning)!important}.score-low{color:var(--negative)!important}.score-na{color:var(--muted-foreground)!important}
+
+/* Methodology: four locked groups + readable plain-language glossary. */
+.phase5b-score-method .method-grid{grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.phase5b-score-method .method-card{padding:12px}
+.phase5b-score-method .method-card b{font-size:11.5px;line-height:1.4}
+.phase5b-score-method .method-card p{font-size:10.5px;line-height:1.6}
+.phase5b-score-method .term-glossary{grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.phase5b-score-method .term-glossary>div{padding:11px}
+.phase5b-score-method .term-glossary b{font-size:11px}
+.phase5b-score-method .term-glossary span{font-size:10.5px;line-height:1.5}
+.phase5b-score-method .score-rules summary{font-size:12px}
+.phase5b-score-method .rule-grid p{font-size:10.5px;line-height:1.55}
+.phase5b-score-method .score-note{font-size:10.5px;line-height:1.55}
+.phase5b-score-method .method-total{font-size:10.5px}
+
+.phase5b-fund-filters .filter-label{font-size:12.5px}
+.phase5b-fund-filters .filter-help{font-size:10.5px;line-height:1.5}
+.phase5b-fund-filters .chip{min-height:38px;padding:0 12px;font-size:11.5px}
+.phase5b-result-info{font-size:12px;line-height:1.5}
+
+/* Mobile cards. */
+.phase5b-fund-card{padding:13px}
+.phase5b-card-id{display:flex;min-width:0;align-items:center;gap:9px}
+.phase5b-card-id>div{display:grid;min-width:0}
+.phase5b-card-id .company-logo{width:38px;height:38px;flex:0 0 38px}
+.phase5b-card-id .fund-symbol{font-size:15px}
+.phase5b-card-id span{max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px}
+.phase5b-card-id small{color:var(--muted-foreground);font-size:9.5px}
+.phase5b-card-score{display:grid;justify-items:end;align-content:start;white-space:nowrap}
+.phase5b-card-score strong{font-size:16px;font-variant-numeric:tabular-nums}
+.phase5b-card-score span{font-size:9.5px;color:var(--muted-foreground)}
+.phase5b-fund-card .fund-card-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}
+.phase5b-fund-card .fund-card-grid>div{padding:9px}
+.phase5b-fund-card .fund-card-grid small{font-size:10px;line-height:1.35}
+.phase5b-fund-card .fund-card-grid b{font-size:12px}
+.phase5b-fund-card .fund-card-foot{font-size:10px}
+
+@media(max-width:1199px){
+  .phase5b-research-grid{grid-template-columns:1fr}
+  .research-context-rail{position:static;grid-template-columns:repeat(2,minmax(0,1fr))}
+  .research-industry-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .phase5b-score-method .method-grid,
+  .phase5b-score-method .term-glossary{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+
+@media(max-width:767px){
+  .research-main{padding-top:16px}
+  .research-main .research-hero{padding:0 10px;min-height:0}
+  .research-main .research-hero h1{font-size:24px}
+  .research-main .research-hero p{font-size:13px;line-height:1.6}
+  .phase5b-research-tabs{width:auto;margin:0 10px}
+  .phase5b-research-tabs a{min-height:42px;font-size:13px}
+  .phase5b-research-grid{display:block}
+  .research-context-rail{display:none}
+
+  /* Locked correction #2: horizontal industry rail, never long vertical list. */
+  .research-industry-grid{
+    display:flex;
+    flex-wrap:nowrap;
+    gap:8px;
+    margin:0 0 12px;
+    padding:0 10px 4px;
+    overflow-x:auto;
+    overscroll-behavior-inline:contain;
+    scroll-snap-type:x proximity;
+    scrollbar-width:none;
+  }
+  .research-industry-grid::-webkit-scrollbar{display:none}
+  .research-industry-grid .industry-chip{
+    flex:0 0 auto;
+    width:auto;
+    min-width:150px;
+    max-width:210px;
+    min-height:48px;
+    scroll-snap-align:start;
+  }
+  .research-industry-grid .industry-chip span{font-size:12.5px}
+  .research-industry-grid .industry-chip b{font-size:10.5px}
+
+  .phase5b-industry-panel,
+  .phase5b-fund-filters,
+  .phase5b-screener-panel,
+  .phase5b-score-method{margin:0 8px;padding:13px}
+  .phase5b-score-method .method-grid,
+  .phase5b-score-method .term-glossary,
+  .phase5b-score-method .rule-grid{grid-template-columns:1fr}
+  .phase5b-score-method .method-card b{font-size:12px}
+  .phase5b-score-method .method-card p,
+  .phase5b-score-method .term-glossary span,
+  .phase5b-score-method .rule-grid p{font-size:11px}
+  .phase5b-fund-filters .chips{
+    flex-wrap:nowrap;
+    overflow-x:auto;
+    padding-bottom:4px;
+    scrollbar-width:none;
+  }
+  .phase5b-fund-filters .chips::-webkit-scrollbar{display:none}
+  .phase5b-fund-filters .chip{flex:none;min-height:40px;font-size:11.5px}
+  .phase5b-result-info{margin:12px 10px;font-size:11.5px}
+  .research-main .desktop-table{display:none}
+  .research-main .fund-mobile-list{display:grid;gap:9px}
+  .phase5b-fund-card{margin:0}
+  .phase5b-card-id span{max-width:190px}
+}
+
+@media(max-width:390px){
+  .phase5b-card-id span{max-width:150px}
+  .phase5b-fund-card .fund-card-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+
+
+/* ==========================================================
+   Phase 5B polish #3 — Research density, tables, cards, paging
+   PO-approved desktop + mobile corrections.
+   ========================================================== */
+
+/* Desktop industry chooser: one compact dropdown instead of a wall of buttons. */
+.phase5b-industry-desktop-select{
+  display:flex;
+  align-items:end;
+  justify-content:space-between;
+  gap:16px;
+  padding:12px 14px;
+  border:1px solid var(--border);
+  border-radius:var(--radius-lg);
+  background:var(--surface-1);
+}
+.phase5b-industry-desktop-select label{
+  display:grid;
+  min-width:min(100%,430px);
+  gap:6px;
+}
+.phase5b-industry-desktop-select label>span{
+  color:var(--muted-foreground);
+  font-size:11px;
+  font-weight:650;
+}
+.phase5b-industry-desktop-select select,
+.phase5b-industry-filter select{
+  width:100%;
+  min-height:40px;
+  padding:0 36px 0 11px;
+  border:1px solid var(--border-strong);
+  border-radius:var(--radius-md);
+  background:var(--surface-2);
+  color:var(--foreground);
+  outline:0;
+}
+.phase5b-industry-desktop-select select:focus,
+.phase5b-industry-filter select:focus{
+  border-color:var(--ring);
+  box-shadow:0 0 0 3px var(--focus-ring);
+}
+.phase5b-industry-desktop-select>small{
+  color:var(--muted-foreground);
+  font-size:11px;
+  white-space:nowrap;
+}
+
+/* On desktop the mobile chip rail is hidden. */
+@media(min-width:768px){
+  .research-main .research-industry-grid{display:none}
+}
+
+/* Research tables must fit the main column: no horizontal scrollbar. */
+.research-main .desktop-table,
+.research-main .table-shell{
+  max-width:100%;
+  overflow:visible;
+}
+.research-main .fundamental-table{
+  width:100%;
+  min-width:0!important;
+  table-layout:fixed!important;
+}
+.research-main .fundamental-table th,
+.research-main .fundamental-table td{
+  min-width:0;
+  padding:10px 7px;
+}
+.research-main .fundamental-table th{
+  overflow-wrap:anywhere;
+}
+.research-main .fundamental-table td{
+  overflow:hidden;
+}
+.research-main .research-company-cell{
+  width:100%;
+  min-width:0!important;
+}
+.research-main .research-company-cell>div{
+  min-width:0;
+}
+.research-main .research-company-cell span{
+  width:100%;
+  max-width:100%!important;
+}
+.research-main .industry-name-cell{
+  display:block;
+  width:100%;
+  max-width:100%!important;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+
+/* Explicit column contracts. */
+.research-main .industry-table .col-company{width:27%}
+.research-main .industry-table .col-score{width:11%}
+.research-main .industry-table .col-growth{width:16%}
+.research-main .industry-table .col-roe{width:12%}
+.research-main .industry-table .col-pe{width:10%}
+.research-main .industry-table .col-pb{width:10%}
+.research-main .industry-table .col-fresh{width:14%}
+
+.research-main .screener-table .col-company{width:22%}
+.research-main .screener-table .col-industry{width:15%}
+.research-main .screener-table .col-score{width:10%}
+.research-main .screener-table .col-growth{width:14%}
+.research-main .screener-table .col-roe{width:10%}
+.research-main .screener-table .col-pe{width:9%}
+.research-main .screener-table .col-pb{width:9%}
+.research-main .screener-table .col-fresh{width:11%}
+
+/* Score is a number, not a traffic-light badge. */
+.research-main .research-score,
+.research-main .phase5b-card-score,
+.research-main .phase5b-card-score strong{
+  border:0!important;
+  border-radius:0!important;
+  background:transparent!important;
+  box-shadow:none!important;
+}
+.research-main .research-score{
+  display:inline;
+  padding:0!important;
+  font-size:13px;
+  font-weight:750;
+}
+.research-main .score-coverage{
+  display:none!important;
+}
+.research-main .phase5b-card-score{
+  padding:0!important;
+}
+.research-main .phase5b-card-score strong{
+  padding:0!important;
+  font-size:17px;
+}
+.research-main .phase5b-card-score span{
+  margin-top:2px;
+}
+
+/* Screener industry select. */
+.phase5b-industry-filter select{
+  max-width:440px;
+}
+
+/* Plain freshness language in mobile cards; no redundant industry/freshness badges. */
+.phase5b-card-freshness{
+  justify-content:flex-end!important;
+  padding-top:7px;
+  border-top:1px solid var(--border);
+  color:var(--muted-foreground);
+}
+.phase5b-card-freshness strong{
+  color:var(--foreground);
+  font-weight:600;
+}
+.phase5b-card-id small{
+  max-width:250px;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+
+/* Pagination: small and deterministic; never render hundreds of rows at once. */
+.phase5b-pagination{
+  display:grid;
+  grid-template-columns:auto minmax(120px,1fr) auto;
+  align-items:center;
+  gap:10px;
+  margin-top:14px;
+  padding-top:13px;
+  border-top:1px solid var(--border);
+}
+.phase5b-pagination>span{
+  display:grid;
+  justify-items:center;
+  color:var(--muted-foreground);
+  font-size:11.5px;
+}
+.phase5b-pagination>span strong{
+  color:var(--foreground);
+}
+.phase5b-pagination>span small{
+  margin-top:2px;
+  font-size:10px;
+}
+.phase5b-pagination button{
+  min-width:82px;
+  min-height:36px;
+}
+
+/* Right rail: actionable explanation rather than backend jargon. */
+.phase5b-rail-guide{
+  display:grid;
+  gap:0;
+}
+.phase5b-rail-guide p{
+  display:grid;
+  gap:3px;
+  margin:0;
+  padding:9px 0;
+  border-top:1px solid var(--border);
+}
+.phase5b-rail-guide p:first-child{
+  border-top:0;
+  padding-top:2px;
+}
+.phase5b-rail-guide strong{
+  font-size:11.5px;
+}
+.phase5b-rail-guide span{
+  color:var(--muted-foreground);
+  font-size:10.5px;
+  line-height:1.45;
+}
+.research-filter-rail-card .rail-kv dd,
+.research-guide-card .rail-kv dd{
+  max-width:155px;
+}
+
+/* Compact desktop: right rail already stacks under at <1200; keep table usable. */
+@media(max-width:1199px) and (min-width:768px){
+  .research-main .fundamental-table th,
+  .research-main .fundamental-table td{
+    padding-left:6px;
+    padding-right:6px;
+    font-size:11.5px;
+  }
+  .research-main .th-sub{
+    font-size:9px;
+  }
+}
+
+/* Mobile: keep Golden horizontal industry rail, clean cards, compact paging. */
+@media(max-width:767px){
+  .phase5b-industry-desktop-select{display:none}
+
+  .research-main .research-industry-grid{
+    display:flex;
+  }
+
+  .phase5b-card-id{
+    align-items:flex-start;
+  }
+  .phase5b-card-id small{
+    max-width:205px;
+    font-size:9.5px;
+  }
+  .phase5b-card-score{
+    min-width:64px;
+    justify-items:end;
+  }
+  .phase5b-fund-card .fund-card-foot{
+    min-height:0;
+  }
+
+  .phase5b-industry-filter select{
+    max-width:none;
+    min-height:42px;
+  }
+
+  .phase5b-pagination{
+    grid-template-columns:auto 1fr auto;
+    gap:7px;
+    margin-top:12px;
+    padding-top:11px;
+  }
+  .phase5b-pagination button{
+    min-width:74px;
+    min-height:38px;
+    padding:0 9px;
+    font-size:11px;
+  }
+  .phase5b-pagination>span{
+    font-size:11px;
+  }
+}
+
+@media(max-width:390px){
+  .phase5b-card-id small{max-width:160px}
+  .phase5b-card-score{min-width:58px}
+}
+
+
+/* ==========================================================
+   Phase 5B polish #4 — shared Research pagination
+   Compact one-line desktop/mobile treatment.
+   ========================================================== */
+
+.phase5b-pagination{
+  display:grid!important;
+  grid-template-columns:auto minmax(220px,auto) auto!important;
+  justify-content:center!important;
+  align-items:center!important;
+  gap:12px!important;
+  margin-top:14px!important;
+  padding:12px 0 0!important;
+  border-top:1px solid var(--border)!important;
+}
+
+.phase5b-pagination>button{
+  min-width:84px!important;
+  min-height:36px!important;
+  padding:0 12px!important;
+  border-radius:var(--radius-md)!important;
+  font-size:11.5px!important;
+  font-weight:650!important;
+}
+
+.phase5b-pagination>button:disabled{
+  opacity:.38!important;
+}
+
+.phase5b-page-status{
+  display:flex!important;
+  min-width:220px;
+  align-items:center!important;
+  justify-content:center!important;
+  gap:7px!important;
+  color:var(--muted-foreground);
+  font-size:11.5px!important;
+  line-height:1.2!important;
+  white-space:nowrap;
+}
+
+.phase5b-page-status strong{
+  color:var(--foreground)!important;
+  font-size:11.5px!important;
+  font-weight:700!important;
+}
+
+.phase5b-page-status small{
+  margin:0!important;
+  color:var(--muted-foreground)!important;
+  font-size:10.5px!important;
+}
+
+.phase5b-page-status small::before{
+  content:"·";
+  margin-right:7px;
+  color:var(--border-strong);
+}
+
+@media(max-width:767px){
+  .phase5b-pagination{
+    grid-template-columns:72px minmax(0,1fr) 72px!important;
+    gap:7px!important;
+    padding-top:10px!important;
+  }
+
+  .phase5b-pagination>button{
+    min-width:0!important;
+    min-height:36px!important;
+    padding:0 7px!important;
+    font-size:10.5px!important;
+  }
+
+  .phase5b-page-status{
+    min-width:0;
+    gap:4px!important;
+    font-size:10.5px!important;
+    white-space:normal;
+    text-align:center;
+  }
+
+  .phase5b-page-status strong{
+    font-size:10.5px!important;
+    white-space:nowrap;
+  }
+
+  .phase5b-page-status small{
+    font-size:9.5px!important;
+    white-space:nowrap;
+  }
+
+  .phase5b-page-status small::before{
+    margin-right:4px;
+  }
+}
+
+@media(max-width:390px){
+  .phase5b-pagination{
+    grid-template-columns:66px minmax(0,1fr) 66px!important;
+    gap:5px!important;
+  }
+
+  .phase5b-page-status{
+    display:grid!important;
+    gap:2px!important;
+  }
+
+  .phase5b-page-status small::before{
+    content:"";
+    margin:0;
+  }
+}
+
+
+/* ==========================================================
+   Phase 5B polish #5 — Screener workflow
+   Filters first; scoring methodology becomes progressive disclosure.
+   ========================================================== */
+
+.phase5b-filter-head{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:16px;
+  margin-bottom:14px;
+  padding-bottom:12px;
+  border-bottom:1px solid var(--border);
+}
+.phase5b-filter-head h2{
+  margin:0;
+  font-size:15px;
+}
+.phase5b-filter-head p{
+  margin:3px 0 0;
+  color:var(--muted-foreground);
+  font-size:11px;
+  line-height:1.5;
+}
+.phase5b-reset-filters{
+  flex:none;
+  min-height:36px;
+  padding:0 11px;
+  font-size:11px;
+}
+
+.phase5b-method-disclosure{
+  padding:0!important;
+  overflow:hidden;
+}
+.phase5b-method-disclosure>summary{
+  display:flex;
+  min-height:60px;
+  align-items:center;
+  justify-content:space-between;
+  gap:16px;
+  padding:13px 14px;
+  cursor:pointer;
+  list-style:none;
+}
+.phase5b-method-disclosure>summary::-webkit-details-marker{
+  display:none;
+}
+.phase5b-method-disclosure>summary>span:first-child{
+  display:grid;
+  gap:3px;
+}
+.phase5b-method-disclosure>summary strong{
+  font-size:13px;
+}
+.phase5b-method-disclosure>summary small{
+  color:var(--muted-foreground);
+  font-size:10.5px;
+  font-weight:500;
+}
+.phase5b-method-disclosure>summary::after{
+  content:"＋";
+  flex:none;
+  color:var(--muted-foreground);
+  font-size:18px;
+  line-height:1;
+}
+.phase5b-method-disclosure[open]>summary::after{
+  content:"−";
+}
+.phase5b-method-disclosure[open]>summary{
+  border-bottom:1px solid var(--border);
+}
+.phase5b-method-body{
+  padding:14px;
+}
+.phase5b-method-intro{
+  margin:0 0 12px;
+  color:var(--muted-foreground);
+  font-size:11px;
+  line-height:1.6;
+}
+.phase5b-method-body .method-grid{
+  margin-top:0;
+}
+
+@media(max-width:767px){
+  .phase5b-filter-head{
+    gap:10px;
+    margin-bottom:12px;
+  }
+  .phase5b-filter-head h2{
+    font-size:14px;
+  }
+  .phase5b-filter-head p{
+    font-size:10.5px;
+  }
+  .phase5b-reset-filters{
+    min-height:34px;
+    padding:0 9px;
+    font-size:10.5px;
+  }
+
+  .phase5b-method-disclosure{
+    margin-left:8px!important;
+    margin-right:8px!important;
+  }
+  .phase5b-method-disclosure>summary{
+    min-height:56px;
+    padding:11px 12px;
+  }
+  .phase5b-method-disclosure>summary strong{
+    font-size:12.5px;
+  }
+  .phase5b-method-disclosure>summary small{
+    font-size:10px;
+    line-height:1.4;
+  }
+  .phase5b-method-disclosure .method-total{
+    display:none;
+  }
+  .phase5b-method-body{
+    padding:12px;
+  }
+}
+
+
+/* ==========================================================
+   Phase 5C-0 — Global Page Header & Spacing Alignment
+   PO-approved cross-route shell polish before routing work.
+   ========================================================== */
+
+/* One compact top rhythm across all primary product screens. */
+.overview-main,
+.scanner-main,
+.research-main,
+.phase4-account-page,
+.phase5a-stock-detail.stock-detail-page{
+  padding-top:14px!important;
+}
+
+/* Overview + Research share one route-title language. */
+.phase5c-route-heading{
+  min-height:0!important;
+  margin:0!important;
+  padding:0!important;
+  border:0!important;
+  border-radius:0!important;
+  background:transparent!important;
+  box-shadow:none!important;
+}
+.phase5c-route-heading>div:first-child{
+  min-width:0;
+}
+.phase5c-route-heading h1{
+  margin:0 0 3px!important;
+  padding:0!important;
+  font-family:var(--font-sans)!important;
+  font-size:28px!important;
+  font-weight:700!important;
+  line-height:1.18!important;
+  letter-spacing:-.02em!important;
+}
+.phase5c-route-heading p{
+  max-width:920px;
+  margin:0!important;
+  color:var(--muted-foreground)!important;
+  font-family:var(--font-sans)!important;
+  font-size:13.5px!important;
+  font-weight:400!important;
+  line-height:1.5!important;
+}
+
+/* The top content gap should not consume a large part of the viewport. */
+.overview-main.page-shell{
+  gap:14px!important;
+}
+.research-main.page-shell{
+  gap:12px!important;
+}
+
+/* Research page title is no longer a bordered card. */
+.research-main .research-hero{
+  min-height:0!important;
+  padding:0!important;
+  border:0!important;
+  background:transparent!important;
+  box-shadow:none!important;
+}
+.research-main .research-hero h1{
+  margin:0 0 3px!important;
+  font-size:28px!important;
+}
+.research-main .research-hero p{
+  margin:0!important;
+  font-size:13.5px!important;
+  line-height:1.5!important;
+}
+.phase5b-research-tabs{
+  margin-top:0!important;
+}
+
+/* Account uses the same title scale while preserving the identity card on the right. */
+.phase4-account-page .ccc-account-heading{
+  min-height:0!important;
+  margin:0 0 14px!important;
+  padding:0!important;
+  align-items:center!important;
+}
+.phase4-account-page .ccc-account-heading h1{
+  margin:0 0 3px!important;
+  font-size:28px!important;
+  font-weight:700!important;
+  line-height:1.18!important;
+  letter-spacing:-.02em!important;
+}
+.phase4-account-page .ccc-account-heading p{
+  margin:0!important;
+  font-size:13.5px!important;
+  line-height:1.5!important;
+}
+
+/* Scanner starts at the same visual baseline.
+   Remove the internal top border that looked like a broken/open seam. */
+.scanner-main{
+  padding-top:14px!important;
+}
+.scanner-main .scanner-controls{
+  margin-bottom:14px!important;
+  overflow:hidden;
+}
+.scanner-main .scanner-mode-note{
+  border-top:0!important;
+  padding-top:8px!important;
+}
+@media(min-width:768px){
+  .scanner-main .scanner-mode-note{
+    padding:8px 14px 11px!important;
+  }
+}
+
+/* Stock Detail already had a compact back row; keep it aligned with the new shell. */
+.phase5a-stock-detail .stock-detail-navigation{
+  margin-top:0!important;
+}
+
+/* Tablet: keep the same compact rhythm without crushing content. */
+@media(max-width:1199px) and (min-width:768px){
+  .overview-main,
+  .scanner-main,
+  .research-main,
+  .phase4-account-page,
+  .phase5a-stock-detail.stock-detail-page{
+    padding-top:12px!important;
+  }
+}
+
+/* Mobile: header/status/search already consume height, so page content starts sooner. */
+@media(max-width:767px){
+  .overview-main,
+  .scanner-main,
+  .research-main,
+  .phase4-account-page,
+  .phase5a-stock-detail.stock-detail-page{
+    padding-top:10px!important;
+  }
+
+  .phase5c-route-heading{
+    padding-left:10px!important;
+    padding-right:10px!important;
+  }
+  .phase5c-route-heading h1,
+  .research-main .research-hero h1,
+  .phase4-account-page .ccc-account-heading h1{
+    font-size:25px!important;
+    line-height:1.2!important;
+  }
+  .phase5c-route-heading p,
+  .research-main .research-hero p,
+  .phase4-account-page .ccc-account-heading p{
+    font-size:13px!important;
+    line-height:1.5!important;
+  }
+
+  .overview-main.page-shell{
+    gap:11px!important;
+  }
+  .research-main.page-shell{
+    gap:10px!important;
+  }
+  .phase4-account-page .ccc-account-heading{
+    margin-bottom:11px!important;
+  }
+
+  .scanner-main .scanner-controls{
+    margin-top:0!important;
+    margin-bottom:12px!important;
+  }
+  .scanner-main .scanner-mode-note{
+    padding-top:7px!important;
+  }
+}
+
+
+/* ==========================================================
+   Phase 5C-0.1 — Right Rail product polish
+   Keep the rail familiar; each card must provide context, action or trust.
+   ========================================================== */
+
+.scanner-source-card-detailed .rail-card-body,
+.scanner-market-scope-card .rail-card-body,
+.scanner-action-card .rail-card-body{
+  display:grid;
+  gap:10px;
+}
+
+.scanner-source-card-detailed .rail-kv dt,
+.scanner-source-card-detailed .rail-kv dd,
+.scanner-market-scope-card .rail-kv dt,
+.scanner-market-scope-card .rail-kv dd{
+  font-size:10.75px;
+}
+
+.scanner-source-card-detailed .rail-kv dd,
+.scanner-market-scope-card .rail-kv dd{
+  max-width:158px;
+  text-align:right;
+}
+
+.scanner-source-card-detailed .rail-note,
+.scanner-market-scope-card .rail-note{
+  margin-top:2px;
+  font-size:10.5px;
+  line-height:1.5;
+}
+
+.scanner-action-card{
+  border-color:color-mix(in srgb,#a855f7 28%,var(--border));
+}
+
+.scanner-action-card .rail-card-body{
+  gap:12px;
+}
+
+.scanner-action-copy{
+  display:grid;
+  gap:5px;
+}
+
+.scanner-action-copy strong{
+  font-size:12px;
+  line-height:1.4;
+}
+
+.scanner-action-copy p{
+  margin:0;
+  color:var(--muted-foreground);
+  font-size:10.75px;
+  line-height:1.55;
+}
+
+.scanner-rail-actions{
+  display:grid;
+  gap:7px;
+}
+
+.scanner-rail-primary,
+.scanner-rail-secondary{
+  width:100%;
+  min-height:38px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:0 10px;
+  border-radius:var(--radius-md);
+  font:inherit;
+  font-size:11px;
+  font-weight:750;
+  cursor:pointer;
+}
+
+.scanner-rail-primary{
+  border:1px solid var(--border-strong);
+  background:var(--primary);
+  color:var(--primary-foreground);
+}
+
+.scanner-rail-secondary{
+  border:1px solid color-mix(in srgb,#a855f7 45%,var(--border));
+  background:color-mix(in srgb,#a855f7 8%,var(--surface-2));
+  color:var(--foreground);
+}
+
+.scanner-rail-secondary:hover{
+  background:color-mix(in srgb,#a855f7 14%,var(--surface-2));
+}
+
+.phase4-account-rail{
+  align-content:start;
+}
+
+@media(max-width:1023px){
+  .scanner-context-rail{
+    grid-template-columns:repeat(3,minmax(0,1fr));
+  }
+}
+
+@media(max-width:767px){
+  .scanner-context-rail{
+    grid-template-columns:1fr;
+  }
+
+  .scanner-source-card-detailed .rail-kv dt,
+  .scanner-source-card-detailed .rail-kv dd,
+  .scanner-market-scope-card .rail-kv dt,
+  .scanner-market-scope-card .rail-kv dd{
+    font-size:11.5px;
+  }
+
+  .scanner-action-copy strong{
+    font-size:13px;
+  }
+
+  .scanner-action-copy p{
+    font-size:11.5px;
+  }
+
+  .scanner-rail-primary,
+  .scanner-rail-secondary{
+    min-height:42px;
+    font-size:11.75px;
+  }
+}
+
+
+/* ==========================================================
+   Phase 5C-1/2 — Canonical Stock Detail routing
+   One detail renderer, one canonical URL, keyboard-visible entry points.
+   ========================================================== */
+
+[data-symbol][role="button"]:focus-visible{
+  outline:2px solid var(--ring);
+  outline-offset:2px;
+}
+
+.stock-detail-navigation .back-action{
+  cursor:pointer;
+}
+
+.stock-detail-navigation .back-action:focus-visible{
+  outline:2px solid var(--ring);
+  outline-offset:2px;
+  border-radius:var(--radius-sm);
+}
