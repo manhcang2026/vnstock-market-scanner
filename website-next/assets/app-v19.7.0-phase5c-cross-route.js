@@ -220,6 +220,7 @@
     var path = normalizedAppPath();
     if (path === "/danh-sach") return "scanner";
     if (path === "/so-sanh-theo-nganh" || path === "/sang-loc-co-ban") return "research";
+    if (path === "/huong-dan") return "guide";
     if (path === ACCOUNT_PATH) return "account";
     return "overview";
   }
@@ -776,7 +777,8 @@
       user: '<circle cx="12" cy="8" r="4"/><path d="M4.5 21a7.5 7.5 0 0 1 15 0"/>',
       lock: '<rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>',
       shield: '<path d="M12 3 5 6v5c0 4.6 2.8 8 7 10 4.2-2 7-5.4 7-10V6l-7-3Z"/><path d="m9 12 2 2 4-4"/>',
-      chart: '<path d="M4 19V9M10 19V5M16 19v-7M22 19H2"/>'
+      chart: '<path d="M4 19V9M10 19V5M16 19v-7M22 19H2"/>',
+      help: '<circle cx="12" cy="12" r="9"/><path d="M9.6 9a2.6 2.6 0 1 1 4.3 2c-1 .8-1.9 1.4-1.9 3"/><path d="M12 17h.01"/>'
     };
     return '<svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (paths[name] || "") + '</svg>';
   }
@@ -790,12 +792,20 @@
     return '<span class="shell-nav-link shell-nav-placeholder" aria-disabled="true"><span class="nav-ico">' + iconSvg(icon) + '</span><span class="nav-label">' + esc(label) + '</span><small>' + esc(compactLabel || label) + '</small></span>';
   }
 
-  function primaryNavHtml(includeAccount) {
+  function desktopPrimaryNavHtml() {
+    return navLink("/", "overview", "home", "Tổng quan") +
+      navLink("/danh-sach", "scanner", "list", "DS mã theo dõi", "DS theo dõi") +
+      navLink("/so-sanh-theo-nganh", "research", "industry", "Nghiên cứu", "Nghiên cứu") +
+      navPlaceholder("bell", "Cảnh báo") +
+      navLink("/huong-dan", "guide", "help", "Hướng dẫn", "Hướng dẫn");
+  }
+
+  function mobilePrimaryNavHtml(includeAccount) {
     var html =
       navLink("/", "overview", "home", "Tổng quan") +
       navLink("/danh-sach", "scanner", "list", "DS mã theo dõi", "DS theo dõi") +
       navLink("/so-sanh-theo-nganh", "research", "industry", "Nghiên cứu", "Nghiên cứu") +
-      navPlaceholder("bell", "Cảnh báo");
+      navLink("/huong-dan", "guide", "help", "Hướng dẫn", "Hướng dẫn");
     if (includeAccount) html += navLink(ACCOUNT_PATH, "account", "user", "Tài khoản");
     return html;
   }
@@ -804,6 +814,7 @@
     if (state.detail.open) return "Chi tiết cổ phiếu";
     if (state.route === "scanner") return "DS mã theo dõi";
     if (state.route === "research") return "Nghiên cứu";
+    if (state.route === "guide") return "Hướng dẫn";
     if (state.route === "account") return "Tài khoản";
     return "Tổng quan";
   }
@@ -912,21 +923,21 @@
       ? '<small>' + esc(plan.display + (vipDayActive() ? " · VIP DAY" : "")) + '</small>'
       : '';
     var sessionLabel = marketSessionLabel();
-    var nav = primaryNavHtml(false);
+    var nav = desktopPrimaryNavHtml();
     var mobileRouteHtml = '<span class="mobile-route">' + esc(routeLabel()) + '</span>';
     var mobileSearchHtml = state.route === "scanner" ? "" :
       '<div class="mobile-search-row">' + mobileRouteHtml +
       '<form id="mobile-global-search-form" class="mobile-global-search stock-search-host" role="search" action="/danh-sach" method="get"><label class="sr-only" for="mobile-global-stock-search">Tìm mã cổ phiếu</label><span>' + iconSvg("search") + '</span><input id="mobile-global-stock-search" name="q" type="search" inputmode="search" autocomplete="off" placeholder="Tìm mã chứng khoán"><div id="mobile-global-search-suggestions" class="stock-suggestions" hidden></div></form></div>';
 
     return '<header class="app-header"><div class="app-header-inner">' +
-      '<a class="app-brand" href="/" aria-label="Chuyện Chợ Chứng — Trang tổng quan"><span class="brand-mark brand-mark-official"><img class="brand-mark-img" src="/assets/brand/ccc-logo-primary.png?v=1990-brand" alt=""></span><span class="brand-copy"><strong>CHUYỆN CHỢ CHỨNG</strong><small>Stock Intelligence</small></span></a>' +
+      '<a class="app-brand" href="/" aria-label="Chuyện Chợ Chứng — Trang tổng quan"><span class="brand-mark brand-mark-official"><img class="brand-mark-img" src="/assets/brand/ccc-logo-primary.png?v=1990-brand" alt=""></span><span class="brand-copy"><strong>CHUYỆN CHỢ CHỨNG</strong></span></a>' +
       '<form id="global-search-form" class="global-search stock-search-host" role="search" action="/danh-sach" method="get"><label class="sr-only" for="global-stock-search">Tìm mã cổ phiếu</label><span class="global-search-icon">' + iconSvg("search") + '</span><input id="global-stock-search" name="q" type="search" inputmode="search" autocomplete="off" placeholder="Tìm mã chứng khoán"><button class="global-search-submit" type="submit" aria-label="Tìm mã chứng khoán">' + iconSvg("search") + '</button><div id="global-search-suggestions" class="stock-suggestions" hidden></div></form>' +
       '<div class="header-right"><section id="data-trust" class="data-trust trust-outside" role="status" aria-live="polite"><div class="trust-primary"><i class="trust-dot"></i><strong id="trust-status">' + esc(sessionLabel) + '</strong></div><span class="trust-separator" aria-hidden="true">·</span><span class="trust-countdown">Làm mới <b id="countdown">' + countdownText() + '</b></span></section>' +
-      '<div class="top-actions"><button id="refresh-btn" class="icon-action refresh-btn" type="button" aria-label="Làm mới dữ liệu" title="Làm mới dữ liệu">' + iconSvg("refresh") + '</button><button class="icon-action alert-action" type="button" aria-label="Cảnh báo chưa khả dụng" disabled>' + iconSvg("bell") + '</button><button id="theme-toggle" class="icon-action theme-toggle" type="button" aria-label="Đổi giao diện sáng tối">' + iconSvg(state.theme === "light" ? "moon" : "sun") + '</button><button id="account-open" class="account-action" type="button"><span class="account-avatar">' + iconSvg("user") + '</span><span><strong>' + esc(user) + '</strong>' + accountMeta + '</span></button></div></div></div>' +
+      '<div class="top-actions"><button id="refresh-btn" class="icon-action refresh-btn" type="button" aria-label="Làm mới dữ liệu" title="Làm mới dữ liệu">' + iconSvg("refresh") + '</button><a class="icon-action guide-action ' + (state.route === "guide" ? "is-active" : "") + '" href="/huong-dan" aria-label="Mở hướng dẫn sử dụng" title="Hướng dẫn sử dụng">' + iconSvg("help") + '</a><button class="icon-action alert-action" type="button" aria-label="Cảnh báo chưa khả dụng" disabled>' + iconSvg("bell") + '</button><button id="theme-toggle" class="icon-action theme-toggle" type="button" aria-label="Đổi giao diện sáng tối">' + iconSvg(state.theme === "light" ? "moon" : "sun") + '</button><button id="account-open" class="account-action" type="button"><span class="account-avatar">' + iconSvg("user") + '</span><span><strong>' + esc(user) + '</strong>' + accountMeta + '</span></button></div></div></div>' +
       '<div id="mobile-status-row" class="mobile-status-row trust-outside"><div class="mobile-status-primary"><span class="mobile-market"><i class="trust-dot"></i><b id="mobile-market-status">' + esc(sessionLabel) + '</b></span><span class="mobile-now">Làm mới <b id="mobile-countdown">' + countdownText() + '</b></span></div></div>' +
       mobileSearchHtml + '</header>' +
-      '<aside class="desktop-nav"><nav aria-label="Điều hướng chính">' + nav + '</nav><a href="' + ACCOUNT_PATH + '" class="shell-nav-link account-nav ' + (state.route === "account" ? "active" : "") + '"><span class="nav-ico">' + iconSvg("user") + '</span><span class="nav-label">Tài khoản</span><small>Tài khoản</small></a><div class="nav-stage"><span>BẢN THỬ</span><small>Giao diện chuẩn</small></div></aside>' +
-      '<nav class="mobile-bottom" aria-label="Điều hướng chính trên thiết bị di động">' + primaryNavHtml(true) + '</nav>';
+      '<aside class="desktop-nav"><nav aria-label="Điều hướng chính">' + nav + '</nav><div class="desktop-nav-secondary"><a href="' + ACCOUNT_PATH + '" class="shell-nav-link account-nav ' + (state.route === "account" ? "active" : "") + '"><span class="nav-ico">' + iconSvg("user") + '</span><span class="nav-label">Tài khoản</span><small>Tài khoản</small></a></div><div class="nav-stage"><span>BẢN THỬ</span><small>Giao diện chuẩn</small></div></aside>' +
+      '<nav class="mobile-bottom" aria-label="Điều hướng chính trên thiết bị di động">' + mobilePrimaryNavHtml(true) + '</nav>';
   }
 
   function groupConfig(key) {
@@ -3360,6 +3371,117 @@
   }
 
 
+  function guideSignalCardHtml(tone, shortLabel, title, rule, copy) {
+    return '<article class="guide-signal-card tone-' + tone + '">' +
+      '<div class="guide-signal-head"><span class="guide-signal-dot"></span><span>' + esc(shortLabel) + '</span></div>' +
+      '<h3>' + esc(title) + '</h3><strong>' + esc(rule) + '</strong><p>' + esc(copy) + '</p>' +
+    '</article>';
+  }
+
+  function guidePageHtml() {
+    var userSignedIn = !!state.user;
+    var scopeCopy = userSignedIn
+      ? 'Khi đã đăng nhập, DS của tôi được ưu tiên trước để bạn tập trung vào đúng các mã đang theo dõi.'
+      : 'Khi chưa đăng nhập, Toàn bộ thị trường được đặt trước; phần kỹ thuật nâng cao tuân theo phạm vi trải nghiệm và quyền của gói thành viên.';
+
+    return '<main id="main-content" class="wrap guide-page phase6e-guide-page">' +
+      '<section class="guide-hero phase5c-route-heading">' +
+        '<div class="guide-hero-copy"><span class="guide-eyebrow">HƯỚNG DẪN SỬ DỤNG</span><h1>Dùng Chuyện Chợ Chứng từ đầu đến cuối</h1><p>Đi từ phạm vi theo dõi → đọc 4 tín hiệu → mở chi tiết mã → dùng nghiên cứu cơ bản. Trang này được viết cho người mới, không cần biết thuật ngữ kỹ thuật trước.</p>' +
+          '<div class="guide-hero-actions"><a class="guide-primary-action" href="/danh-sach">Mở DS của tôi</a><a class="guide-secondary-action" href="#guide-signals">Hiểu 4 tín hiệu</a></div>' +
+        '</div>' +
+        '<div class="guide-brand-card"><img src="/assets/brand/ccc-logo-primary.png?v=1990-brand" alt="Chuyện Chợ Chứng"></div>' +
+      '</section>' +
+
+      '<div class="guide-layout"><div class="guide-main">' +
+        '<section id="guide-start" class="guide-section"><div class="guide-section-head"><span>01</span><div><h2>Bắt đầu trong 3 phút</h2><p>Chỉ cần nhớ 4 bước này để sử dụng hệ thống đúng luồng.</p></div></div>' +
+          '<div class="guide-steps">' +
+            '<article><b>1</b><div><strong>Chọn phạm vi</strong><p>Vào DS mã theo dõi. Thành viên đã đăng nhập sẽ thấy <em>DS của tôi</em> trước; khách chưa đăng nhập thấy <em>Toàn bộ thị trường</em> trước.</p></div></article>' +
+            '<article><b>2</b><div><strong>Đọc số tín hiệu</strong><p>Nhìn 4 ô CCC và số 0/4 → 4/4. Màu chỉ cho biết tín hiệu nào đang đạt.</p></div></article>' +
+            '<article><b>3</b><div><strong>Mở chi tiết mã</strong><p>Bấm vào mã để xem giá, kỹ thuật, cơ bản và BCTC trên cùng một trang.</p></div></article>' +
+            '<article><b>4</b><div><strong>Đối chiếu cơ bản</strong><p>Dùng Nghiên cứu để so sánh theo ngành hoặc sàng lọc doanh nghiệp trước khi ra quyết định.</p></div></article>' +
+          '</div>' +
+        '</section>' +
+
+        '<section id="guide-signals" class="guide-section"><div class="guide-section-head"><span>02</span><div><h2>4 tín hiệu CCC là gì?</h2><p>Bốn tín hiệu độc lập. Một mã có thể đạt từ 0 đến 4 tín hiệu cùng lúc.</p></div></div>' +
+          '<div class="guide-signal-grid">' +
+            guideSignalCardHtml('price', 'GIÁ', 'Biến động giá', 'Tăng ≥ 3%', 'Giá tăng đủ mạnh so với mốc tham chiếu của hệ thống.') +
+            guideSignalCardHtml('volume', 'KHỐI LƯỢNG', 'Khối lượng ngày', '≥ 200% KLTB10', 'Khối lượng giao dịch ngày đạt ít nhất 2 lần khối lượng trung bình 10 phiên.') +
+            guideSignalCardHtml('trend', 'XU HƯỚNG', 'Trên MA200', 'Giá > MA200', 'Giá đang nằm trên đường trung bình 200 phiên, dùng để nhận biết xu hướng dài hơn.') +
+            guideSignalCardHtml('rvol', 'DÒNG TIỀN', 'RVOL30', 'RVOL30 ≥ 200%', 'Hoạt động giao dịch trong khung 30 phút mạnh hơn đáng kể so với nền lịch sử cùng khung thời gian.') +
+          '</div>' +
+          '<div class="guide-note"><strong>MA10 chỉ để tham khảo.</strong><span>MA10 không phải một trong 4 tín hiệu CCC và không được cộng vào số 2/4, 3/4 hoặc 4/4.</span></div>' +
+        '</section>' +
+
+        '<section id="guide-states" class="guide-section"><div class="guide-section-head"><span>03</span><div><h2>Đọc 2/4, 3/4 và 4/4</h2><p>Đây là mức độ hội tụ tín hiệu, không phải khuyến nghị mua bán.</p></div></div>' +
+          '<div class="guide-state-ladder">' +
+            '<article class="state-four"><div><strong>4/4</strong><span>Đạt chuẩn</span></div><p>Cả 4 tín hiệu đều đang đạt tại thời điểm dữ liệu được cập nhật.</p></article>' +
+            '<article class="state-three"><div><strong>3/4</strong><span>Hội tụ</span></div><p>Đã có 3 tín hiệu, thường đáng để mở chi tiết mã và kiểm tra tín hiệu còn thiếu.</p></article>' +
+            '<article class="state-two"><div><strong>2/4</strong><span>Hình thành</span></div><p>Tín hiệu đang bắt đầu hình thành, cần theo dõi thêm thay vì chỉ nhìn một chỉ số riêng lẻ.</p></article>' +
+            '<article class="state-rvol"><div><strong>Dòng tiền</strong></div><p>Đây là nhóm riêng theo tín hiệu RVOL30. Một mã có thể chỉ đạt 1/4 nhưng vẫn nằm trong nhóm Dòng tiền nếu thỏa mãn điều kiện của chỉ số RVOL30 đạt từ 200% trở lên.</p></article>' +
+          '</div>' +
+          '<div class="guide-note"><strong>Mức 0–1/4 không có nhãn trạng thái.</strong><span>Chỉ từ 2/4 mới có nhãn Hình thành, từ 3/4 là Hội tụ và 4/4 là Đạt chuẩn. Một mã 1/4 vẫn có thể thuộc nhóm Dòng tiền nếu tín hiệu đạt là RVOL30 từ 200% trở lên.</span></div>' +
+        '</section>' +
+
+        '<section id="guide-scope" class="guide-section"><div class="guide-section-head"><span>04</span><div><h2>DS của tôi và Toàn bộ thị trường</h2><p>' + esc(scopeCopy) + '</p></div></div>' +
+          '<div class="guide-scope-grid">' +
+            '<article><span>DS CỦA TÔI</span><h3>Phạm vi cá nhân</h3><p>Dùng để tập trung vào các mã bạn thực sự theo dõi. Thêm/bớt mã ở trang Tài khoản; việc này không làm thay đổi danh sách mã mà hệ thống tiếp tục quét.</p><a href="/tai-khoan">Quản lý DS của tôi →</a></article>' +
+            '<article><span>TOÀN BỘ THỊ TRƯỜNG</span><h3>Phạm vi rộng</h3><p>Dùng để tìm cơ hội ngoài danh sách cá nhân. Mức dữ liệu kỹ thuật nhìn thấy phụ thuộc quyền hiện tại của tài khoản.</p><a href="/danh-sach?mode=market">Mở toàn bộ thị trường →</a></article>' +
+          '</div>' +
+          '<div class="guide-watchlist-rule"><strong>Quy tắc đổi DS:</strong><span>7 ngày khởi tạo đầu tiên được hoàn thiện DS trong giới hạn gói. Sau đó thêm 1 mã dùng 1 lượt; xóa mã không tốn lượt; xóa rồi thêm lại cùng mã vẫn tính 1 lượt.</span></div>' +
+        '</section>' +
+
+        '<section id="guide-detail" class="guide-section"><div class="guide-section-head"><span>05</span><div><h2>Trang Chi tiết mã</h2><p>Một nơi để nối dữ liệu thị trường với bối cảnh doanh nghiệp.</p></div></div>' +
+          '<div class="guide-detail-tabs">' +
+            '<article><b>Tổng quan</b><p>Giá, thay đổi, thanh khoản và các thông tin nhanh của mã.</p></article>' +
+            '<article><b>Kỹ thuật</b><p>Các tín hiệu CCC, MA10, MA200, RVOL30 và dữ liệu kỹ thuật theo quyền thành viên.</p></article>' +
+            '<article><b>Cơ bản</b><p>Điểm cơ bản, định giá và dữ liệu doanh nghiệp. Phần cơ bản là nội dung công khai.</p></article>' +
+            '<article><b>BCTC</b><p>Các chỉ tiêu tài chính theo kỳ để nhìn xu hướng doanh thu, lợi nhuận và cấu trúc doanh nghiệp.</p></article>' +
+          '</div>' +
+        '</section>' +
+
+        '<section id="guide-research" class="guide-section"><div class="guide-section-head"><span>06</span><div><h2>Nghiên cứu cơ bản</h2><p>Dùng sau bước sàng tín hiệu để kiểm tra chất lượng và bối cảnh doanh nghiệp.</p></div></div>' +
+          '<div class="guide-research-grid">' +
+            '<a href="/so-sanh-theo-nganh"><span>SO SÁNH THEO NGÀNH</span><h3>Đặt doanh nghiệp cạnh các công ty cùng nhóm</h3><p>So điểm cơ bản, định giá và các chỉ tiêu quan trọng trong cùng ngành.</p><b>Mở so sánh →</b></a>' +
+            '<a href="/sang-loc-co-ban"><span>SÀNG LỌC CƠ BẢN</span><h3>Thu hẹp danh sách bằng tiêu chí doanh nghiệp</h3><p>Lọc theo ngành và các đặc điểm cơ bản trước khi đi sâu từng mã.</p><b>Mở sàng lọc →</b></a>' +
+          '</div>' +
+        '</section>' +
+
+        '<section id="guide-access" class="guide-section"><div class="guide-section-head"><span>07</span><div><h2>Hiểu quyền theo gói</h2><p>DS mã của tôi và quyền xem dữ liệu kỹ thuật là hai lớp khác nhau.</p></div></div>' +
+          '<div class="guide-plan-grid">' +
+            '<article><strong>FREE</strong><span>DS tối đa 10 mã</span></article>' +
+            '<article><strong>BASIC</strong><span>DS tối đa 20 mã</span></article>' +
+            '<article><strong>PLUS</strong><span>DS tối đa 50 mã</span></article>' +
+            '<article><strong>PRO</strong><span>DS tối đa 100 mã</span></article>' +
+            '<article><strong>FULL</strong><span>Toàn thị trường</span></article>' +
+            '<article><strong>VIP DAY</strong><span>Quyền toàn thị trường trong 24 giờ</span></article>' +
+          '</div>' +
+          '<p class="guide-plan-footnote">VIP DAY mở quyền xem dữ liệu kỹ thuật toàn thị trường trong 24 giờ nhưng không thay đổi gói thành viên hiện tại, DS mã của tôi hay hạn mức đổi mã.</p>' +
+        '</section>' +
+
+        '<section id="guide-faq" class="guide-section"><div class="guide-section-head"><span>08</span><div><h2>Câu hỏi thường gặp</h2><p>Các tình huống dễ gây hiểu nhầm khi mới sử dụng.</p></div></div>' +
+          '<div class="guide-faq">' +
+            '<details><summary>Tại sao mã 1/4 không có chữ “Hình thành”?</summary><p>Nhãn trạng thái bắt đầu từ 2/4. Mức 0–1/4 chỉ hiển thị số tín hiệu nên không có nhãn Hình thành, Hội tụ hay Đạt chuẩn.</p></details>' +
+            '<details><summary>Tại sao mã 1/4 vẫn có thể nằm trong nhóm “Dòng tiền”?</summary><p>Dòng tiền là nhóm riêng dựa trên RVOL30. Nếu RVOL30 đạt từ 200% trở lên thì mã được xếp vào nhóm Dòng tiền, kể cả khi ba tín hiệu còn lại chưa đạt và tổng cộng mới là 1/4.</p></details>' +
+            '<details><summary>Tại sao RVOL30 đôi lúc hiện dấu “—”?</summary><p>Một số mã hoặc thời điểm có thể chưa đủ dữ liệu lịch sử phù hợp để tính chỉ số. Dấu “—” có nghĩa là chưa có giá trị tin cậy, không phải bằng 0.</p></details>' +
+            '<details><summary>Tại sao tôi thấy dữ liệu cơ bản nhưng không thấy đủ kỹ thuật?</summary><p>Dữ liệu cơ bản và phần Nghiên cứu được mở công khai; dữ liệu kỹ thuật CCC phụ thuộc phạm vi trải nghiệm hoặc quyền của gói thành viên.</p></details>' +
+            '<details><summary>Thêm hoặc xóa mã khỏi DS của tôi có làm hệ thống ngừng quét mã đó không?</summary><p>Không. Danh sách mã quét do hệ thống quản lý độc lập. DS của tôi chỉ quyết định phạm vi bạn muốn hiển thị và theo dõi cá nhân.</p></details>' +
+            '<details><summary>Dữ liệu trên màn hình có tự làm mới không?</summary><p>Có. Thanh trên cùng hiển thị đồng hồ “Làm mới”; ứng dụng tự đọc lại dữ liệu theo chu kỳ khi nguồn mới sẵn sàng. Bạn cũng có thể bấm nút làm mới.</p></details>' +
+          '</div>' +
+        '</section>' +
+
+        '<section class="guide-disclaimer"><strong>Lưu ý sử dụng</strong><p>Chuyện Chợ Chứng là công cụ hỗ trợ theo dõi và nghiên cứu dữ liệu. Tín hiệu, điểm số và nội dung hiển thị không phải khuyến nghị mua, bán hoặc cam kết hiệu quả đầu tư. Hãy kết hợp với mục tiêu, khẩu vị rủi ro và đánh giá riêng của bạn.</p></section>' +
+      '</div>' +
+
+      '<aside class="guide-rail"><section class="guide-rail-card"><span>ĐỌC NHANH</span><h3>Mục lục</h3>' +
+        '<nav aria-label="Mục lục hướng dẫn"><a href="#guide-start">Bắt đầu trong 3 phút</a><a href="#guide-signals">4 tín hiệu CCC</a><a href="#guide-states">Đọc 2/4 → 4/4</a><a href="#guide-scope">DS của tôi</a><a href="#guide-detail">Chi tiết mã</a><a href="#guide-research">Nghiên cứu</a><a href="#guide-access">Quyền theo gói</a><a href="#guide-faq">Câu hỏi thường gặp</a></nav>' +
+      '</section>' +
+      '<section class="guide-rail-card guide-rail-action"><span>BẮT ĐẦU NGAY</span><h3>Đi từ danh sách của bạn</h3><p>Chọn một mã đang theo dõi, xem số tín hiệu rồi mở Chi tiết mã để hiểu nguyên nhân.</p><a href="/danh-sach">Mở DS của tôi</a></section>' +
+      '<section class="guide-rail-card"><span>DỮ LIỆU & QUYỀN</span><h3>Không thấy đủ dữ liệu?</h3><p>Kiểm tra gói hiện tại, DS của tôi và phạm vi quyền trong Tài khoản.</p><a href="/tai-khoan">Mở Tài khoản →</a></section>' +
+      '</aside></div>' +
+    '</main>';
+  }
+
+
   function placeholderPageHtml(title, copy) {
     return '<main id="main-content" class="wrap page-shell"><section class="page-heading page-header"><div><h1>' + esc(title) + '</h1><p>' + esc(copy) + '</p></div></section><div class="content-grid"><div class="content-main"><section class="panel-anatomy transplant-placeholder"><strong>Đang giữ mốc kiến trúc sạch.</strong><p>Màn hình này sẽ được hoàn thiện ở bước tiếp theo theo cùng chuẩn giao diện.</p></section></div></div></main>';
   }
@@ -3369,13 +3491,16 @@
     if (state.route === "overview") return overviewPageHtml();
     if (state.route === "scanner") return scannerPageHtml();
     if (state.route === "research") return researchPageHtml();
+    if (state.route === "guide") return guidePageHtml();
     return accountPageHtml();
   }
 
   function render() {
     document.title = state.detail.open && state.detail.symbol
       ? state.detail.symbol + " — Chuyện Chợ Chứng"
-      : "Chuyện Chợ Chứng — BẢN THỬ";
+      : state.route === "guide"
+        ? "Hướng dẫn sử dụng — Chuyện Chợ Chứng"
+        : "Chuyện Chợ Chứng — BẢN THỬ";
     app.innerHTML = headerHtml() + accessNoticeHtml() + routeHtml() + authDialogHtml() + passwordDialogHtml();
     bind();
     refreshLogoStates();

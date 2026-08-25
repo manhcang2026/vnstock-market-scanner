@@ -6,3 +6,4 @@ __pycache__/
 # Generated financial pipeline artifacts - do not commit
 /tools/financial/work/
 /tools/financial/output/
+/WWW-stock-logos.zip
