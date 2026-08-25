@@ -1,0 +1,50 @@
+name: Daily History Backfill
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_symbols:
+        description: "So ma chua xong se xu ly. 20 = test an toan, 0 = tat ca."
+        required: true
+        default: "20"
+        type: string
+      force:
+        description: "Chay lai ca ma da COMPLETE (binh thuong de false)."
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: daily-history-backfill
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Backfill daily history
+        env:
+          VNSTOCK_API_KEY: ${{ secrets.VNSTOCK_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          BACKFILL_MAX_SYMBOLS: ${{ inputs.max_symbols }}
+          BACKFILL_FORCE: ${{ inputs.force }}
+        run: python src/backfill_daily_history.py
