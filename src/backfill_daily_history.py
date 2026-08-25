@@ -227,33 +227,69 @@ def load_sync_state() -> dict[str, dict[str, Any]]:
     return result
 
 
-def load_baseline_requirements() -> dict[str, int]:
+def load_baseline_profiles() -> dict[str, dict[str, Any]]:
     """
-    Lay so phien MA200 ma production hien tai thuc su dung cho tung ma.
+    H1.2 lay "checkpoint su that" tu Daily Baseline production.
 
-    Ma moi niem yet co the chua du 200 phien; khi do backfill chi can dat
-    dung so phien production dang co, thay vi bat buoc 200 mot cach gia tao.
+    Backfill seed phai tai tao dung trading_date + MA10 + MA200 + KLTB10
+    dang duoc production su dung. Nhu vay khac biet semantics KBS/VCI
+    khong bi am tham dua vao kho lich su moi.
     """
     response = supabase_request(
         "GET",
         "latest_daily_baseline",
         params={
-            "select": "symbol,ma200_sessions",
+            "select": (
+                "symbol,trading_date,previous_close,"
+                "ma10,ma10_sessions,ma200,ma200_sessions,"
+                "avg_volume_10,avg_volume_sessions,source"
+            ),
             "order": "symbol.asc",
             "limit": "1000",
         },
     )
-    result: dict[str, int] = {}
+
+    result: dict[str, dict[str, Any]] = {}
     for row in response.json():
         symbol = str(row.get("symbol") or "").strip().upper()
         if not symbol:
             continue
+
+        trading_date_raw = str(row.get("trading_date") or "").strip()
+        if not trading_date_raw:
+            continue
+
         try:
-            sessions = int(row.get("ma200_sessions") or 0)
+            trading_date = date.fromisoformat(trading_date_raw)
+            ma200_sessions = int(row.get("ma200_sessions") or 0)
+            ma10_sessions = int(row.get("ma10_sessions") or 0)
+            volume_sessions = int(row.get("avg_volume_sessions") or 0)
+            previous_close = float(row.get("previous_close"))
+            ma10 = float(row.get("ma10"))
+            ma200 = float(row.get("ma200"))
+            avg_volume_10 = float(row.get("avg_volume_10"))
         except (TypeError, ValueError):
-            sessions = 0
-        if sessions > 0:
-            result[symbol] = min(MIN_REQUIRED_SESSIONS, sessions)
+            continue
+
+        if ma200_sessions <= 0 or ma10_sessions <= 0 or volume_sessions <= 0:
+            continue
+
+        source = str(row.get("source") or "").strip().upper()
+        if source not in {PRIMARY_SOURCE, FALLBACK_SOURCE}:
+            source = PRIMARY_SOURCE
+
+        result[symbol] = {
+            "trading_date": trading_date,
+            "source": source,
+            "previous_close": previous_close,
+            "ma10": ma10,
+            "ma10_sessions": ma10_sessions,
+            "ma200": ma200,
+            "ma200_sessions": min(MIN_REQUIRED_SESSIONS, ma200_sessions),
+            "avg_volume_10": avg_volume_10,
+            "avg_volume_sessions": volume_sessions,
+        }
+
     return result
 
 
@@ -451,6 +487,10 @@ def prepare_history(data: pd.DataFrame, run_date: date) -> pd.DataFrame:
     df = df.dropna(subset=["time", "close", "volume"])
     df = df[(df["close"] > 0) & (df["volume"] >= 0)]
 
+    # Giu DUNG semantics Daily Baseline production: volume=0 van co the la
+    # mot daily bar cua phien thi truong va van tham gia MA/KLTB.
+    # H1.2 khong tu y xoa cac bar nay. Thay vao do, tung ma se bi anchor
+    # ve trading_date ma production da xac nhan.
     df = df[df["time"].dt.date < run_date]
     df = (
         df.sort_values("time")
@@ -461,18 +501,7 @@ def prepare_history(data: pd.DataFrame, run_date: date) -> pd.DataFrame:
         raise RuntimeError(
             f"Khong co phien da ket thuc truoc {run_date.isoformat()}"
         )
-
-    # H1.1: provider co the bo sung dong carry-forward volume=0 o CUOI
-    # chuoi sau khi ma da ngung giao dich. Khong cho cac dong nay day
-    # trading_date tien len (truong hop BCF/BTW bat duoc o test H1).
-    # Van giu volume=0 NAM GIUA lich su de MA200 giu cung semantics voi
-    # Daily Baseline production: 200 phien thi truong, khong phai 200 ngay
-    # ma co phat sinh khoi luong.
-    positive_positions = df.index[df["volume"] > 0]
-    if len(positive_positions) == 0:
-        raise RuntimeError("History khong co phien volume > 0")
-    last_traded_position = int(positive_positions[-1])
-    return df.iloc[: last_traded_position + 1].reset_index(drop=True)
+    return df
 
 
 def normalize_price_unit(history: pd.DataFrame) -> pd.DataFrame:
@@ -528,13 +557,17 @@ def fetch_source_history_adaptive(
     source: str,
     run_date: date,
     required_sessions: int,
+    anchor_date: date,
 ) -> pd.DataFrame:
     """
-    Bat dau 500 ngay de giu request nhe. Neu chua du buffer 250 phien thi
-    mo rong 1200 ngay. Chi mo rong tiep 2400 ngay neu van chua dat so phien
-    toi thieu ma production hien tai can cho MA200.
+    Lay lich su toi da 250 bar va anchor ve trading_date production.
+
+    500 ngay du cho ma thanh khoan binh thuong. Neu chua du buffer thi
+    mo rong 1200/2400 ngay. Request end cung bi gioi han sat anchor de
+    provider khong chen cac carry-forward bar moi hon checkpoint production.
     """
-    end = run_date.isoformat()
+    request_end_date = min(run_date, anchor_date + timedelta(days=1))
+    end = request_end_date.isoformat()
     best: pd.DataFrame | None = None
 
     for lookback_days in LOOKBACK_WINDOWS_DAYS:
@@ -545,15 +578,25 @@ def fetch_source_history_adaptive(
         ):
             break
 
-        start = (run_date - timedelta(days=lookback_days)).isoformat()
+        start = (anchor_date - timedelta(days=lookback_days)).isoformat()
         history = fetch_source_history(
             symbol, source, start, end, run_date
         )
+        history = history[
+            history["time"].dt.date <= anchor_date
+        ].reset_index(drop=True)
+
+        if history.empty:
+            raise RuntimeError(
+                f"{source}: khong co history <= anchor {anchor_date}"
+            )
+
         best = history
         latest_date = history.iloc[-1]["time"].date()
         print(
             f"  -> {source} lookback={lookback_days}d: "
-            f"{len(history)} phien, latest={latest_date}"
+            f"{len(history)} phien, latest={latest_date}, "
+            f"anchor={anchor_date}"
         )
 
         if len(history) >= TARGET_SESSIONS:
@@ -570,106 +613,147 @@ def fetch_source_history_adaptive(
     return best
 
 
-def history_quality(
+def calculate_compatibility_metrics(
     history: pd.DataFrame,
-    required_sessions: int,
-) -> tuple[int, int, date]:
-    return (
-        1 if len(history) >= required_sessions else 0,
-        min(len(history), TARGET_SESSIONS),
-        history.iloc[-1]["time"].date(),
-    )
+    profile: dict[str, Any],
+) -> dict[str, Any]:
+    ma200_sessions = int(profile["ma200_sessions"])
+    ma10_sessions = int(profile["ma10_sessions"])
+    volume_sessions = int(profile["avg_volume_sessions"])
+
+    required = max(ma200_sessions, ma10_sessions, volume_sessions)
+    if len(history) < required:
+        raise RuntimeError(
+            f"Chi co {len(history)} phien, can it nhat {required}"
+        )
+
+    latest = history.iloc[-1]
+    return {
+        "trading_date": latest["time"].date(),
+        "previous_close": round(float(latest["close"]), 4),
+        "ma10": round(
+            float(history["close"].tail(ma10_sessions).mean()), 4
+        ),
+        "ma200": round(
+            float(history["close"].tail(ma200_sessions).mean()), 4
+        ),
+        "avg_volume_10": round(
+            float(history["volume"].tail(volume_sessions).mean()), 4
+        ),
+    }
+
+
+def compare_with_production(
+    history: pd.DataFrame,
+    profile: dict[str, Any],
+) -> tuple[bool, str]:
+    metrics = calculate_compatibility_metrics(history, profile)
+    parts: list[str] = []
+
+    date_match = metrics["trading_date"] == profile["trading_date"]
+    if not date_match:
+        parts.append(
+            f"date {metrics['trading_date']} != {profile['trading_date']}"
+        )
+
+    for key in ("previous_close", "ma10", "ma200", "avg_volume_10"):
+        actual = float(metrics[key])
+        expected = float(profile[key])
+        diff = round(actual - expected, 4)
+        if abs(diff) > 0.0001:
+            parts.append(
+                f"{key} diff={diff:+.4f} "
+                f"(cache={actual:.4f}, prod={expected:.4f})"
+            )
+
+    if not parts:
+        return True, "EXACT"
+    return False, "; ".join(parts)
 
 
 def get_history(
     symbol: str,
     run_date: date,
-    required_sessions: int,
+    profile: dict[str, Any],
 ) -> tuple[pd.DataFrame, str]:
     """
-    KBS van la primary. H1.1 chi goi VCI khi KBS loi/empty, stale, hoac
-    chua du buffer 250 phien. Neu ca hai co du lieu, chon nguon dap ung
-    MA200 truoc, sau do uu tien nhieu phien hon va trading_date moi hon.
-    KBS thang neu chat luong bang nhau.
+    H1.2 seed theo source + trading_date production.
+
+    Uu tien dung chinh provider da tao baseline hien tai. Neu provider do
+    khong con tai tao EXACT cac chi so, thu provider con lai. Chi ghi cache
+    khi mot trong hai nguon tai tao dung previous_close/MA10/MA200/KLTB10.
+    Khong am tham chap nhan mot lich su "gan dung".
     """
-    primary_history: pd.DataFrame | None = None
-    primary_error: str | None = None
+    required_sessions = int(profile["ma200_sessions"])
+    anchor_date = profile["trading_date"]
+    preferred_source = str(profile["source"])
+    fallback_source = (
+        FALLBACK_SOURCE
+        if preferred_source == PRIMARY_SOURCE
+        else PRIMARY_SOURCE
+    )
 
-    try:
-        primary_history = fetch_source_history_adaptive(
-            symbol, PRIMARY_SOURCE, run_date, required_sessions
-        )
-        primary_date = primary_history.iloc[-1]["time"].date()
-        if (
-            len(primary_history) >= TARGET_SESSIONS
-            and not source_is_too_stale(primary_history, run_date)
-        ):
-            return primary_history, PRIMARY_SOURCE
+    attempts: list[str] = []
 
-        reasons: list[str] = []
-        if len(primary_history) < TARGET_SESSIONS:
-            reasons.append(f"chi co {len(primary_history)} phien")
-        if source_is_too_stale(primary_history, run_date):
-            reasons.append(f"du lieu cu {primary_date.isoformat()}")
-        print(
-            f"  -> {PRIMARY_SOURCE} {'; '.join(reasons)}; "
-            f"thu {FALLBACK_SOURCE}."
-        )
-    except Exception as exc:
-        primary_error = str(exc)
-        print(
-            f"  -> {PRIMARY_SOURCE} khong dung duoc; "
-            f"thu {FALLBACK_SOURCE}."
-        )
-
-    try:
-        fallback_history = fetch_source_history_adaptive(
-            symbol, FALLBACK_SOURCE, run_date, required_sessions
-        )
-
-        if primary_history is None:
-            selected_history = fallback_history
-            selected_source = FALLBACK_SOURCE
-        else:
-            primary_quality = history_quality(
-                primary_history, required_sessions
+    for source in (preferred_source, fallback_source):
+        try:
+            history = fetch_source_history_adaptive(
+                symbol,
+                source,
+                run_date,
+                required_sessions,
+                anchor_date,
             )
-            fallback_quality = history_quality(
-                fallback_history, required_sessions
-            )
-            if fallback_quality > primary_quality:
-                selected_history = fallback_history
-                selected_source = FALLBACK_SOURCE
-            else:
-                selected_history = primary_history
-                selected_source = PRIMARY_SOURCE
 
-        if len(selected_history) < required_sessions:
-            raise RuntimeError(
-                f"khong nguon nao du {required_sessions} phien: "
-                f"{PRIMARY_SOURCE}={len(primary_history) if primary_history is not None else 0}, "
-                f"{FALLBACK_SOURCE}={len(fallback_history)}"
-            )
-        return selected_history, selected_source
-    except Exception as fallback_exc:
-        if (
-            primary_history is not None
-            and len(primary_history) >= required_sessions
-        ):
-            return primary_history, PRIMARY_SOURCE
+            if len(history) < required_sessions:
+                attempts.append(
+                    f"{source}: chi co {len(history)}/{required_sessions} phien"
+                )
+                continue
 
-        primary_detail = (
-            primary_error
-            or (
-                f"{len(primary_history)} phien"
-                if primary_history is not None
-                else "unknown"
+            exact, detail = compare_with_production(history, profile)
+            if exact:
+                if source == preferred_source:
+                    print(
+                        f"  -> {source} EXACT voi Daily Baseline production."
+                    )
+                else:
+                    print(
+                        f"  -> {source} fallback EXACT voi Daily Baseline production."
+                    )
+                return history, source
+
+            attempts.append(f"{source}: {detail}")
+            print(
+                f"  -> {source} KHONG EXACT voi production; "
+                f"thu nguon con lai. {detail}"
             )
-        )
-        raise RuntimeError(
-            f"{PRIMARY_SOURCE}: {primary_detail} | "
-            f"{FALLBACK_SOURCE}: {fallback_exc}"
-        ) from fallback_exc
+        except Exception as exc:
+            detail = f"{type(exc).__name__}: {exc}"
+            attempts.append(f"{source}: {detail}")
+            print(
+                f"  -> {source} khong dung duoc; thu nguon con lai. "
+                f"{detail}"
+            )
+
+    raise RuntimeError(
+        "Khong provider nao tai tao EXACT Daily Baseline production: "
+        + " | ".join(attempts)
+    )
+
+
+def delete_symbol_history(symbol: str) -> None:
+    """
+    Backfill la seed/rebuild. Xoa cache CU cua rieng ma nay truoc khi ghi
+    bo 250 bar moi de tranh con sot date tu provider/lan chay truoc.
+    Cache chua duoc production doc o H1/H1.2 nen thao tac nay an toan.
+    """
+    supabase_request(
+        "DELETE",
+        "daily_history",
+        params={"symbol": f"eq.{symbol}"},
+        prefer="return=minimal",
+    )
 
 
 def history_rows(
@@ -723,19 +807,26 @@ def main() -> None:
 
     watchlist = load_watchlist()
     states = load_sync_state()
-    baseline_requirements = load_baseline_requirements()
+    baseline_profiles = load_baseline_profiles()
 
-    completed_before = {
-        symbol
-        for symbol, state in states.items()
-        if str(state.get("status") or "").upper() == "COMPLETE"
-        and int(state.get("target_sessions") or 0) == TARGET_SESSIONS
-        and int(state.get("sessions_loaded") or 0)
-        >= baseline_requirements.get(symbol, MIN_REQUIRED_SESSIONS)
-    }
+    completed_before: set[str] = set()
+    for symbol, state in states.items():
+        profile = baseline_profiles.get(symbol)
+        if profile is None:
+            continue
+        if (
+            str(state.get("status") or "").upper() == "COMPLETE"
+            and int(state.get("target_sessions") or 0) == TARGET_SESSIONS
+            and int(state.get("sessions_loaded") or 0)
+            >= int(profile["ma200_sessions"])
+            and str(state.get("latest_trading_date") or "")
+            == profile["trading_date"].isoformat()
+        ):
+            completed_before.add(symbol)
 
     print(
-        f"Daily History Backfill H1.1: universe={len(watchlist)}, "
+        f"Daily History Backfill H1.2: universe={len(watchlist)}, "
+        f"profiles={len(baseline_profiles)}, "
         f"target={TARGET_SESSIONS} phien/ma, "
         f"complete_truoc={len(completed_before)}, "
         f"max_symbols={max_symbols}, force={force}."
@@ -769,12 +860,24 @@ def main() -> None:
 
         attempted += 1
         symbol_run_at = now_vn()
+        profile = baseline_profiles.get(symbol)
 
-        required_sessions = baseline_requirements.get(
-            symbol, MIN_REQUIRED_SESSIONS
-        )
+        if profile is None:
+            message = (
+                "Khong co Daily Baseline production profile hop le; "
+                "khong duoc seed mu."
+            )
+            errors.append((symbol, message))
+            print(f"[{attempted}] {symbol} ({exchange}) -> ERROR: {message}")
+            continue
+
+        required_sessions = int(profile["ma200_sessions"])
+        anchor_date = profile["trading_date"]
+        preferred_source = profile["source"]
+
         print(
             f"[{attempted}] {symbol} ({exchange}) "
+            f"anchor={anchor_date}, baseline_source={preferred_source}, "
             f"required_ma_sessions={required_sessions}"
         )
 
@@ -790,7 +893,7 @@ def main() -> None:
             history, source = get_history(
                 symbol,
                 run_date,
-                required_sessions,
+                profile,
             )
             rows = history_rows(
                 symbol,
@@ -807,16 +910,35 @@ def main() -> None:
                     f"{required_sessions} phien de tuong thich MA200 production"
                 )
 
+            dates = [
+                date.fromisoformat(str(item["trading_date"]))
+                for item in rows
+            ]
+            if max(dates) != anchor_date:
+                raise RuntimeError(
+                    f"Anchor mismatch: cache latest={max(dates)}, "
+                    f"production={anchor_date}"
+                )
+
+            # Re-check lan cuoi tren chinh history se ghi.
+            selected_for_validation = history.tail(TARGET_SESSIONS).copy()
+            exact, detail = compare_with_production(
+                selected_for_validation,
+                profile,
+            )
+            if not exact:
+                raise RuntimeError(
+                    f"Compatibility gate fail truoc khi ghi: {detail}"
+                )
+
+            # Rebuild rieng ma nay de khong con orphan rows tu provider cu.
+            delete_symbol_history(symbol)
             upsert_rows(
                 "daily_history",
                 rows,
                 "symbol,trading_date",
             )
 
-            dates = [
-                date.fromisoformat(str(item["trading_date"]))
-                for item in rows
-            ]
             upsert_state(
                 symbol=symbol,
                 exchange=exchange,
@@ -832,7 +954,7 @@ def main() -> None:
 
             completed_now += 1
             print(
-                f"  -> COMPLETE {symbol}: {len(rows)} phien, "
+                f"  -> COMPLETE EXACT {symbol}: {len(rows)} phien, "
                 f"{min(dates)}->{max(dates)}, source={source}"
             )
         except Exception as exc:
@@ -858,6 +980,7 @@ def main() -> None:
     print(
         "BACKFILL SUMMARY: "
         f"universe={len(watchlist)}, "
+        f"profiles={len(baseline_profiles)}, "
         f"complete_truoc={len(completed_before)}, "
         f"skipped={skipped}, attempted={attempted}, "
         f"completed_now={completed_now}, errors={len(errors)}, "
