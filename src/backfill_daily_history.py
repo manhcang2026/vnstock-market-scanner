@@ -17,7 +17,8 @@ PRIMARY_SOURCE = "KBS"
 FALLBACK_SOURCE = "VCI"
 
 TARGET_SESSIONS = 250
-LOOKBACK_DAYS = 500
+MIN_REQUIRED_SESSIONS = 200
+LOOKBACK_WINDOWS_DAYS = (500, 1200, 2400)
 SOURCE_STALE_AFTER_DAYS = 4
 
 REQUEST_INTERVAL_SECONDS = 1.25
@@ -226,6 +227,36 @@ def load_sync_state() -> dict[str, dict[str, Any]]:
     return result
 
 
+def load_baseline_requirements() -> dict[str, int]:
+    """
+    Lay so phien MA200 ma production hien tai thuc su dung cho tung ma.
+
+    Ma moi niem yet co the chua du 200 phien; khi do backfill chi can dat
+    dung so phien production dang co, thay vi bat buoc 200 mot cach gia tao.
+    """
+    response = supabase_request(
+        "GET",
+        "latest_daily_baseline",
+        params={
+            "select": "symbol,ma200_sessions",
+            "order": "symbol.asc",
+            "limit": "1000",
+        },
+    )
+    result: dict[str, int] = {}
+    for row in response.json():
+        symbol = str(row.get("symbol") or "").strip().upper()
+        if not symbol:
+            continue
+        try:
+            sessions = int(row.get("ma200_sessions") or 0)
+        except (TypeError, ValueError):
+            sessions = 0
+        if sessions > 0:
+            result[symbol] = min(MIN_REQUIRED_SESSIONS, sessions)
+    return result
+
+
 def upsert_state(
     *,
     symbol: str,
@@ -430,7 +461,18 @@ def prepare_history(data: pd.DataFrame, run_date: date) -> pd.DataFrame:
         raise RuntimeError(
             f"Khong co phien da ket thuc truoc {run_date.isoformat()}"
         )
-    return df
+
+    # H1.1: provider co the bo sung dong carry-forward volume=0 o CUOI
+    # chuoi sau khi ma da ngung giao dich. Khong cho cac dong nay day
+    # trading_date tien len (truong hop BCF/BTW bat duoc o test H1).
+    # Van giu volume=0 NAM GIUA lich su de MA200 giu cung semantics voi
+    # Daily Baseline production: 200 phien thi truong, khong phai 200 ngay
+    # ma co phat sinh khoi luong.
+    positive_positions = df.index[df["volume"] > 0]
+    if len(positive_positions) == 0:
+        raise RuntimeError("History khong co phien volume > 0")
+    last_traded_position = int(positive_positions[-1])
+    return df.iloc[: last_traded_position + 1].reset_index(drop=True)
 
 
 def normalize_price_unit(history: pd.DataFrame) -> pd.DataFrame:
@@ -481,55 +523,151 @@ def source_is_too_stale(history: pd.DataFrame, run_date: date) -> bool:
     return (run_date - latest_date).days > SOURCE_STALE_AFTER_DAYS
 
 
+def fetch_source_history_adaptive(
+    symbol: str,
+    source: str,
+    run_date: date,
+    required_sessions: int,
+) -> pd.DataFrame:
+    """
+    Bat dau 500 ngay de giu request nhe. Neu chua du buffer 250 phien thi
+    mo rong 1200 ngay. Chi mo rong tiep 2400 ngay neu van chua dat so phien
+    toi thieu ma production hien tai can cho MA200.
+    """
+    end = run_date.isoformat()
+    best: pd.DataFrame | None = None
+
+    for lookback_days in LOOKBACK_WINDOWS_DAYS:
+        if (
+            best is not None
+            and lookback_days == LOOKBACK_WINDOWS_DAYS[-1]
+            and len(best) >= required_sessions
+        ):
+            break
+
+        start = (run_date - timedelta(days=lookback_days)).isoformat()
+        history = fetch_source_history(
+            symbol, source, start, end, run_date
+        )
+        best = history
+        latest_date = history.iloc[-1]["time"].date()
+        print(
+            f"  -> {source} lookback={lookback_days}d: "
+            f"{len(history)} phien, latest={latest_date}"
+        )
+
+        if len(history) >= TARGET_SESSIONS:
+            break
+
+        if lookback_days != LOOKBACK_WINDOWS_DAYS[-1]:
+            print(
+                f"  -> {source} chua du buffer {TARGET_SESSIONS} phien; "
+                "mo rong lookback."
+            )
+
+    if best is None:
+        raise RuntimeError(f"{source}: khong lay duoc history")
+    return best
+
+
+def history_quality(
+    history: pd.DataFrame,
+    required_sessions: int,
+) -> tuple[int, int, date]:
+    return (
+        1 if len(history) >= required_sessions else 0,
+        min(len(history), TARGET_SESSIONS),
+        history.iloc[-1]["time"].date(),
+    )
+
+
 def get_history(
     symbol: str,
-    start: str,
-    end: str,
     run_date: date,
+    required_sessions: int,
 ) -> tuple[pd.DataFrame, str]:
+    """
+    KBS van la primary. H1.1 chi goi VCI khi KBS loi/empty, stale, hoac
+    chua du buffer 250 phien. Neu ca hai co du lieu, chon nguon dap ung
+    MA200 truoc, sau do uu tien nhieu phien hon va trading_date moi hon.
+    KBS thang neu chat luong bang nhau.
+    """
     primary_history: pd.DataFrame | None = None
     primary_error: str | None = None
 
     try:
-        primary_history = fetch_source_history(
-            symbol, PRIMARY_SOURCE, start, end, run_date
+        primary_history = fetch_source_history_adaptive(
+            symbol, PRIMARY_SOURCE, run_date, required_sessions
         )
         primary_date = primary_history.iloc[-1]["time"].date()
-        if not source_is_too_stale(primary_history, run_date):
+        if (
+            len(primary_history) >= TARGET_SESSIONS
+            and not source_is_too_stale(primary_history, run_date)
+        ):
             return primary_history, PRIMARY_SOURCE
 
+        reasons: list[str] = []
+        if len(primary_history) < TARGET_SESSIONS:
+            reasons.append(f"chi co {len(primary_history)} phien")
+        if source_is_too_stale(primary_history, run_date):
+            reasons.append(f"du lieu cu {primary_date.isoformat()}")
         print(
-            f"  -> {PRIMARY_SOURCE} co du lieu cu "
-            f"{primary_date.isoformat()}; thu {FALLBACK_SOURCE}"
+            f"  -> {PRIMARY_SOURCE} {'; '.join(reasons)}; "
+            f"thu {FALLBACK_SOURCE}."
         )
     except Exception as exc:
         primary_error = str(exc)
         print(
             f"  -> {PRIMARY_SOURCE} khong dung duoc; "
-            f"thu {FALLBACK_SOURCE}"
+            f"thu {FALLBACK_SOURCE}."
         )
 
     try:
-        fallback_history = fetch_source_history(
-            symbol, FALLBACK_SOURCE, start, end, run_date
+        fallback_history = fetch_source_history_adaptive(
+            symbol, FALLBACK_SOURCE, run_date, required_sessions
         )
 
         if primary_history is None:
-            return fallback_history, FALLBACK_SOURCE
+            selected_history = fallback_history
+            selected_source = FALLBACK_SOURCE
+        else:
+            primary_quality = history_quality(
+                primary_history, required_sessions
+            )
+            fallback_quality = history_quality(
+                fallback_history, required_sessions
+            )
+            if fallback_quality > primary_quality:
+                selected_history = fallback_history
+                selected_source = FALLBACK_SOURCE
+            else:
+                selected_history = primary_history
+                selected_source = PRIMARY_SOURCE
 
-        primary_date = primary_history.iloc[-1]["time"].date()
-        fallback_date = fallback_history.iloc[-1]["time"].date()
-
-        if fallback_date > primary_date:
-            return fallback_history, FALLBACK_SOURCE
-
-        return primary_history, PRIMARY_SOURCE
+        if len(selected_history) < required_sessions:
+            raise RuntimeError(
+                f"khong nguon nao du {required_sessions} phien: "
+                f"{PRIMARY_SOURCE}={len(primary_history) if primary_history is not None else 0}, "
+                f"{FALLBACK_SOURCE}={len(fallback_history)}"
+            )
+        return selected_history, selected_source
     except Exception as fallback_exc:
-        if primary_history is not None:
+        if (
+            primary_history is not None
+            and len(primary_history) >= required_sessions
+        ):
             return primary_history, PRIMARY_SOURCE
 
+        primary_detail = (
+            primary_error
+            or (
+                f"{len(primary_history)} phien"
+                if primary_history is not None
+                else "unknown"
+            )
+        )
         raise RuntimeError(
-            f"{PRIMARY_SOURCE}: {primary_error or 'unknown'} | "
+            f"{PRIMARY_SOURCE}: {primary_detail} | "
             f"{FALLBACK_SOURCE}: {fallback_exc}"
         ) from fallback_exc
 
@@ -585,23 +723,23 @@ def main() -> None:
 
     watchlist = load_watchlist()
     states = load_sync_state()
+    baseline_requirements = load_baseline_requirements()
 
     completed_before = {
         symbol
         for symbol, state in states.items()
         if str(state.get("status") or "").upper() == "COMPLETE"
         and int(state.get("target_sessions") or 0) == TARGET_SESSIONS
+        and int(state.get("sessions_loaded") or 0)
+        >= baseline_requirements.get(symbol, MIN_REQUIRED_SESSIONS)
     }
 
     print(
-        f"Daily History Backfill H1: universe={len(watchlist)}, "
+        f"Daily History Backfill H1.1: universe={len(watchlist)}, "
         f"target={TARGET_SESSIONS} phien/ma, "
         f"complete_truoc={len(completed_before)}, "
         f"max_symbols={max_symbols}, force={force}."
     )
-
-    start_date = (run_date - timedelta(days=LOOKBACK_DAYS)).isoformat()
-    end_date = run_date.isoformat()
 
     attempted = 0
     completed_now = 0
@@ -632,9 +770,12 @@ def main() -> None:
         attempted += 1
         symbol_run_at = now_vn()
 
+        required_sessions = baseline_requirements.get(
+            symbol, MIN_REQUIRED_SESSIONS
+        )
         print(
             f"[{attempted}] {symbol} ({exchange}) "
-            f"fetch {start_date}->{end_date}"
+            f"required_ma_sessions={required_sessions}"
         )
 
         try:
@@ -648,9 +789,8 @@ def main() -> None:
 
             history, source = get_history(
                 symbol,
-                start_date,
-                end_date,
                 run_date,
+                required_sessions,
             )
             rows = history_rows(
                 symbol,
@@ -661,6 +801,11 @@ def main() -> None:
             )
             if not rows:
                 raise RuntimeError("Khong co row hop le de ghi daily_history")
+            if len(rows) < required_sessions:
+                raise RuntimeError(
+                    f"Chi co {len(rows)} phien, can it nhat "
+                    f"{required_sessions} phien de tuong thich MA200 production"
+                )
 
             upsert_rows(
                 "daily_history",
