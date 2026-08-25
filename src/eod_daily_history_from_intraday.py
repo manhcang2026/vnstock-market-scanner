@@ -10,6 +10,8 @@ from common import load_watchlist, now_vn
 
 
 MARKET_CLOSE_SAFE_AFTER = time(15, 10)
+# Do not treat a mid-session snapshot as the official daily close.
+MIN_EOD_TIME_SLOT = "15:00:00"
 
 
 def env_bool(name: str, default: bool = False) -> bool:
@@ -87,6 +89,7 @@ def load_final_snapshot(
             "current_price": "gt.0",
             "volume_accumulated": "gte.0",
             "data_status": "eq.OK",
+            "time_slot": f"gte.{MIN_EOD_TIME_SLOT}",
             "order": "time_slot.desc",
             "limit": "1",
         },
@@ -171,7 +174,10 @@ def main() -> None:
             snapshot = load_final_snapshot(symbol, trading_date)
             if snapshot is None:
                 no_snapshot += 1
-                print(f"[{index}] {symbol} -> NO VALID SNAPSHOT; skip.")
+                print(
+                    f"[{index}] {symbol} -> NO FINAL EOD SNAPSHOT "
+                    f"(>= {MIN_EOD_TIME_SLOT}); skip."
+                )
                 continue
 
             price = round(float(snapshot["current_price"]), 4)

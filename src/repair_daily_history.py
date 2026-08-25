@@ -11,6 +11,11 @@ import backfill_daily_history as backfill
 from common import load_watchlist, now_vn
 
 
+# Only end-of-day snapshots are eligible for repair overlays.
+# Current scanner produces the canonical final slot at 15:00.
+MIN_EOD_TIME_SLOT = "15:00:00"
+
+
 def env_bool(name: str, default: bool = False) -> bool:
     value = os.getenv(name)
     if value is None:
@@ -84,6 +89,7 @@ def load_final_intraday_snapshots(
             "current_price": "gt.0",
             "volume_accumulated": "gte.0",
             "data_status": "eq.OK",
+            "time_slot": f"gte.{MIN_EOD_TIME_SLOT}",
             "order": "trading_date.asc,time_slot.asc",
             "limit": "5000",
         },
@@ -99,7 +105,8 @@ def load_final_intraday_snapshots(
         except (KeyError, TypeError, ValueError):
             continue
         if price > 0 and volume >= 0:
-            # Query is ascending, so the last valid row wins for each date.
+            # Query already excludes pre-EOD slots; among eligible rows,
+            # the last valid row wins for each date.
             final_by_date[trading_date] = (price, volume, time_slot)
     return final_by_date
 
@@ -364,6 +371,15 @@ def main() -> None:
                 source,
                 run_at,
             )
+
+            # Preserve row-level provenance. Only dates actually replaced by
+            # a final intraday snapshot are labelled INTRADAY_EOD; provider
+            # rows keep their original KBS/VCI source.
+            overlay_date_strings = {value.isoformat() for value in overlay_dates}
+            for candidate_row in candidate_rows:
+                if candidate_row["trading_date"] in overlay_date_strings:
+                    candidate_row["source"] = "INTRADAY_EOD"
+
             conflicts = find_conflicts(existing_rows, candidate_rows)
             if conflicts:
                 raise RuntimeError(
