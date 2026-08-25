@@ -42,6 +42,13 @@
     }));
   }
 
+  async function signUpWithPassword(email, password) {
+    return throwIfError(await requireClient().auth.signUp({
+      email: email,
+      password: password
+    }));
+  }
+
   async function signInWithGoogle(redirectTo) {
     return throwIfError(await requireClient().auth.signInWithOAuth({
       provider: "google",
@@ -357,6 +364,7 @@
     getSession: getSession,
     onAuthStateChange: onAuthStateChange,
     signInWithPassword: signInWithPassword,
+    signUpWithPassword: signUpWithPassword,
     signInWithGoogle: signInWithGoogle,
     signOut: signOut,
     changePassword: changePassword,

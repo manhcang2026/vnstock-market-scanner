@@ -87,8 +87,10 @@
       watchlistNotice: "",
       query: "",
       authOpen: false,
+      authMode: "signin",
       authBusy: false,
       authError: "",
+      authNotice: "",
       passwordOpen: false,
       passwordBusy: false,
       passwordError: "",
@@ -489,10 +491,12 @@
   }
 
   function friendlyAuthError(error) {
-    var message = String(error && error.message ? error.message : "Không thể đăng nhập lúc này.");
+    var message = String(error && error.message ? error.message : "Không thể xử lý tài khoản lúc này.");
     var lower = message.toLowerCase();
     if (lower.indexOf("invalid login credentials") >= 0) return "Email hoặc mật khẩu chưa đúng.";
     if (lower.indexOf("email not confirmed") >= 0) return "Email chưa được xác nhận.";
+    if (lower.indexOf("already registered") >= 0 || lower.indexOf("user already exists") >= 0 || lower.indexOf("user_already_exists") >= 0) return "Email này đã có tài khoản. Hãy chuyển sang Đăng nhập.";
+    if (lower.indexOf("password") >= 0 && (lower.indexOf("weak") >= 0 || lower.indexOf("at least") >= 0 || lower.indexOf("characters") >= 0)) return "Mật khẩu chưa đạt yêu cầu. Vui lòng dùng ít nhất 8 ký tự.";
     if (lower.indexOf("rate limit") >= 0) return "Bạn thao tác quá nhanh. Vui lòng thử lại sau ít phút.";
     return message;
   }
@@ -2911,14 +2915,32 @@
 
   function authDialogHtml() {
     if (!state.account.authOpen) return "";
-    var feedback = state.account.authError ? '<div class="ccc-auth-feedback error" role="alert">' + esc(state.account.authError) + '</div>' : "";
+
+    var mode = state.account.authMode === "signup" ? "signup" : "signin";
+    var isSignup = mode === "signup";
+    var feedback = state.account.authError
+      ? '<div class="ccc-auth-feedback error" role="alert">' + esc(state.account.authError) + '</div>'
+      : state.account.authNotice
+        ? '<div class="ccc-auth-feedback success" role="status">' + esc(state.account.authNotice) + '</div>'
+        : "";
+
+    var emailForm = isSignup
+      ? '<form id="auth-signup-form" class="ccc-auth-form" novalidate><label>Email</label><input name="email" type="email" autocomplete="email" placeholder="tenban@example.com" required><label>Mật khẩu</label><input name="password" type="password" autocomplete="new-password" minlength="8" placeholder="Tối thiểu 8 ký tự" required><label>Nhập lại mật khẩu</label><input name="confirm_password" type="password" autocomplete="new-password" minlength="8" placeholder="Nhập lại mật khẩu" required><button class="ccc-auth-button primary" type="submit"' + (state.account.authBusy ? " disabled" : "") + '>' + (state.account.authBusy ? "Đang tạo tài khoản…" : "Tạo tài khoản miễn phí") + '</button></form>'
+      : '<form id="auth-email-form" class="ccc-auth-form" novalidate><label>Email</label><input name="email" type="email" autocomplete="email" placeholder="tenban@example.com" required><label>Mật khẩu</label><input name="password" type="password" autocomplete="current-password" minlength="8" placeholder="Tối thiểu 8 ký tự" required><button class="ccc-auth-button primary" type="submit"' + (state.account.authBusy ? " disabled" : "") + '>' + (state.account.authBusy ? "Đang xử lý…" : "Đăng nhập") + '</button></form>';
+
+    var switchNote = isSignup
+      ? '<p class="ccc-auth-switch-note">Đã có tài khoản? <button type="button" data-auth-mode="signin">Đăng nhập</button></p>'
+      : '<p class="ccc-auth-switch-note">Chưa có tài khoản? <button type="button" data-auth-mode="signup">Đăng ký miễn phí</button></p>';
+
     return '<div class="ccc-auth-overlay phase4-auth-overlay"><section class="ccc-auth-dialog" role="dialog" aria-modal="true" aria-labelledby="phase4-auth-title">' +
-      '<header class="ccc-auth-head"><div><span class="eyebrow">TÀI KHOẢN CCC</span><h2 id="phase4-auth-title">Đăng nhập</h2><p>Đăng nhập để sử dụng phạm vi cá nhân của Chuyện Chợ Chứng.</p></div><button id="auth-dialog-close" class="ccc-auth-close" type="button" aria-label="Đóng">×</button></header>' +
+      '<header class="ccc-auth-head"><div><span class="eyebrow">TÀI KHOẢN CCC</span><h2 id="phase4-auth-title">' + (isSignup ? "Tạo tài khoản" : "Đăng nhập") + '</h2><p>' + (isSignup ? "Tạo tài khoản miễn phí để lưu danh sách và sử dụng phạm vi cá nhân." : "Đăng nhập để sử dụng phạm vi cá nhân của Chuyện Chợ Chứng.") + '</p></div><button id="auth-dialog-close" class="ccc-auth-close" type="button" aria-label="Đóng">×</button></header>' +
       feedback +
-      '<div class="ccc-auth-body"><button id="auth-google" class="ccc-auth-google" type="button"' + (state.account.authBusy ? " disabled" : "") + '><span class="ccc-auth-google-mark">G</span><span>Tiếp tục với Google</span></button><div class="ccc-auth-divider"><span>hoặc đăng nhập bằng email</span></div><form id="auth-email-form" class="ccc-auth-form" novalidate><label>Email</label><input name="email" type="email" autocomplete="email" placeholder="tenban@example.com" required><label>Mật khẩu</label><input name="password" type="password" autocomplete="current-password" minlength="8" placeholder="Tối thiểu 8 ký tự" required><button class="ccc-auth-button primary" type="submit"' + (state.account.authBusy ? " disabled" : "") + '>' + (state.account.authBusy ? "Đang xử lý…" : "Đăng nhập") + '</button></form><p class="ccc-auth-stage-note">Đăng nhập Google hoặc dùng tài khoản Email đã được tạo trên hệ thống.</p></div>' +
+      '<div class="ccc-auth-body"><button id="auth-google" class="ccc-auth-google" type="button"' + (state.account.authBusy ? " disabled" : "") + '><span class="ccc-auth-google-mark">G</span><span>Tiếp tục với Google</span></button><div class="ccc-auth-divider"><span>hoặc dùng email</span></div>' +
+        '<div class="ccc-auth-tabs" role="tablist" aria-label="Đăng nhập hoặc đăng ký"><button type="button" role="tab" aria-selected="' + (!isSignup ? "true" : "false") + '" class="' + (!isSignup ? "active" : "") + '" data-auth-mode="signin">Đăng nhập</button><button type="button" role="tab" aria-selected="' + (isSignup ? "true" : "false") + '" class="' + (isSignup ? "active" : "") + '" data-auth-mode="signup">Đăng ký</button></div>' +
+        emailForm + switchNote +
+        '<p class="ccc-auth-stage-note">' + (isSignup ? "Bạn có thể hoàn thiện hồ sơ sau trong mục Tài khoản." : "Google hoặc Email đều dùng chung một tài khoản CCC.") + '</p></div>' +
     '</section></div>';
   }
-
 
 
   /* ==========================================================
@@ -3390,10 +3412,9 @@
           '<div class="guide-hero-actions"><a class="guide-primary-action" href="/danh-sach">Mở DS của tôi</a><a class="guide-secondary-action" href="#guide-signals">Hiểu 4 tín hiệu</a></div>' +
         '</div>' +
         '<div class="guide-community-card">' +
-          '<span class="guide-community-kicker">CỘNG ĐỒNG CHÉM GIÓ CHỨNG KHOÁN</span>' +
-          '<h2>Nơi dành cho người mới lẫn người đã theo dõi CCC.</h2>' +
-          '<p>Nếu còn chưa rõ cách đọc 2/4 – 4/4, chưa hiểu ý nghĩa các tín hiệu hoặc muốn hỏi nhanh về cách dùng hệ thống, bạn có thể tham gia group Zalo để trao đổi.</p>' +
-          '<a class="guide-community-cta" href="https://zalo.me/g/pqef4bm93akv1elvkqz2" target="_blank" rel="noopener noreferrer"><span>Vào group ngay</span><b aria-hidden="true">→</b></a>' +
+          '<div class="guide-community-brand"><span class="guide-zalo-mark"><img src="/assets/brand/zalo-logo.svg?v=19113" alt="Zalo"></span><div><span class="guide-community-kicker">CỘNG ĐỒNG CCC · ZALO</span><h3>Chém gió Chứng Khoán</h3></div></div>' +
+          '<p>Chưa rõ cách đọc 2/4–4/4 hoặc tín hiệu CCC? Vào group hỏi nhanh và trao đổi cùng mọi người.</p>' +
+          '<a class="guide-community-cta" href="https://zalo.me/g/pqef4bm93akv1elvkqz2" target="_blank" rel="noopener noreferrer"><span>Tham gia group Zalo</span><b aria-hidden="true">→</b></a>' +
         '</div>' +
       '</section>' +
 
@@ -3936,6 +3957,7 @@
 
     state.account.authBusy = true;
     state.account.authError = "";
+    state.account.authNotice = "";
     render();
 
     try {
@@ -3949,10 +3971,58 @@
     }
   }
 
+  async function signUpAccountEmail(event) {
+    event.preventDefault();
+    if (state.account.authBusy) return;
+
+    var fd = new FormData(event.currentTarget);
+    var email = String(fd.get("email") || "").trim();
+    var password = String(fd.get("password") || "");
+    var confirmPassword = String(fd.get("confirm_password") || "");
+
+    state.account.authError = "";
+    state.account.authNotice = "";
+
+    if (!email || !password || !confirmPassword) {
+      state.account.authError = "Vui lòng nhập đầy đủ email và hai ô mật khẩu.";
+      render();
+      return;
+    }
+    if (password.length < 8) {
+      state.account.authError = "Mật khẩu cần tối thiểu 8 ký tự.";
+      render();
+      return;
+    }
+    if (password !== confirmPassword) {
+      state.account.authError = "Hai lần nhập mật khẩu chưa khớp.";
+      render();
+      return;
+    }
+
+    state.account.authBusy = true;
+    render();
+
+    try {
+      var result = await window.CCCData.signUpWithPassword(email, password);
+      if (result && result.session) {
+        state.account.authOpen = false;
+      } else {
+        state.account.authMode = "signin";
+        state.account.authNotice = "Tài khoản đã được tạo. Vui lòng đăng nhập để tiếp tục.";
+      }
+    } catch (error) {
+      state.account.authError = friendlyAuthError(error);
+    } finally {
+      state.account.authBusy = false;
+      render();
+    }
+  }
+
   async function signInAccountGoogle() {
     if (state.account.authBusy) return;
     state.account.authBusy = true;
     state.account.authError = "";
+    state.account.authNotice = "";
     render();
     try {
       var intent = storedPurchaseIntent();
@@ -4288,7 +4358,9 @@
       if (state.user) location.assign(ACCOUNT_PATH);
       else {
         state.account.authOpen = true;
+        state.account.authMode = "signin";
         state.account.authError = "";
+        state.account.authNotice = "";
         render();
       }
     });
@@ -4337,14 +4409,18 @@
     var accountLoginOpen = document.getElementById("account-login-open");
     if (accountLoginOpen) accountLoginOpen.addEventListener("click", function () {
       state.account.authOpen = true;
+      state.account.authMode = "signin";
       state.account.authError = "";
+      state.account.authNotice = "";
       render();
     });
 
     var authClose = document.getElementById("auth-dialog-close");
     if (authClose) authClose.addEventListener("click", function () {
       state.account.authOpen = false;
+      state.account.authMode = "signin";
       state.account.authError = "";
+      state.account.authNotice = "";
       setPurchaseIntent("");
       render();
     });
@@ -4353,13 +4429,29 @@
     if (authOverlay) authOverlay.addEventListener("click", function (event) {
       if (event.target === authOverlay) {
         state.account.authOpen = false;
+        state.account.authMode = "signin";
         state.account.authError = "";
+        state.account.authNotice = "";
         render();
       }
     });
 
     var authEmail = document.getElementById("auth-email-form");
     if (authEmail) authEmail.addEventListener("submit", signInAccountEmail);
+
+    var authSignup = document.getElementById("auth-signup-form");
+    if (authSignup) authSignup.addEventListener("submit", signUpAccountEmail);
+
+    document.querySelectorAll("[data-auth-mode]").forEach(function (button) {
+      button.addEventListener("click", function () {
+        var nextMode = button.getAttribute("data-auth-mode") === "signup" ? "signup" : "signin";
+        if (state.account.authBusy || nextMode === state.account.authMode) return;
+        state.account.authMode = nextMode;
+        state.account.authError = "";
+        state.account.authNotice = "";
+        render();
+      });
+    });
 
     var authGoogle = document.getElementById("auth-google");
     if (authGoogle) authGoogle.addEventListener("click", signInAccountGoogle);

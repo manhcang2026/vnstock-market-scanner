@@ -4245,7 +4245,7 @@ main.wrap.phase6e-guide-page{
 .guide-page{padding-bottom:56px}
 .guide-hero{
   display:grid;
-  grid-template-columns:minmax(0,1fr) 310px;
+  grid-template-columns:minmax(0,1fr) 286px;
   gap:28px;
   align-items:center;
   padding:26px 28px;
@@ -4367,73 +4367,121 @@ main.wrap.phase6e-guide-page{
 }
 
 
-/* Public baseline v19.11.1 — Guide community hero */
+/* Public baseline v19.11.2 — compact Zalo community + email signup */
 .guide-community-card{
-  min-height:190px;
-  padding:18px;
-  border:1px solid color-mix(in srgb,#0b6dfd 30%,var(--border));
-  border-radius:14px;
-  background:
-    radial-gradient(circle at 100% 0,color-mix(in srgb,#0b6dfd 17%,transparent),transparent 45%),
-    linear-gradient(145deg,color-mix(in srgb,var(--card) 94%,#0b6dfd 6%),var(--card));
-  display:flex;
-  flex-direction:column;
-  align-items:flex-start;
-  justify-content:center;
-  gap:8px;
+  min-height:0;
+  padding:14px;
+  border:1px solid color-mix(in srgb,#0068ff 34%,var(--border));
+  border-radius:13px;
+  background:color-mix(in srgb,var(--card) 96%,#0068ff 4%);
+  display:grid;
+  gap:10px;
+  align-self:center;
 }
+.guide-community-brand{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  min-width:0;
+}
+.guide-zalo-mark{
+  width:38px;
+  height:38px;
+  flex:0 0 38px;
+  display:grid;
+  place-items:center;
+  border:1px solid color-mix(in srgb,#0068ff 22%,var(--border));
+  border-radius:10px;
+  background:#fff;
+}
+.guide-zalo-mark img{display:block;width:28px;height:28px;object-fit:contain}
+.guide-community-brand>div{min-width:0}
 .guide-community-kicker{
   display:block;
-  font-size:9.5px;
-  line-height:1.35;
+  color:#4b8cff;
+  font-size:9px;
+  line-height:1.25;
   font-weight:850;
-  letter-spacing:.08em;
-  color:#3f8cff;
+  letter-spacing:.07em;
 }
 .guide-community-card h2{
-  margin:1px 0 0;
-  font-size:16px;
-  line-height:1.35;
+  margin:3px 0 0;
+  font-size:14.5px;
+  line-height:1.25;
   letter-spacing:-.01em;
 }
 .guide-community-card p{
   margin:0;
   max-width:none;
   color:var(--muted-foreground);
-  font-size:11.5px;
-  line-height:1.55;
+  font-size:10.75px;
+  line-height:1.5;
 }
 .guide-community-cta{
-  width:100%;
-  min-height:38px;
-  margin-top:3px;
-  padding:0 12px;
-  border-radius:9px;
-  background:#0b6dfd;
+  min-height:34px;
+  padding:0 11px;
+  border:1px solid #0068ff;
+  border-radius:8px;
+  background:#0068ff;
   color:#fff;
   text-decoration:none;
-  font-size:12px;
+  font-size:11.25px;
   font-weight:800;
   display:flex;
   align-items:center;
   justify-content:space-between;
   gap:10px;
-  box-shadow:0 8px 24px color-mix(in srgb,#0b6dfd 20%,transparent);
 }
-.guide-community-cta:hover{
-  background:#0862df;
+.guide-community-cta:hover{filter:brightness(1.06)}
+.guide-community-cta b{font-size:15px;line-height:1}
+
+/* Auth modal: clear sign-in / sign-up modes without changing Google OAuth. */
+.ccc-auth-tabs{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:4px;
+  margin:0 0 14px;
+  padding:4px;
+  border:1px solid var(--border);
+  border-radius:10px;
+  background:var(--surface-2);
 }
-.guide-community-cta b{
-  font-size:16px;
-  line-height:1;
+.ccc-auth-tabs button{
+  min-height:36px;
+  border:0;
+  border-radius:7px;
+  background:transparent;
+  color:var(--muted-foreground);
+  font-size:12px;
+  font-weight:800;
 }
+.ccc-auth-tabs button.active{
+  background:var(--surface-1);
+  color:var(--foreground);
+  box-shadow:0 1px 2px oklch(0 0 0 / .10);
+}
+.ccc-auth-tabs button:hover:not(.active){color:var(--foreground)}
+.ccc-auth-switch-note{
+  margin:13px 0 0;
+  color:var(--muted-foreground);
+  font-size:11.5px;
+  line-height:1.5;
+  text-align:center;
+}
+.ccc-auth-switch-note button{
+  padding:0;
+  border:0;
+  background:transparent;
+  color:var(--primary);
+  font:inherit;
+  font-weight:800;
+  cursor:pointer;
+}
+.ccc-auth-switch-note button:hover{text-decoration:underline}
 @media(max-width:767px){
-  .guide-community-card{
-    min-height:0;
-    padding:15px;
-  }
-  .guide-community-card h2{font-size:15px}
-  .guide-community-card p{font-size:11.75px}
+  .guide-community-card{padding:13px}
+  .guide-community-card h2{font-size:14px}
+  .guide-community-card p{font-size:11px}
 }
 
 
@@ -4472,3 +4520,105 @@ main.wrap.phase6e-guide-page{
 @media(max-width:430px){
   .guide-hero h1{font-size:24px;line-height:1.32}
 }
+
+/* Public baseline v19.11.3 — Zalo card aligned to the native CCC right rail */
+.guide-hero.phase5c-route-heading{
+  grid-template-columns:minmax(0,1fr) 300px;
+  gap:20px;
+  align-items:start;
+  margin-bottom:18px!important;
+}
+.guide-community-card{
+  width:100%;
+  min-width:0;
+  box-sizing:border-box;
+  min-height:0;
+  padding:15px;
+  border:1px solid var(--border);
+  border-radius:12px;
+  background:var(--card);
+  display:grid;
+  gap:9px;
+  align-self:start;
+}
+.guide-community-brand{
+  display:flex;
+  align-items:center;
+  gap:9px;
+  min-width:0;
+}
+.guide-zalo-mark{
+  width:34px;
+  height:34px;
+  flex:0 0 34px;
+  display:grid;
+  place-items:center;
+  border:1px solid color-mix(in srgb,#0068ff 30%,var(--border));
+  border-radius:9px;
+  background:#fff;
+}
+.guide-zalo-mark img{
+  display:block;
+  width:25px;
+  height:25px;
+  object-fit:contain;
+}
+.guide-community-brand>div{min-width:0}
+.guide-community-kicker{
+  display:block;
+  font-size:10.5px;
+  font-weight:800;
+  letter-spacing:.09em;
+  line-height:1.3;
+  color:var(--muted-foreground);
+}
+.guide-community-card h3{
+  margin:5px 0 0;
+  font-size:14px;
+  font-weight:700;
+  line-height:1.35;
+  letter-spacing:0;
+  color:var(--foreground);
+}
+.guide-community-card p{
+  max-width:none;
+  margin:0!important;
+  color:var(--muted-foreground)!important;
+  font-size:11.5px!important;
+  font-weight:400!important;
+  line-height:1.55!important;
+}
+.guide-community-cta{
+  min-height:34px;
+  padding:7px 9px;
+  border:1px solid color-mix(in srgb,#0068ff 48%,var(--border));
+  border-radius:7px;
+  background:color-mix(in srgb,#0068ff 10%,var(--card));
+  color:#4b8cff;
+  text-decoration:none;
+  font-size:11.5px;
+  font-weight:700;
+  line-height:1.25;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+}
+.guide-community-cta:hover{
+  background:color-mix(in srgb,#0068ff 16%,var(--card));
+}
+.guide-community-cta b{
+  font-size:14px;
+  line-height:1;
+}
+@media(max-width:767px){
+  .guide-hero.phase5c-route-heading{
+    grid-template-columns:1fr;
+    gap:14px;
+    margin-bottom:16px!important;
+  }
+  .guide-community-card{
+    padding:14px;
+  }
+}
+
