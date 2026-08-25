@@ -936,7 +936,7 @@
       '<div class="top-actions"><button id="refresh-btn" class="icon-action refresh-btn" type="button" aria-label="Làm mới dữ liệu" title="Làm mới dữ liệu">' + iconSvg("refresh") + '</button><a class="icon-action guide-action ' + (state.route === "guide" ? "is-active" : "") + '" href="/huong-dan" aria-label="Mở hướng dẫn sử dụng" title="Hướng dẫn sử dụng">' + iconSvg("help") + '</a><button class="icon-action alert-action" type="button" aria-label="Cảnh báo chưa khả dụng" disabled>' + iconSvg("bell") + '</button><button id="theme-toggle" class="icon-action theme-toggle" type="button" aria-label="Đổi giao diện sáng tối">' + iconSvg(state.theme === "light" ? "moon" : "sun") + '</button><button id="account-open" class="account-action" type="button"><span class="account-avatar">' + iconSvg("user") + '</span><span><strong>' + esc(user) + '</strong>' + accountMeta + '</span></button></div></div></div>' +
       '<div id="mobile-status-row" class="mobile-status-row trust-outside"><div class="mobile-status-primary"><span class="mobile-market"><i class="trust-dot"></i><b id="mobile-market-status">' + esc(sessionLabel) + '</b></span><span class="mobile-now">Làm mới <b id="mobile-countdown">' + countdownText() + '</b></span></div></div>' +
       mobileSearchHtml + '</header>' +
-      '<aside class="desktop-nav"><nav aria-label="Điều hướng chính">' + nav + '</nav><div class="desktop-nav-secondary"><a href="' + ACCOUNT_PATH + '" class="shell-nav-link account-nav ' + (state.route === "account" ? "active" : "") + '"><span class="nav-ico">' + iconSvg("user") + '</span><span class="nav-label">Tài khoản</span><small>Tài khoản</small></a></div><div class="nav-stage"><span>BẢN THỬ</span><small>Giao diện chuẩn</small></div></aside>' +
+      '<aside class="desktop-nav"><nav aria-label="Điều hướng chính">' + nav + '</nav><div class="desktop-nav-secondary"><a href="' + ACCOUNT_PATH + '" class="shell-nav-link account-nav ' + (state.route === "account" ? "active" : "") + '"><span class="nav-ico">' + iconSvg("user") + '</span><span class="nav-label">Tài khoản</span><small>Tài khoản</small></a></div></aside>' +
       '<nav class="mobile-bottom" aria-label="Điều hướng chính trên thiết bị di động">' + mobilePrimaryNavHtml(true) + '</nav>';
   }
 
@@ -1423,7 +1423,7 @@
     return '<main id="main-content" class="wrap overview-main lovable-overview page-shell has-context-rail">' +
       '<section class="page-heading page-header phase5c-route-heading"><div><h1>Tổng quan</h1><p>Theo dõi thị trường, tín hiệu nổi bật và dòng tiền trong phạm vi của bạn.</p></div></section>' +
       '<div class="content-grid has-context-rail"><div class="content-main">' + content + '</div>' + rail + '</div>' +
-      '<p class="disclaimer">BẢN THỬ · Dữ liệu thật. Công cụ không đưa ra khuyến nghị mua/bán.</p></main>';
+      '<p class="disclaimer">Dữ liệu thật. Công cụ không đưa ra khuyến nghị mua/bán.</p></main>';
   }
 
 
@@ -1837,7 +1837,7 @@
         '<header class="section-bar"><div><h2>Danh sách mã</h2><span>Đang chuẩn bị phạm vi dữ liệu</span></div></header>' +
         scannerLoadingHtml() +
       '</section></div><aside class="context-rail scanner-context-rail">' + phase6StableRailSkeletonHtml('phase6-scanner-rail-pending') + '</aside></div>' +
-      '<p class="disclaimer">BẢN THỬ · Đang đồng bộ phiên đăng nhập và phạm vi dữ liệu.</p></main>';
+      '<p class="disclaimer">Đang đồng bộ phiên đăng nhập và phạm vi dữ liệu.</p></main>';
   }
 
   function scannerPageHtml() {
@@ -1919,7 +1919,7 @@
       '<div class="scanner-mode-note">' + modeNote + '</div>' +
       controls + '</section>' +
       '<div class="scanner-layout"><div class="scanner-layout-main"><section class="scanner-results panel-anatomy"><header class="section-bar"><div><h2>' + title + '</h2><span>Tổng ' + resultTotal + ' mã phù hợp</span></div><small>' + visible.length + ' mã trên trang này</small></header>' + resultBody + '</section></div><aside class="context-rail scanner-context-rail">' + rail + '</aside></div>' +
-      '<p class="disclaimer">BẢN THỬ · Danh sách quét do hệ thống quản lý; bộ lọc không làm thay đổi danh sách quét hay DS cá nhân.</p></main>';
+      '<p class="disclaimer">Danh sách quét do hệ thống quản lý; bộ lọc không làm thay đổi danh sách quét hay DS cá nhân.</p></main>';
   }
 
 
@@ -2677,7 +2677,7 @@
       '<div class="phase5a-detail-layout"><section class="stock-detail-workspace" aria-labelledby="stock-detail-title">' +
       detailHeaderHtml() + detailTabsHtml() + '<div class="stock-detail-body" role="tabpanel">' + detailBodyHtml() + '</div></section>' +
       '<aside class="context-rail phase5a-detail-context-rail">' + detailContextRailHtml() + '</aside></div>' +
-      '<p class="disclaimer">BẢN THỬ · Dữ liệu phục vụ theo dõi và nghiên cứu, không phải khuyến nghị mua/bán.</p></main>';
+      '<p class="disclaimer">Dữ liệu phục vụ theo dõi và nghiên cứu, không phải khuyến nghị mua/bán.</p></main>';
   }
 
 
@@ -3389,7 +3389,12 @@
         '<div class="guide-hero-copy"><span class="guide-eyebrow">HƯỚNG DẪN SỬ DỤNG</span><h1>Dùng Chuyện Chợ Chứng từ đầu đến cuối</h1><p>Đi từ phạm vi theo dõi → đọc 4 tín hiệu → mở chi tiết mã → dùng nghiên cứu cơ bản. Trang này được viết cho người mới, không cần biết thuật ngữ kỹ thuật trước.</p>' +
           '<div class="guide-hero-actions"><a class="guide-primary-action" href="/danh-sach">Mở DS của tôi</a><a class="guide-secondary-action" href="#guide-signals">Hiểu 4 tín hiệu</a></div>' +
         '</div>' +
-        '<div class="guide-brand-card"><img src="/assets/brand/ccc-logo-primary.png?v=1990-brand" alt="Chuyện Chợ Chứng"></div>' +
+        '<div class="guide-community-card">' +
+          '<span class="guide-community-kicker">CỘNG ĐỒNG CHÉM GIÓ CHỨNG KHOÁN</span>' +
+          '<h2>Nơi dành cho người mới lẫn người đã theo dõi CCC.</h2>' +
+          '<p>Nếu còn chưa rõ cách đọc 2/4 – 4/4, chưa hiểu ý nghĩa các tín hiệu hoặc muốn hỏi nhanh về cách dùng hệ thống, bạn có thể tham gia group Zalo để trao đổi.</p>' +
+          '<a class="guide-community-cta" href="https://zalo.me/g/pqef4bm93akv1elvkqz2" target="_blank" rel="noopener noreferrer"><span>Vào group ngay</span><b aria-hidden="true">→</b></a>' +
+        '</div>' +
       '</section>' +
 
       '<div class="guide-layout"><div class="guide-main">' +
@@ -3500,7 +3505,7 @@
       ? state.detail.symbol + " — Chuyện Chợ Chứng"
       : state.route === "guide"
         ? "Hướng dẫn sử dụng — Chuyện Chợ Chứng"
-        : "Chuyện Chợ Chứng — BẢN THỬ";
+        : "Chuyện Chợ Chứng";
     app.innerHTML = headerHtml() + accessNoticeHtml() + routeHtml() + authDialogHtml() + passwordDialogHtml();
     bind();
     refreshLogoStates();

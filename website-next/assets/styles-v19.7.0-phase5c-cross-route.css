@@ -4245,7 +4245,7 @@ main.wrap.phase6e-guide-page{
 .guide-page{padding-bottom:56px}
 .guide-hero{
   display:grid;
-  grid-template-columns:minmax(0,1fr) 230px;
+  grid-template-columns:minmax(0,1fr) 310px;
   gap:28px;
   align-items:center;
   padding:26px 28px;
@@ -4364,6 +4364,76 @@ main.wrap.phase6e-guide-page{
 @media(max-width:430px){
   .guide-detail-tabs,.guide-plan-grid{grid-template-columns:1fr}
   .guide-hero-actions{display:grid}.guide-primary-action,.guide-secondary-action{width:100%}
+}
+
+
+/* Public baseline v19.11.1 — Guide community hero */
+.guide-community-card{
+  min-height:190px;
+  padding:18px;
+  border:1px solid color-mix(in srgb,#0b6dfd 30%,var(--border));
+  border-radius:14px;
+  background:
+    radial-gradient(circle at 100% 0,color-mix(in srgb,#0b6dfd 17%,transparent),transparent 45%),
+    linear-gradient(145deg,color-mix(in srgb,var(--card) 94%,#0b6dfd 6%),var(--card));
+  display:flex;
+  flex-direction:column;
+  align-items:flex-start;
+  justify-content:center;
+  gap:8px;
+}
+.guide-community-kicker{
+  display:block;
+  font-size:9.5px;
+  line-height:1.35;
+  font-weight:850;
+  letter-spacing:.08em;
+  color:#3f8cff;
+}
+.guide-community-card h2{
+  margin:1px 0 0;
+  font-size:16px;
+  line-height:1.35;
+  letter-spacing:-.01em;
+}
+.guide-community-card p{
+  margin:0;
+  max-width:none;
+  color:var(--muted-foreground);
+  font-size:11.5px;
+  line-height:1.55;
+}
+.guide-community-cta{
+  width:100%;
+  min-height:38px;
+  margin-top:3px;
+  padding:0 12px;
+  border-radius:9px;
+  background:#0b6dfd;
+  color:#fff;
+  text-decoration:none;
+  font-size:12px;
+  font-weight:800;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  box-shadow:0 8px 24px color-mix(in srgb,#0b6dfd 20%,transparent);
+}
+.guide-community-cta:hover{
+  background:#0862df;
+}
+.guide-community-cta b{
+  font-size:16px;
+  line-height:1;
+}
+@media(max-width:767px){
+  .guide-community-card{
+    min-height:0;
+    padding:15px;
+  }
+  .guide-community-card h2{font-size:15px}
+  .guide-community-card p{font-size:11.75px}
 }
 
 
