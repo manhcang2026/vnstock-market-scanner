@@ -8,6 +8,8 @@
   var RESEARCH_PAGE_SIZE = 25;
   var MOBILE_CHUNK = 20;
   var REFRESH_SECONDS = 300;
+  var STOCK_LOGO_LOCAL_BASE = "/assets/logos";
+  var STOCK_LOGO_REMOTE_FALLBACK = "https://www.chuyenchochung.com/stock-logos";
 
   var app = document.getElementById("app");
   var authSubscription = null;
@@ -96,7 +98,7 @@
       purchaseIntent: ""
     },
     scanner: {
-      mode: new URLSearchParams(location.search).get("mode") === "watchlist" ? "watchlist" : "market",
+      mode: scannerModeFromLocation() || "market",
       loading: false,
       error: "",
       marketLoaded: false,
@@ -112,7 +114,7 @@
       technicalScopeAtLoad: "",
       query: new URLSearchParams(location.search).get("q") || "",
       exchange: "all",
-      sort: new URLSearchParams(location.search).get("sort") || (new URLSearchParams(location.search).get("mode") === "watchlist" ? "signal_desc" : "symbol"),
+      sort: new URLSearchParams(location.search).get("sort") || ((scannerModeFromLocation() || "market") === "watchlist" ? "signal_desc" : "symbol"),
       signal: ["4of4","3plus","2plus","rvol30"].indexOf(new URLSearchParams(location.search).get("signal") || "") >= 0 ? new URLSearchParams(location.search).get("signal") : "",
       page: 1,
       mobileShown: MOBILE_CHUNK,
@@ -148,21 +150,35 @@
 
   var initialDetailLocation = detailLocationState();
   if (initialDetailLocation) {
+    var existingDetailHistory = history.state && typeof history.state === "object"
+      ? history.state
+      : {};
+    var restoredFromApp = existingDetailHistory.cccDetail === true &&
+      existingDetailHistory.direct !== true &&
+      typeof existingDetailHistory.sourcePath === "string";
+    var restoredSourcePath = restoredFromApp ? existingDetailHistory.sourcePath : "/";
+    var restoredSourceRoute = restoredFromApp
+      ? (existingDetailHistory.sourceRoute || "overview")
+      : "overview";
+    var restoredScroll = restoredFromApp ? Number(existingDetailHistory.returnScroll || 0) : 0;
+
+    state.route = restoredSourceRoute;
     state.detail.open = true;
     state.detail.symbol = initialDetailLocation.symbol;
     state.detail.tab = initialDetailLocation.tab;
-    state.detail.returnPath = "/";
-    state.detail.sourceRoute = "overview";
-    state.detail.openedFromApp = false;
+    state.detail.returnPath = restoredSourcePath;
+    state.detail.sourceRoute = restoredSourceRoute;
+    state.detail.returnScroll = restoredScroll;
+    state.detail.openedFromApp = restoredFromApp;
 
     history.replaceState({
       cccDetail: true,
       symbol: initialDetailLocation.symbol,
       tab: initialDetailLocation.tab,
-      sourcePath: "/",
-      sourceRoute: "overview",
-      returnScroll: 0,
-      direct: true
+      sourcePath: restoredSourcePath,
+      sourceRoute: restoredSourceRoute,
+      returnScroll: restoredScroll,
+      direct: !restoredFromApp
     }, "", detailUrl(initialDetailLocation.symbol, initialDetailLocation.tab));
   }
 
@@ -194,12 +210,81 @@
     return (location.pathname || "/") + (location.search || "");
   }
 
-  function routeFromLocation() {
+  function normalizedAppPath() {
     var path = location.pathname || "/";
+    if (path.length > 1) path = path.replace(/\/+$/, "");
+    return path || "/";
+  }
+
+  function routeFromLocation() {
+    var path = normalizedAppPath();
     if (path === "/danh-sach") return "scanner";
     if (path === "/so-sanh-theo-nganh" || path === "/sang-loc-co-ban") return "research";
     if (path === ACCOUNT_PATH) return "account";
     return "overview";
+  }
+
+  function scannerModeFromLocation() {
+    var raw = String(new URLSearchParams(location.search).get("mode") || "").toLowerCase();
+    return raw === "watchlist" || raw === "market" ? raw : "";
+  }
+
+  function scannerPreferredMode() {
+    return state.user ? "watchlist" : "market";
+  }
+
+  function scannerDefaultSortForMode(mode) {
+    return mode === "watchlist" || (mode === "market" && effectiveFullMarketAccess())
+      ? "signal_desc"
+      : "symbol";
+  }
+
+  function applyScannerModeFromSession() {
+    if (state.route !== "scanner") return;
+    var explicitMode = scannerModeFromLocation();
+    var nextMode = explicitMode || scannerPreferredMode();
+    var changed = state.scanner.mode !== nextMode;
+    state.scanner.mode = nextMode;
+
+    var explicitSort = String(new URLSearchParams(location.search).get("sort") || "");
+    if (!explicitSort || changed) {
+      state.scanner.sort = explicitSort || scannerDefaultSortForMode(nextMode);
+    }
+
+    if (changed) {
+      state.scanner.signal = "";
+      state.scanner.page = 1;
+      state.scanner.mobileShown = MOBILE_CHUNK;
+      state.scanner.mobileDropdown = "";
+      state.scanner.technicalLoadedKey = "";
+      state.scanner.technicalRows = [];
+      state.scanner.technicalMeta = null;
+    }
+  }
+
+  function writeScannerModeToUrl() {
+    if (state.route !== "scanner") return;
+    var params = new URLSearchParams(location.search);
+    params.set("mode", state.scanner.mode);
+    params.delete("signal");
+    params.set("sort", state.scanner.sort);
+    var next = (location.pathname || "/danh-sach") + (params.toString() ? "?" + params.toString() : "");
+    history.replaceState(history.state || null, "", next);
+  }
+
+  function stockLogoBaseUrl() {
+    var host = String(location.hostname || "").toLowerCase();
+    if (host === "localhost" || host === "127.0.0.1" || host === "0.0.0.0") {
+      return STOCK_LOGO_LOCAL_BASE;
+    }
+    var meta = document.querySelector('meta[name="ccc-stock-logo-base"]');
+    var configured = meta && String(meta.getAttribute("content") || "").trim();
+    return (configured || STOCK_LOGO_REMOTE_FALLBACK).replace(/\/+$/, "");
+  }
+
+  function stockLogoUrl(symbol) {
+    var safe = String(symbol || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+    return stockLogoBaseUrl() + "/" + encodeURIComponent(safe) + ".webp?v=1991-phase6bcd-final";
   }
 
   function esc(value) {
@@ -834,13 +919,13 @@
       '<form id="mobile-global-search-form" class="mobile-global-search stock-search-host" role="search" action="/danh-sach" method="get"><label class="sr-only" for="mobile-global-stock-search">Tìm mã cổ phiếu</label><span>' + iconSvg("search") + '</span><input id="mobile-global-stock-search" name="q" type="search" inputmode="search" autocomplete="off" placeholder="Tìm mã chứng khoán"><div id="mobile-global-search-suggestions" class="stock-suggestions" hidden></div></form></div>';
 
     return '<header class="app-header"><div class="app-header-inner">' +
-      '<a class="app-brand" href="/" aria-label="Chuyện Chợ Chứng — Trang tổng quan"><span class="brand-mark">' + iconSvg("chart") + '</span><span class="brand-copy"><strong>CHUYỆN CHỢ CHỨNG</strong><small>Stock Intelligence</small></span></a>' +
+      '<a class="app-brand" href="/" aria-label="Chuyện Chợ Chứng — Trang tổng quan"><span class="brand-mark brand-mark-official"><img class="brand-mark-img" src="/assets/brand/ccc-logo-primary.png?v=1990-brand" alt=""></span><span class="brand-copy"><strong>CHUYỆN CHỢ CHỨNG</strong><small>Stock Intelligence</small></span></a>' +
       '<form id="global-search-form" class="global-search stock-search-host" role="search" action="/danh-sach" method="get"><label class="sr-only" for="global-stock-search">Tìm mã cổ phiếu</label><span class="global-search-icon">' + iconSvg("search") + '</span><input id="global-stock-search" name="q" type="search" inputmode="search" autocomplete="off" placeholder="Tìm mã chứng khoán"><button class="global-search-submit" type="submit" aria-label="Tìm mã chứng khoán">' + iconSvg("search") + '</button><div id="global-search-suggestions" class="stock-suggestions" hidden></div></form>' +
       '<div class="header-right"><section id="data-trust" class="data-trust trust-outside" role="status" aria-live="polite"><div class="trust-primary"><i class="trust-dot"></i><strong id="trust-status">' + esc(sessionLabel) + '</strong></div><span class="trust-separator" aria-hidden="true">·</span><span class="trust-countdown">Làm mới <b id="countdown">' + countdownText() + '</b></span></section>' +
       '<div class="top-actions"><button id="refresh-btn" class="icon-action refresh-btn" type="button" aria-label="Làm mới dữ liệu" title="Làm mới dữ liệu">' + iconSvg("refresh") + '</button><button class="icon-action alert-action" type="button" aria-label="Cảnh báo chưa khả dụng" disabled>' + iconSvg("bell") + '</button><button id="theme-toggle" class="icon-action theme-toggle" type="button" aria-label="Đổi giao diện sáng tối">' + iconSvg(state.theme === "light" ? "moon" : "sun") + '</button><button id="account-open" class="account-action" type="button"><span class="account-avatar">' + iconSvg("user") + '</span><span><strong>' + esc(user) + '</strong>' + accountMeta + '</span></button></div></div></div>' +
       '<div id="mobile-status-row" class="mobile-status-row trust-outside"><div class="mobile-status-primary"><span class="mobile-market"><i class="trust-dot"></i><b id="mobile-market-status">' + esc(sessionLabel) + '</b></span><span class="mobile-now">Làm mới <b id="mobile-countdown">' + countdownText() + '</b></span></div></div>' +
       mobileSearchHtml + '</header>' +
-      '<aside class="desktop-nav"><nav aria-label="Điều hướng chính">' + nav + '</nav><a href="' + ACCOUNT_PATH + '" class="shell-nav-link account-nav ' + (state.route === "account" ? "active" : "") + '"><span class="nav-ico">' + iconSvg("user") + '</span><span class="nav-label">Tài khoản</span><small>Tài khoản</small></a><div class="nav-stage"><span>STAGING</span><small>Alpha.19 donor</small></div></aside>' +
+      '<aside class="desktop-nav"><nav aria-label="Điều hướng chính">' + nav + '</nav><a href="' + ACCOUNT_PATH + '" class="shell-nav-link account-nav ' + (state.route === "account" ? "active" : "") + '"><span class="nav-ico">' + iconSvg("user") + '</span><span class="nav-label">Tài khoản</span><small>Tài khoản</small></a><div class="nav-stage"><span>BẢN THỬ</span><small>Giao diện chuẩn</small></div></aside>' +
       '<nav class="mobile-bottom" aria-label="Điều hướng chính trên thiết bị di động">' + primaryNavHtml(true) + '</nav>';
   }
 
@@ -922,7 +1007,7 @@
   function companyLogo(symbol) {
     var safe = String(symbol || "?").toUpperCase().replace(/[^A-Z0-9]/g, "");
     var label = safe.slice(0, 3) || "?";
-    return '<span class="company-logo row-logo"><img class="company-logo-img" loading="lazy" decoding="async" fetchpriority="low" src="/assets/logos/' + esc(safe) + '.jpg?v=1741" alt=""><span class="company-logo-fallback">' + esc(label) + '</span></span>';
+    return '<span class="company-logo row-logo"><img class="company-logo-img" loading="lazy" decoding="async" fetchpriority="low" src="' + esc(stockLogoUrl(safe)) + '" alt="" onerror="this.style.display=\'none\'"/><span class="company-logo-fallback">' + esc(label) + '</span></span>';
   }
 
   function signalRailHtml(row) {
@@ -1080,7 +1165,7 @@
 
     if (state.overview.group === "all") {
       label = full
-        ? "Mở Scanner toàn thị trường · " + total + " mã"
+        ? "Mở toàn bộ thị trường · " + total + " mã"
         : "Xem toàn bộ " + total + " mã trong DS của tôi";
     } else {
       label = "Xem toàn bộ " + total + " mã " + cfg.title;
@@ -1247,7 +1332,7 @@
       var digits = item[0] === "btc" ? 0 : item[0] === "dxy" ? 3 : 2;
       var body = hasData ?
         '<div class="market-live-data"><div class="market-live-quote"><b class="market-live-price">' + fmt(row.price, digits) + '</b><span class="market-live-change ' + metricClass(row.change_pct) + '">' + (num(row.change_value) === null ? "" : (num(row.change_value) > 0 ? "+" : "") + fmt(row.change_value, digits) + '<br>') + pct(row.change_pct, 2) + '</span></div><div class="market-live-meta"><span>' + esc(item[3]) + ' · ' + esc(marketTime(row.market_time || row.last_success_at)) + '</span></div></div>' :
-        '<div class="market-unavailable"><b>—</b><span>Đang chờ dữ liệu backend</span></div>';
+        '<div class="market-unavailable"><b>—</b><span>Đang chờ dữ liệu hệ thống</span></div>';
 
       return '<article class="market-tile ' + (item[2] ? "is-primary " : "") + (hasData ? "has-live-data" : "") + '"><header><strong>' + esc(item[1]) + '</strong>' + (item[2] ? '<span>CHỦ ĐẠO</span>' : "") + '<em class="market-status ' + status.cls + '">' + esc(status.label) + '</em></header>' + body + '</article>';
     }).join("");
@@ -1291,8 +1376,8 @@
       ? '<span>KPI phản ánh toàn thị trường; bấm KPI để lọc trong 10 mã mẫu.</span>'
       : (memberEmptyWatchlistMode()
         ? '<span>KPI vẫn phản ánh toàn thị trường. Tạo DS riêng để bắt đầu theo dõi.</span>'
-        : '<span>Tổng quan chỉ hiển thị tối đa 10 mã nổi bật; vào Scanner để xem và lọc toàn bộ.</span>');
-    var densityMeta = sampleMode() ? "Bản trải nghiệm" : (memberEmptyWatchlistMode() ? "Chưa có DS" : "Top 10 theo bộ lọc");
+        : '<span>Tổng quan chỉ hiển thị tối đa 10 mã nổi bật; vào Danh sách mã để xem và lọc toàn bộ.</span>');
+    var densityMeta = sampleMode() ? "Bản trải nghiệm" : (memberEmptyWatchlistMode() ? "Chưa có DS" : "10 mã nổi bật theo bộ lọc");
 
     return '<section class="signal-density panel-anatomy"><header class="section-bar"><div><h2>Mật độ tín hiệu hôm nay</h2>' + densityCopy + '</div><small>' + esc(densityMeta) + '</small></header><div class="density-grid">' + densityHtml() + '</div></section>' +
       contextualUpsellHtml() +
@@ -1327,7 +1412,7 @@
     return '<main id="main-content" class="wrap overview-main lovable-overview page-shell has-context-rail">' +
       '<section class="page-heading page-header phase5c-route-heading"><div><h1>Tổng quan</h1><p>Theo dõi thị trường, tín hiệu nổi bật và dòng tiền trong phạm vi của bạn.</p></div></section>' +
       '<div class="content-grid has-context-rail"><div class="content-main">' + content + '</div>' + rail + '</div>' +
-      '<p class="disclaimer">STAGING · Dữ liệu thật. Công cụ không đưa ra khuyến nghị mua/bán.</p></main>';
+      '<p class="disclaimer">BẢN THỬ · Dữ liệu thật. Công cụ không đưa ra khuyến nghị mua/bán.</p></main>';
   }
 
 
@@ -1720,7 +1805,33 @@
     return '<section class="panel-anatomy scanner-auth-required"><div class="scanner-auth-icon">' + iconSvg("lock") + '</div><div><strong>Đăng nhập để xem DS của tôi</strong><p>Toàn bộ thị trường vẫn xem được dữ liệu cơ bản. Tín hiệu CCC chỉ hiển thị trong phạm vi tài khoản.</p></div><a class="primary-action scanner-account-link" href="/tai-khoan">Đi tới tài khoản</a></section>';
   }
 
+  function phase6StableRailSkeletonHtml(extraClass) {
+    var cls = extraClass ? " " + extraClass : "";
+    return '<div class="phase6-stable-rail-skeleton' + cls + '" aria-hidden="true">' +
+      '<section class="rail-card phase6-stable-skeleton-card"><span></span><i></i><i></i><i></i></section>' +
+      '<section class="rail-card phase6-stable-skeleton-card"><span></span><i></i><i></i></section>' +
+      '<section class="rail-card phase6-stable-skeleton-card"><span></span><i></i><i></i><i></i></section>' +
+    '</div>';
+  }
+
+  function scannerSessionPendingHtml() {
+    return '<main id="main-content" class="wrap scanner-main lovable-scanner page-shell phase6-stable-loading-shell" aria-busy="true">' +
+      '<section class="scanner-controls panel-anatomy phase6-scanner-session-pending">' +
+        '<div class="scanner-mode phase6-pending-tabs" aria-hidden="true"><span></span><span></span></div>' +
+        '<div class="phase6-pending-search" aria-hidden="true"><span></span><i></i><i></i></div>' +
+        '<div class="scanner-mode-note"><strong>Đang xác định phạm vi tài khoản…</strong> Danh sách sẽ mở đúng chế độ ngay khi phiên đăng nhập sẵn sàng.</div>' +
+        '<div class="phase6-pending-filter-row" aria-hidden="true"><span></span><span></span><span></span></div>' +
+      '</section>' +
+      '<div class="scanner-layout"><div class="scanner-layout-main"><section class="scanner-results panel-anatomy">' +
+        '<header class="section-bar"><div><h2>Danh sách mã</h2><span>Đang chuẩn bị phạm vi dữ liệu</span></div></header>' +
+        scannerLoadingHtml() +
+      '</section></div><aside class="context-rail scanner-context-rail">' + phase6StableRailSkeletonHtml('phase6-scanner-rail-pending') + '</aside></div>' +
+      '<p class="disclaimer">BẢN THỬ · Đang đồng bộ phiên đăng nhập và phạm vi dữ liệu.</p></main>';
+  }
+
   function scannerPageHtml() {
+    if (!state.authReady) return scannerSessionPendingHtml();
+
     var mode = state.scanner.mode;
     var loading = state.scanner.loading;
     var technical = scannerTechnicalMode();
@@ -1732,7 +1843,7 @@
     if (technical) {
       rows = state.scanner.technicalRows || [];
       visible = rows;
-      title = mode === "market" ? "Scanner toàn thị trường" : "Kết quả DS của tôi";
+      title = mode === "market" ? "Toàn bộ thị trường" : "Kết quả DS của tôi";
     } else {
       rows = mode === "market" ? scannerMarketFilteredRows() : [];
       visible = scannerVisibleRows(rows);
@@ -1781,20 +1892,23 @@
     if (mode === "market" && technical) {
       modeNote = '<strong>' + (vipDayActive() ? "VIP DAY" : "FULL") + ' · Toàn bộ thị trường:</strong> đầy đủ tín hiệu CCC, cùng bộ lọc kỹ thuật như DS của tôi.';
     } else if (mode === "market") {
-      modeNote = '<strong>Toàn bộ thị trường:</strong> dữ liệu cơ bản của khoảng 800 mã. FULL hoặc VIP DAY mở Scanner kỹ thuật toàn thị trường.';
+      modeNote = '<strong>Toàn bộ thị trường:</strong> dữ liệu cơ bản của khoảng 800 mã. FULL hoặc VIP DAY mở kỹ thuật CCC toàn thị trường.';
     } else {
       modeNote = '<strong>DS của tôi:</strong> đúng danh sách cá nhân của bạn, với đầy đủ bộ lọc kỹ thuật CCC.';
     }
 
     return '<main id="main-content" class="wrap scanner-main lovable-scanner page-shell">' +
       '<section class="scanner-controls panel-anatomy"><div class="scanner-mode" role="group" aria-label="Phạm vi dữ liệu">' +
-      '<button type="button" data-scanner-mode="market" class="' + (mode === "market" ? "active" : "") + '">Toàn bộ thị trường' + (mode === "market" && technical ? '<small class="scanner-mode-badge">' + (vipDayActive() ? "VIP DAY" : "FULL") + '</small>' : '') + '</button>' +
-      '<button type="button" data-scanner-mode="watchlist" class="' + (mode === "watchlist" ? "active" : "") + '">DS của tôi' + (state.user ? '<small class="scanner-mode-count">' + scannerPersonalWatchlistCount() + '</small>' : '') + '</button></div>' +
+      (state.user
+        ? '<button type="button" data-scanner-mode="watchlist" class="' + (mode === "watchlist" ? "active" : "") + '">DS của tôi<small class="scanner-mode-count">' + scannerPersonalWatchlistCount() + '</small></button>' +
+          '<button type="button" data-scanner-mode="market" class="' + (mode === "market" ? "active" : "") + '">Toàn bộ thị trường' + (mode === "market" && technical ? '<small class="scanner-mode-badge">' + (vipDayActive() ? "VIP DAY" : "FULL") + '</small>' : '') + '</button>'
+        : '<button type="button" data-scanner-mode="market" class="' + (mode === "market" ? "active" : "") + '">Toàn bộ thị trường</button>' +
+          '<button type="button" data-scanner-mode="watchlist" class="' + (mode === "watchlist" ? "active" : "") + '">DS của tôi</button>') + '</div>' +
       '<div class="scanner-search-stack"><div class="scanner-search-row"><div class="search-box"><span class="search-icon">' + iconSvg("search") + '</span><input id="stock-search" type="search" autocomplete="off" placeholder="Nhập mã hoặc tên công ty" value="' + esc(state.scanner.query) + '"></div><button id="scanner-search-btn" class="primary-action" type="button">Tìm mã</button><button id="scanner-clear-btn" class="secondary-action" type="button">Xóa</button></div><div id="scanner-search-suggestions" class="stock-suggestions scanner-stock-suggestions" hidden></div></div>' +
       '<div class="scanner-mode-note">' + modeNote + '</div>' +
       controls + '</section>' +
       '<div class="scanner-layout"><div class="scanner-layout-main"><section class="scanner-results panel-anatomy"><header class="section-bar"><div><h2>' + title + '</h2><span>Tổng ' + resultTotal + ' mã phù hợp</span></div><small>' + visible.length + ' mã trên trang này</small></header>' + resultBody + '</section></div><aside class="context-rail scanner-context-rail">' + rail + '</aside></div>' +
-      '<p class="disclaimer">STAGING · Scanner universe do backend quản lý; bộ lọc không làm thay đổi danh sách quét hay DS cá nhân.</p></main>';
+      '<p class="disclaimer">BẢN THỬ · Danh sách quét do hệ thống quản lý; bộ lọc không làm thay đổi danh sách quét hay DS cá nhân.</p></main>';
   }
 
 
@@ -1979,6 +2093,7 @@
     state.detail.watchlistBusy = false;
     state.detail.watchlistError = "";
     state.detail.tab = "overview";
+    state.detail.returnScroll = 0;
     state.detail.returnPath = "/";
     state.detail.sourceRoute = "overview";
     state.detail.openedFromApp = false;
@@ -2082,6 +2197,7 @@
     detailReset(false);
     history.replaceState(null, "", fallback);
     state.route = routeFromLocation();
+    applyScannerModeFromSession();
     render();
 
     if (state.route === "overview") ensureOverview(false);
@@ -2218,12 +2334,12 @@
 
   function detailAccessLabel() {
     if (state.detail.technicalAllowed) {
-      if (state.detail.technicalReason === "GUEST_DEMO") return "Mã demo · Được mở";
+      if (state.detail.technicalReason === "GUEST_DEMO") return "Mã trải nghiệm · Được mở";
       if (state.detail.technicalReason === "VIP_DAY") return "VIP DAY · Toàn thị trường";
       if (state.detail.technicalReason === "FULL_MARKET") return "FULL · Toàn thị trường";
       return "Trong DS của tôi";
     }
-    return state.user ? "Ngoài DS của tôi" : "Ngoài 10 mã demo";
+    return state.user ? "Ngoài DS của tôi" : "Ngoài 10 mã trải nghiệm";
   }
 
   function detailHeaderHtml() {
@@ -2431,7 +2547,7 @@
       var lockedTitle = "Tín hiệu CCC chưa mở cho " + state.detail.symbol;
       var copy = state.user
         ? state.detail.symbol + " chưa nằm trong DS mã theo dõi của bạn. Thêm mã vào DS để xem tín hiệu CCC. Cơ bản và BCTC vẫn được xem bình thường."
-        : state.detail.symbol + " không thuộc 10 mã demo của bản trải nghiệm. Cơ bản và BCTC vẫn được xem bình thường; đăng nhập để tạo DS riêng.";
+        : state.detail.symbol + " không thuộc 10 mã trải nghiệm của bản dùng thử. Cơ bản và BCTC vẫn được xem bình thường; đăng nhập để tạo DS riêng.";
       var action = state.user
         ? detailMemberLockedCtaHtml()
         : '<button type="button" class="primary-action detail-guest-auth" data-guest-auth>Tạo tài khoản / Đăng nhập miễn phí</button>';
@@ -2448,7 +2564,7 @@
       ["RVOL30 ≥ 200%", plainPct(tech.rvol30_pct, 0), !!tech.signal_rvol30_200pct]
     ];
 
-    return '<section class="detail-panel"><header><h3>thanh tín hiệu CCC</h3><span>Trạng thái snapshot hiện tại</span></header><div class="detail-rail-hero">' +
+    return '<section class="detail-panel"><header><h3>Thanh tín hiệu CCC</h3><span>Trạng thái dữ liệu hiện tại</span></header><div class="detail-rail-hero">' +
       signalRailHtml(merged) + '</div><div class="technical-signal-grid">' +
       signals.map(function (item) {
         return '<div class="technical-signal ' + (item[2] ? "is-on" : "") + '"><header><span>' + esc(item[0]) + '</span><b>' + (item[2] ? "Đạt" : "Chưa đạt") + '</b></header><strong>' + esc(item[1]) + '</strong></div>';
@@ -2468,7 +2584,7 @@
   function detailFundamentalHtml() {
     var f = state.detail.financial;
     if (!f) {
-      return '<div class="empty-state"><strong>Chưa có Fundamental Research</strong><span>Dữ liệu cơ bản cho mã này chưa có trong hệ thống.</span></div>';
+      return '<div class="empty-state"><strong>Chưa có dữ liệu cơ bản</strong><span>Dữ liệu cơ bản cho mã này chưa có trong hệ thống.</span></div>';
     }
 
     var score = detailFinancialScore(f, state.detail.valuationPeers);
@@ -2518,7 +2634,7 @@
     var f = state.detail.financial || {};
     var group = f.website_group || meta.website_group || "—";
     var sourceBody = '<dl class="rail-kv"><div><dt>Cập nhật</dt><dd>' + esc(formatDateTime(basic.updated_at)) + '</dd></div><div><dt>Trạng thái</dt><dd>' +
-      esc(basic.data_status || "—") + '</dd></div><div><dt>Nguồn</dt><dd>Chuyện Chợ Chứng</dd></div></dl>';
+      esc(basic.data_status ? friendlyDataStatus(basic.data_status) : "—") + '</dd></div><div><dt>Nguồn</dt><dd>Chuyện Chợ Chứng</dd></div></dl>';
     var accessBody = '<dl class="rail-kv"><div><dt>Trạng thái</dt><dd>' + esc(detailAccessLabel()) + '</dd></div><div><dt>Dữ liệu công khai</dt><dd>Có</dd></div><div><dt>Kỹ thuật CCC</dt><dd>' +
       (state.detail.technicalAllowed ? "Được mở" : "Bị khóa") + '</dd></div></dl>' +
       (!state.detail.technicalAllowed ? '<p class="rail-note">' + iconSvg("lock") + '<span>Kỹ thuật phụ thuộc phạm vi gói; Cơ bản và BCTC không bị khóa.</span></p>' : '');
@@ -2550,7 +2666,7 @@
       '<div class="phase5a-detail-layout"><section class="stock-detail-workspace" aria-labelledby="stock-detail-title">' +
       detailHeaderHtml() + detailTabsHtml() + '<div class="stock-detail-body" role="tabpanel">' + detailBodyHtml() + '</div></section>' +
       '<aside class="context-rail phase5a-detail-context-rail">' + detailContextRailHtml() + '</aside></div>' +
-      '<p class="disclaimer">STAGING · Stock Detail phục hồi từ Alpha.19 Golden UI trên runtime Phase 4.</p></main>';
+      '<p class="disclaimer">BẢN THỬ · Dữ liệu phục vụ theo dõi và nghiên cứu, không phải khuyến nghị mua/bán.</p></main>';
   }
 
 
@@ -2644,7 +2760,7 @@
         : "";
 
     if (state.account.loading && !state.account.watchlist) {
-      return '<section class="ccc-account-card ccc-watchlist-main-card phase4-watchlist-card"><header class="ccc-account-card-head"><div><span class="ccc-account-kicker">DS MÃ THEO DÕI & LƯỢT ĐỔI</span><h2>Danh sách mã theo dõi</h2><p>Đang đọc danh sách và quota thật từ hệ thống.</p></div><span class="ccc-account-status pending">Đang tải</span></header><div class="ccc-wl-loading"><span class="transplant-spinner"></span><span>Đang tải…</span></div></section>';
+      return '<section class="ccc-account-card ccc-watchlist-main-card phase4-watchlist-card"><header class="ccc-account-card-head"><div><span class="ccc-account-kicker">DS MÃ THEO DÕI & LƯỢT ĐỔI</span><h2>Danh sách mã theo dõi</h2><p>Đang đọc danh sách và hạn mức thật từ hệ thống.</p></div><span class="ccc-account-status pending">Đang tải</span></header><div class="ccc-wl-loading"><span class="transplant-spinner"></span><span>Đang tải…</span></div></section>';
     }
 
     return '<section class="ccc-account-card ccc-watchlist-main-card phase4-watchlist-card">' +
@@ -2670,7 +2786,7 @@
         var code = String(plan.plan_code || "");
         return '<article class="phase4-plan-choice"><strong>' + esc(planProductName(code)) + '</strong><b>' + esc(planPriceLabel(plan)) + '</b><span>' + (plan.is_recommended ? "Phổ biến" : "Xem gói") + '</span></article>';
       }).join("") +
-    '</div><div class="phase4-upgrade-note">Chọn gói và thanh toán sẽ được nối ở bước billing sau.</div></div>';
+    '</div><div class="phase4-upgrade-note">Chức năng chọn gói và thanh toán sẽ được nối ở bước thanh toán sau.</div></div>';
   }
 
   function accountVipDayHtml() {
@@ -2692,7 +2808,7 @@
       '<small>' + esc(fmt(price, 0)) + 'đ · Mở quyền kỹ thuật toàn thị trường trong 24 giờ, không cần đổi gói hiện tại.</small></div>' +
       '<button id="vip-day-info" type="button">Xem VIP DAY · ' + esc(fmt(price, 0)) + 'đ</button>' +
       (state.account.vipInfoOpen
-        ? '<p class="phase4-vip-note">Thanh toán thật chưa được mở ở phase này. Backend VIP DAY đã sẵn sàng; khi nối billing, CTA này sẽ là điểm kích hoạt sau thanh toán thành công.</p>'
+        ? '<p class="phase4-vip-note">Thanh toán thật chưa được mở ở bước này. Hệ thống VIP DAY đã sẵn sàng; sau khi nối thanh toán, nút này sẽ kích hoạt quyền khi giao dịch thành công.</p>'
         : '') +
     '</section>';
   }
@@ -2786,7 +2902,7 @@
     if (!state.account.authOpen) return "";
     var feedback = state.account.authError ? '<div class="ccc-auth-feedback error" role="alert">' + esc(state.account.authError) + '</div>' : "";
     return '<div class="ccc-auth-overlay phase4-auth-overlay"><section class="ccc-auth-dialog" role="dialog" aria-modal="true" aria-labelledby="phase4-auth-title">' +
-      '<header class="ccc-auth-head"><div><span class="eyebrow">CCC ACCOUNT</span><h2 id="phase4-auth-title">Đăng nhập</h2><p>Đăng nhập để sử dụng phạm vi cá nhân của Chuyện Chợ Chứng.</p></div><button id="auth-dialog-close" class="ccc-auth-close" type="button" aria-label="Đóng">×</button></header>' +
+      '<header class="ccc-auth-head"><div><span class="eyebrow">TÀI KHOẢN CCC</span><h2 id="phase4-auth-title">Đăng nhập</h2><p>Đăng nhập để sử dụng phạm vi cá nhân của Chuyện Chợ Chứng.</p></div><button id="auth-dialog-close" class="ccc-auth-close" type="button" aria-label="Đóng">×</button></header>' +
       feedback +
       '<div class="ccc-auth-body"><button id="auth-google" class="ccc-auth-google" type="button"' + (state.account.authBusy ? " disabled" : "") + '><span class="ccc-auth-google-mark">G</span><span>Tiếp tục với Google</span></button><div class="ccc-auth-divider"><span>hoặc đăng nhập bằng email</span></div><form id="auth-email-form" class="ccc-auth-form" novalidate><label>Email</label><input name="email" type="email" autocomplete="email" placeholder="tenban@example.com" required><label>Mật khẩu</label><input name="password" type="password" autocomplete="current-password" minlength="8" placeholder="Tối thiểu 8 ký tự" required><button class="ccc-auth-button primary" type="submit"' + (state.account.authBusy ? " disabled" : "") + '>' + (state.account.authBusy ? "Đang xử lý…" : "Đăng nhập") + '</button></form><p class="ccc-auth-stage-note">Đăng nhập Google hoặc dùng tài khoản Email đã được tạo trên hệ thống.</p></div>' +
     '</section></div>';
@@ -2801,7 +2917,7 @@
      ========================================================== */
 
   function researchMode() {
-    return location.pathname === "/sang-loc-co-ban" ? "fundamental" : "industry";
+    return normalizedAppPath() === "/sang-loc-co-ban" ? "fundamental" : "industry";
   }
 
   function researchMetadata(symbol) {
@@ -2840,13 +2956,28 @@
     }).map(function (group) { return [group, counts[group]]; });
   }
 
+  function friendlyDataStatus(value) {
+    var raw = String(value || "").trim().toUpperCase();
+    if (!raw) return "Chưa rõ";
+    if (["OK", "FRESH", "CURRENT"].indexOf(raw) >= 0) return "Ổn định";
+    if (["LAGGING", "DELAYED"].indexOf(raw) >= 0) return "Chậm cập nhật";
+    if (["STALE", "OLD"].indexOf(raw) >= 0) return "Cần cập nhật";
+    if (["NO_DATA", "NO_FINANCIAL_DATA", "MISSING"].indexOf(raw) >= 0) return "Thiếu dữ liệu";
+    if (raw === "PARTIAL") return "Chưa đầy đủ";
+    if (raw === "ERROR") return "Lỗi dữ liệu";
+    return "Chưa rõ";
+  }
+
   function researchFreshnessLabel(value) {
     var raw = String(value || "").trim().toUpperCase();
     if (!raw) return "Chưa rõ";
     if (["FRESH", "CURRENT", "OK"].indexOf(raw) >= 0) return "Mới";
+    if (["LAGGING", "DELAYED"].indexOf(raw) >= 0) return "Chậm cập nhật";
     if (["STALE", "OLD"].indexOf(raw) >= 0) return "Cần cập nhật";
     if (["NO_DATA", "NO_FINANCIAL_DATA", "MISSING"].indexOf(raw) >= 0) return "Thiếu dữ liệu";
-    return raw.replace(/_/g, " ");
+    if (raw === "PARTIAL") return "Chưa đầy đủ";
+    if (raw === "ERROR") return "Lỗi dữ liệu";
+    return "Chưa rõ";
   }
 
   function researchMetricHead(title, helper) {
@@ -3198,7 +3329,13 @@
   }
 
   function researchLoadingHtml() {
-    return '<main id="main-content" class="wrap fund-main research-main page-shell">' + researchHeroHtml(researchMode() === 'industry' ? 'So sánh theo ngành' : 'Sàng lọc cơ bản', 'Đang tải dữ liệu cơ bản công khai…') + researchTabsHtml() + '<section class="panel-anatomy transplant-state"><span class="transplant-spinner"></span><div><strong>Đang tải Nghiên cứu…</strong><p>Đang lấy dữ liệu tài chính và tên doanh nghiệp.</p></div></section></main>';
+    return '<main id="main-content" class="wrap fund-main research-main page-shell has-context-rail phase6-stable-loading-shell" aria-busy="true">' +
+      researchHeroHtml(researchMode() === 'industry' ? 'So sánh theo ngành' : 'Sàng lọc cơ bản', 'Đang tải dữ liệu cơ bản công khai…') +
+      researchTabsHtml() +
+      '<div class="content-grid phase5b-research-grid"><div class="content-main"><section class="panel-anatomy transplant-state phase6-research-loading-panel"><span class="transplant-spinner"></span><div><strong>Đang tải Nghiên cứu…</strong><p>Đang lấy dữ liệu tài chính và tên doanh nghiệp.</p></div></section></div><aside class="context-rail research-context-rail">' +
+      phase6StableRailSkeletonHtml('phase6-research-rail-pending') +
+      '</aside></div>' +
+      '<p class="disclaimer">Điểm số hỗ trợ sàng lọc và học phân tích, không phải khuyến nghị mua/bán.</p></main>';
   }
 
   function researchErrorHtml() {
@@ -3207,7 +3344,12 @@
     var copy = industry
       ? 'Chọn một ngành để đặt các doanh nghiệp cạnh nhau theo tăng trưởng lợi nhuận, khả năng sinh lời và định giá.'
       : 'Dùng các chỉ tiêu tài chính để tìm doanh nghiệp phù hợp với tiêu chí của bạn.';
-    return '<main id="main-content" class="wrap fund-main research-main page-shell">' + researchHeroHtml(title, copy) + researchTabsHtml() + '<section class="panel-anatomy transplant-state is-error"><div><strong>Không tải được dữ liệu Nghiên cứu.</strong><p>' + esc(state.research.error || 'Nguồn dữ liệu tạm thời chưa phản hồi.') + '</p><button type="button" class="secondary-action" data-research-retry>Thử lại</button></div></section></main>';
+    return '<main id="main-content" class="wrap fund-main research-main page-shell has-context-rail phase6-stable-loading-shell">' +
+      researchHeroHtml(title, copy) + researchTabsHtml() +
+      '<div class="content-grid phase5b-research-grid"><div class="content-main"><section class="panel-anatomy transplant-state is-error"><div><strong>Không tải được dữ liệu Nghiên cứu.</strong><p>' + esc(state.research.error || 'Nguồn dữ liệu tạm thời chưa phản hồi.') + '</p><button type="button" class="secondary-action" data-research-retry>Thử lại</button></div></section></div><aside class="context-rail research-context-rail">' +
+      phase6StableRailSkeletonHtml('phase6-research-rail-pending') +
+      '</aside></div>' +
+      '<p class="disclaimer">Điểm số hỗ trợ sàng lọc và học phân tích, không phải khuyến nghị mua/bán.</p></main>';
   }
 
   function researchPageHtml() {
@@ -3219,7 +3361,7 @@
 
 
   function placeholderPageHtml(title, copy) {
-    return '<main id="main-content" class="wrap page-shell"><section class="page-heading page-header"><div><h1>' + esc(title) + '</h1><p>' + esc(copy) + '</p></div></section><div class="content-grid"><div class="content-main"><section class="panel-anatomy transplant-placeholder"><strong>Đang giữ checkpoint kiến trúc sạch.</strong><p>Màn hình này sẽ được port ở phase tiếp theo bằng cùng Alpha.19 donor.</p></section></div></div></main>';
+    return '<main id="main-content" class="wrap page-shell"><section class="page-heading page-header"><div><h1>' + esc(title) + '</h1><p>' + esc(copy) + '</p></div></section><div class="content-grid"><div class="content-main"><section class="panel-anatomy transplant-placeholder"><strong>Đang giữ mốc kiến trúc sạch.</strong><p>Màn hình này sẽ được hoàn thiện ở bước tiếp theo theo cùng chuẩn giao diện.</p></section></div></div></main>';
   }
 
   function routeHtml() {
@@ -3233,7 +3375,7 @@
   function render() {
     document.title = state.detail.open && state.detail.symbol
       ? state.detail.symbol + " — Chuyện Chợ Chứng"
-      : "Chuyện Chợ Chứng — STAGING";
+      : "Chuyện Chợ Chứng — BẢN THỬ";
     app.innerHTML = headerHtml() + accessNoticeHtml() + routeHtml() + authDialogHtml() + passwordDialogHtml();
     bind();
     refreshLogoStates();
@@ -3776,6 +3918,7 @@
       state.user = state.session && state.session.user || null;
       await Promise.all([loadMembership(), loadAccessContext(true)]);
       state.authReady = true;
+      applyScannerModeFromSession();
 
       var result = window.CCCData.onAuthStateChange(async function (_event, session) {
         state.session = session || null;
@@ -3799,6 +3942,7 @@
         resetAccountState();
         resetAccessContext();
         await Promise.all([loadMembership(), loadAccessContext(true)]);
+        applyScannerModeFromSession();
         state.account.authOpen = false;
         if (consumePurchaseIntentAfterAuth()) return;
         render();
@@ -4256,13 +4400,12 @@
       button.addEventListener("click", function () {
         state.scanner.mode = button.getAttribute("data-scanner-mode") === "watchlist" ? "watchlist" : "market";
         state.scanner.signal = "";
-        state.scanner.sort = state.scanner.mode === "watchlist" || (state.scanner.mode === "market" && effectiveFullMarketAccess())
-          ? "signal_desc"
-          : "symbol";
+        state.scanner.sort = scannerDefaultSortForMode(state.scanner.mode);
         state.scanner.page = 1;
         state.scanner.mobileShown = MOBILE_CHUNK;
         state.scanner.mobileDropdown = "";
         state.scanner.technicalLoadedKey = "";
+        writeScannerModeToUrl();
         render();
         ensureScanner(true);
       });
@@ -4450,13 +4593,26 @@
     document.querySelectorAll("[data-symbol]").forEach(function (element) {
       var symbol = String(element.getAttribute("data-symbol") || "").toUpperCase();
       if (!symbol) return;
-      element.setAttribute("role", "button");
+
+      if (element.tagName === "TR") {
+        element.setAttribute("aria-label", "Mở chi tiết " + symbol);
+      } else {
+        element.setAttribute("role", "button");
+      }
       if (!element.hasAttribute("tabindex")) element.setAttribute("tabindex", "0");
+
       function activateDetail(event) {
         if (event && event.type === "keydown" && event.key !== "Enter" && event.key !== " ") return;
+
+        if (event && event.type === "click" && event.target && typeof event.target.closest === "function") {
+          var interactive = event.target.closest("a,button,input,select,textarea,[role=button]");
+          if (interactive && interactive !== element) return;
+        }
+
         if (event && event.type === "keydown") event.preventDefault();
         openStockDetail(symbol);
       }
+
       element.addEventListener("click", activateDetail);
       element.addEventListener("keydown", activateDetail);
     });

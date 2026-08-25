@@ -3940,3 +3940,287 @@ tr[data-symbol]{cursor:pointer}
   outline-offset:2px;
   border-radius:var(--radius-sm);
 }
+
+
+/* ==========================================================
+   Phase 6A — Desktop Shell Alignment + Overview KPI Hover
+   QA-confirmed:
+   - Overview/Research use the 1680px wide working contract.
+   - Scanner/Account/Stock Detail were still capped by the 1400px default.
+   - Keep tablet/mobile behavior unchanged.
+   ========================================================== */
+
+/* Use the same wide desktop contract as Overview + Research.
+   Under narrower desktop widths this changes nothing because available
+   viewport space is already below the cap. */
+main.wrap.scanner-main,
+main.wrap.phase4-account-page,
+main.wrap.phase5a-stock-detail.stock-detail-page{
+  --page-working-width:var(--wide-working-width);
+}
+
+/* KPI interaction hierarchy:
+   default = neutral
+   hover   = semantic preview
+   active  = selected filter, visibly stronger than hover */
+@media (hover:hover) and (pointer:fine){
+  .density-tile:hover:not(.active){
+    border-color:color-mix(in srgb,var(--group-accent) 44%,var(--border-strong));
+    background:color-mix(in srgb,var(--group-accent) 9%,var(--surface));
+    box-shadow:
+      inset 0 2px 0 color-mix(in srgb,var(--group-accent) 82%,transparent),
+      0 6px 16px color-mix(in srgb,var(--group-accent) 8%,transparent);
+    transform:translateY(-1px);
+  }
+
+  .density-tile:hover:not(.active)::before{
+    opacity:.72;
+    background:var(--group-accent);
+  }
+
+  .density-tile:hover:not(.active)::after{
+    opacity:.62;
+    background:var(--group-accent);
+  }
+
+  .density-tile:hover:not(.active)>strong{
+    color:color-mix(in srgb,var(--group-accent) 68%,var(--foreground));
+  }
+
+  .density-tile:hover:not(.active)>div>b{
+    color:color-mix(in srgb,var(--group-accent) 68%,var(--foreground));
+  }
+}
+
+/* Selected remains stronger than hover. */
+.density-tile.active{
+  background:color-mix(in srgb,var(--group-accent) 18%,var(--surface));
+  border-color:color-mix(in srgb,var(--group-accent) 76%,var(--border-strong));
+  box-shadow:
+    inset 0 3px 0 var(--group-accent),
+    0 0 0 1px color-mix(in srgb,var(--group-accent) 26%,transparent);
+  transform:none;
+}
+
+/* Touch devices keep default + selected only; no simulated hover lift. */
+@media (hover:none), (pointer:coarse){
+  .density-tile:hover:not(.active){
+    transform:none;
+  }
+}
+
+
+/* ==========================================================
+   Phase 6B logo presentation + official CCC brand mark
+   - Stock logos stay readable on both light and dark themes.
+   - Official CCC logo asset is used for the header mark.
+   ========================================================== */
+
+/* Stock/company logos: one neutral white tile in every theme. */
+.company-logo{
+  position:relative;
+  overflow:hidden;
+  box-sizing:border-box;
+  border:1px solid rgba(15,23,42,.12)!important;
+  background:#fff!important;
+  box-shadow:0 1px 2px rgba(15,23,42,.08);
+  isolation:isolate;
+}
+.company-logo-img{
+  position:relative;
+  z-index:2;
+  display:block;
+  width:100%;
+  height:100%;
+  box-sizing:border-box;
+  padding:2px;
+  object-fit:contain;
+  object-position:center;
+}
+.company-logo-fallback{
+  z-index:1;
+  color:#0f2749!important;
+  background:#fff!important;
+}
+
+/* Keep the official mark crisp and readable against either shell theme.
+   The source asset is kept unchanged; this square viewport deliberately
+   shows the icon portion while the existing brand text remains beside it. */
+.app-brand .brand-mark.brand-mark-official{
+  position:relative;
+  width:36px;
+  height:36px;
+  min-width:36px;
+  flex:0 0 36px;
+  overflow:hidden;
+  box-sizing:border-box;
+  border:1px solid rgba(15,23,42,.12);
+  border-radius:9px;
+  background:#fff;
+  box-shadow:0 1px 2px rgba(15,23,42,.08);
+}
+.app-brand .brand-mark.brand-mark-official .brand-mark-img{
+  position:absolute;
+  z-index:1;
+  top:-1px;
+  left:50%;
+  width:66px;
+  height:66px;
+  max-width:none;
+  max-height:none;
+  transform:translateX(-50%);
+  object-fit:contain;
+  pointer-events:none;
+  user-select:none;
+}
+
+@media(max-width:767px){
+  .app-brand .brand-mark.brand-mark-official{
+    width:34px;
+    height:34px;
+    min-width:34px;
+    flex-basis:34px;
+    border-radius:8px;
+  }
+  .app-brand .brand-mark.brand-mark-official .brand-mark-img{
+    width:62px;
+    height:62px;
+  }
+}
+
+
+/* ==========================================================
+   Phase 6B/6C/6D completion
+   - 6B: remote production WebP + localhost asset fallback.
+   - 6C: signed-in scanner puts DS của tôi first.
+   - 6D: official CCC mark is the canonical shell identity.
+   ========================================================== */
+.company-logo{background:#fff!important}
+.company-logo-img{border-radius:inherit}
+.app-brand .brand-copy strong{letter-spacing:.01em}
+@media(max-width:767px){
+  .app-brand .brand-copy strong{letter-spacing:0}
+}
+
+
+/* ==========================================================
+   Phase 6BCD final stabilization — v19.9.1
+   Prevent shell/layout flashes while auth/research data hydrate.
+   ========================================================== */
+.phase6-stable-loading-shell{
+  min-width:0;
+}
+
+/* Scanner: do not paint Guest tab order before the persisted member
+   session has been restored. Keep the final controls geometry instead. */
+.phase6-scanner-session-pending{
+  min-height:178px;
+}
+.phase6-pending-tabs{
+  pointer-events:none;
+}
+.phase6-pending-tabs>span{
+  display:block;
+  min-height:42px;
+  border-radius:7px;
+  background:var(--surface);
+  box-shadow:inset 0 0 0 1px var(--border);
+  opacity:.72;
+}
+.phase6-pending-search{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto auto;
+  align-items:center;
+  gap:8px;
+  margin-top:12px;
+}
+.phase6-pending-search>span,
+.phase6-pending-search>i,
+.phase6-pending-filter-row>span{
+  display:block;
+  height:42px;
+  border:1px solid var(--border);
+  border-radius:8px;
+  background:var(--surface-2);
+}
+.phase6-pending-search>i{
+  width:82px;
+}
+.phase6-pending-filter-row{
+  display:grid;
+  grid-template-columns:minmax(210px,.9fr) minmax(340px,1.5fr) 104px;
+  gap:10px;
+  margin-top:10px;
+}
+
+/* Research: loading/error now use the same wide shell + 2-column grid
+   as the loaded screen, so the page does not expand after data arrives. */
+.phase6-research-loading-panel{
+  min-height:360px;
+}
+.phase6-stable-rail-skeleton{
+  display:grid;
+  gap:12px;
+  align-content:start;
+}
+.phase6-stable-skeleton-card{
+  min-height:132px;
+  padding:14px;
+}
+.phase6-stable-skeleton-card>span,
+.phase6-stable-skeleton-card>i{
+  display:block;
+  border-radius:999px;
+  background:var(--surface-2);
+  border:1px solid var(--border);
+}
+.phase6-stable-skeleton-card>span{
+  width:58%;
+  height:14px;
+  margin-bottom:16px;
+}
+.phase6-stable-skeleton-card>i{
+  width:100%;
+  height:10px;
+  margin-top:9px;
+}
+.phase6-stable-skeleton-card>i:last-child{
+  width:72%;
+}
+
+@media(max-width:1023px){
+  .phase6-stable-rail-skeleton{
+    grid-template-columns:repeat(3,minmax(0,1fr));
+  }
+  .phase6-pending-filter-row{
+    grid-template-columns:1fr 1fr 104px;
+  }
+}
+
+@media(max-width:767px){
+  .phase6-scanner-session-pending{
+    min-height:0;
+  }
+  .phase6-pending-search{
+    grid-template-columns:minmax(0,1fr) auto;
+  }
+  .phase6-pending-search>i:last-child{
+    display:none;
+  }
+  .phase6-pending-filter-row{
+    grid-template-columns:1fr;
+  }
+  .phase6-pending-filter-row>span:nth-child(3){
+    display:none;
+  }
+  .phase6-research-loading-panel{
+    min-height:260px;
+  }
+  .research-context-rail .phase6-stable-rail-skeleton,
+  .phase6-research-rail-pending{
+    display:none;
+  }
+  .scanner-context-rail .phase6-stable-rail-skeleton{
+    grid-template-columns:1fr;
+  }
+}

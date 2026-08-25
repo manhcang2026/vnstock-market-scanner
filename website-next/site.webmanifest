@@ -1,0 +1,17 @@
+{
+  "name": "Chuyện Chợ Chứng",
+  "short_name": "CCC",
+  "description": "Nền tảng theo dõi và nghiên cứu cổ phiếu Việt Nam.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#0f172a",
+  "icons": [
+    {
+      "src": "/assets/brand/ccc-logo-primary.png?v=1990-brand",
+      "sizes": "977x977",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
