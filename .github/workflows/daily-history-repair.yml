@@ -1,0 +1,50 @@
+name: Daily History Repair
+
+on:
+  workflow_dispatch:
+    inputs:
+      symbols:
+        description: "Danh sach ma can repair, phan tach bang dau phay."
+        required: true
+        default: "BID,CHP,CTI,DMX,DQC,IPA,LHG,MBS,MIG,NAG,NNC,RAL,SGR,VAB"
+        type: string
+      write:
+        description: "false = dry-run; true = insert missing rows + verify."
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: daily-history-repair
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Repair daily history
+        env:
+          VNSTOCK_API_KEY: ${{ secrets.VNSTOCK_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          REPAIR_SYMBOLS: ${{ inputs.symbols }}
+          REPAIR_WRITE: ${{ inputs.write }}
+        run: python src/repair_daily_history.py
