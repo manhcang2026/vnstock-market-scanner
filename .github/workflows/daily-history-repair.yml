@@ -39,12 +39,15 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Repair daily history
+      # TEMPORARY FEATURE-BRANCH HARNESS.
+      # Main van giu workflow Repair cu. Tren branch feature/daily-history-canonical-store,
+      # workflow nay chi AUDIT canonical history va KHONG ghi Supabase.
+      - name: Audit canonical daily history (DRY-RUN ONLY)
         env:
           VNSTOCK_API_KEY: ${{ secrets.VNSTOCK_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          REPAIR_SYMBOLS: ${{ inputs.symbols }}
-          REPAIR_WRITE: ${{ inputs.write }}
-        run: python src/repair_daily_history.py
+          CANONICAL_SYMBOLS: ${{ inputs.symbols }}
+          CANONICAL_WRITE: "false"
+        run: python src/canonical_history_audit.py
