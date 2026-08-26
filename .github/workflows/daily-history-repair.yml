@@ -3,48 +3,61 @@ name: Daily History Repair
 on:
   workflow_dispatch:
     inputs:
+      operation:
+        description: "finalize = lam sach history + EOD + shadow; compare = doi chieu sau Daily Baseline 01:00"
+        required: true
+        default: "finalize"
+        type: choice
+        options:
+          - finalize
+          - compare
       symbols:
-        description: "De trong = bulk tat ca ma du >=200 phien; hoac nhap danh sach ma."
+        description: "De trong = toan bo watchlist; hoac nhap AAA,HPG,..."
         required: false
         default: ""
         type: string
       write:
-        description: "false = dry-run; true = canonical reconcile."
+        description: "Chi finalize: false = dry-run; true = ghi daily_history."
         required: true
         default: false
         type: boolean
       confirm:
-        description: "Write danh sach cu the: WRITE. Bulk symbols rong: WRITE-BULK."
+        description: "Finalize write=true bat buoc nhap FINALIZE."
         required: false
         default: ""
         type: string
-      resume_after:
-        description: "Tiep tuc sau ma nay (alphabetical bulk mode), vd HPG. De trong neu bat dau moi."
-        required: false
-        default: ""
+      eod_date:
+        description: "Ngay EOD se append tu intraday/fallback provider."
+        required: true
+        default: "2026-08-26"
+        type: string
+      compare_run_date:
+        description: "Ngay baseline can doi chieu (sau job 01:00)."
+        required: true
+        default: "2026-08-27"
         type: string
       max_symbols:
-        description: "So ma toi da moi chunk. 0 = khong gioi han. Khuyen nghi 100."
+        description: "0 = tat ca. Co the dung de test chunk."
         required: true
-        default: "100"
+        default: "0"
         type: string
-      force_provider_check:
-        description: "true = goi KBS lai ca ma da canonical local. Mac dinh false de tiet kiem API."
-        required: true
-        default: false
-        type: boolean
+      resume_after:
+        description: "Bulk alphabetical: tiep tuc sau ma nay. De trong = bat dau dau."
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: daily-history-canonical-phase-b1
+  group: daily-history-clean-final
   cancel-in-progress: false
 
 jobs:
   repair:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 300
 
     steps:
       - name: Checkout
@@ -59,29 +72,44 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      # TEMPORARY FEATURE-BRANCH HARNESS - PHASE B.1.
-      # Main van giu Daily History Repair production cu.
-      - name: Canonical bulk-safe sync
+      - name: Finalize clean daily history
+        if: ${{ inputs.operation == 'finalize' }}
         env:
           VNSTOCK_API_KEY: ${{ secrets.VNSTOCK_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          CANONICAL_SYMBOLS: ${{ inputs.symbols }}
-          CANONICAL_WRITE: ${{ inputs.write }}
-          CANONICAL_CONFIRM: ${{ inputs.confirm }}
-          CANONICAL_RESUME_AFTER: ${{ inputs.resume_after }}
-          CANONICAL_MAX_SYMBOLS: ${{ inputs.max_symbols }}
-          CANONICAL_FORCE_PROVIDER: ${{ inputs.force_provider_check }}
-        run: python src/canonical_history_bulk.py
+          FINALIZE_SYMBOLS: ${{ inputs.symbols }}
+          FINALIZE_WRITE: ${{ inputs.write }}
+          FINALIZE_CONFIRM: ${{ inputs.confirm }}
+          FINALIZE_EOD_DATE: ${{ inputs.eod_date }}
+          FINALIZE_MAX_SYMBOLS: ${{ inputs.max_symbols }}
+          FINALIZE_RESUME_AFTER: ${{ inputs.resume_after }}
+        run: python src/finalize_clean_history.py
 
-      - name: Upload canonical bulk report
+      - name: Compare local vs production baseline
+        if: ${{ inputs.operation == 'compare' }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          COMPARE_SYMBOLS: ${{ inputs.symbols }}
+          COMPARE_RUN_DATE: ${{ inputs.compare_run_date }}
+        run: python src/compare_local_baseline.py
+
+      - name: Upload clean-history reports
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: canonical-bulk-report-${{ github.run_id }}
+          name: clean-history-${{ inputs.operation }}-${{ github.run_id }}
           path: |
-            canonical_bulk_report.json
-            canonical_bulk_report.csv
+            clean_history_report.json
+            clean_history_report.csv
+            shadow_baseline_legacy.json
+            shadow_baseline_legacy.csv
+            shadow_baseline_full.json
+            shadow_baseline_full.csv
+            baseline_compare_report.json
+            baseline_compare_report.csv
           if-no-files-found: warn
           retention-days: 14
