@@ -4,21 +4,26 @@ on:
   workflow_dispatch:
     inputs:
       symbols:
-        description: "Danh sach ma can repair, phan tach bang dau phay."
+        description: "Danh sach ma canonical sync, phan tach bang dau phay."
         required: true
-        default: "BID,CHP,CTI,DMX,DQC,IPA,LHG,MBS,MIG,NAG,NNC,RAL,SGR,VAB"
+        default: "TLP,VIT,CLC,VNC,MAC,PDN"
         type: string
       write:
-        description: "false = dry-run; true = insert missing rows + verify."
+        description: "false = dry-run; true = canonical upsert + safe reconcile."
         required: true
         default: false
         type: boolean
+      confirm:
+        description: "Chi khi write=true: go WRITE de xac nhan."
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: daily-history-repair
+  group: daily-history-canonical-phase-b
   cancel-in-progress: false
 
 jobs:
@@ -39,15 +44,16 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      # TEMPORARY FEATURE-BRANCH HARNESS.
-      # Main van giu workflow Repair cu. Tren branch feature/daily-history-canonical-store,
-      # workflow nay chi AUDIT canonical history va KHONG ghi Supabase.
-      - name: Audit canonical daily history (DRY-RUN ONLY)
+      # TEMPORARY FEATURE-BRANCH HARNESS - PHASE B.
+      # Main van giu workflow Repair cu.
+      # Tren feature/daily-history-canonical-store, workflow nay chay canonical sync.
+      - name: Canonical daily history sync
         env:
           VNSTOCK_API_KEY: ${{ secrets.VNSTOCK_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           CANONICAL_SYMBOLS: ${{ inputs.symbols }}
-          CANONICAL_WRITE: "false"
-        run: python src/canonical_history_audit.py
+          CANONICAL_WRITE: ${{ inputs.write }}
+          CANONICAL_CONFIRM: ${{ inputs.confirm }}
+        run: python src/canonical_history_sync.py
