@@ -26,6 +26,16 @@ on:
         required: false
         default: ""
         type: string
+      rebase_symbols:
+        description: "Ma da review duoc phep rebase khi EXACT cu khong tai tao duoc."
+        required: false
+        default: "TN1,VIM"
+        type: string
+      rebase_confirm:
+        description: "Neu write=true va co rebase_symbols, bat buoc nhap REBASE."
+        required: false
+        default: ""
+        type: string
       eod_date:
         description: "Ngay EOD se append tu intraday/fallback provider."
         required: true
@@ -72,6 +82,10 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Validate finalize scripts
+        if: ${{ inputs.operation == 'finalize' }}
+        run: python -m py_compile src/backfill_daily_history.py src/finalize_clean_history.py src/finalize_clean_history_rebase.py
+
       - name: Finalize clean daily history
         if: ${{ inputs.operation == 'finalize' }}
         env:
@@ -82,10 +96,12 @@ jobs:
           FINALIZE_SYMBOLS: ${{ inputs.symbols }}
           FINALIZE_WRITE: ${{ inputs.write }}
           FINALIZE_CONFIRM: ${{ inputs.confirm }}
+          FINALIZE_REBASE_SYMBOLS: ${{ inputs.rebase_symbols }}
+          FINALIZE_REBASE_CONFIRM: ${{ inputs.rebase_confirm }}
           FINALIZE_EOD_DATE: ${{ inputs.eod_date }}
           FINALIZE_MAX_SYMBOLS: ${{ inputs.max_symbols }}
           FINALIZE_RESUME_AFTER: ${{ inputs.resume_after }}
-        run: python src/finalize_clean_history.py
+        run: python src/finalize_clean_history_rebase.py
 
       - name: Compare local vs production baseline
         if: ${{ inputs.operation == 'compare' }}
@@ -105,6 +121,7 @@ jobs:
           path: |
             clean_history_report.json
             clean_history_report.csv
+            clean_history_rebase_report.json
             shadow_baseline_legacy.json
             shadow_baseline_legacy.csv
             shadow_baseline_full.json
