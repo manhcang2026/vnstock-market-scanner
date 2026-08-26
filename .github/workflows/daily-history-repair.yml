@@ -4,32 +4,47 @@ on:
   workflow_dispatch:
     inputs:
       symbols:
-        description: "Danh sach ma canonical sync, phan tach bang dau phay."
-        required: true
-        default: "TLP,VIT,CLC,VNC,MAC,PDN"
+        description: "De trong = bulk tat ca ma du >=200 phien; hoac nhap danh sach ma."
+        required: false
+        default: ""
         type: string
       write:
-        description: "false = dry-run; true = canonical upsert + safe reconcile."
+        description: "false = dry-run; true = canonical reconcile."
         required: true
         default: false
         type: boolean
       confirm:
-        description: "Chi khi write=true: go WRITE de xac nhan."
+        description: "Write danh sach cu the: WRITE. Bulk symbols rong: WRITE-BULK."
         required: false
         default: ""
         type: string
+      resume_after:
+        description: "Tiep tuc sau ma nay (alphabetical bulk mode), vd HPG. De trong neu bat dau moi."
+        required: false
+        default: ""
+        type: string
+      max_symbols:
+        description: "So ma toi da moi chunk. 0 = khong gioi han. Khuyen nghi 100."
+        required: true
+        default: "100"
+        type: string
+      force_provider_check:
+        description: "true = goi KBS lai ca ma da canonical local. Mac dinh false de tiet kiem API."
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
 concurrency:
-  group: daily-history-canonical-phase-b
+  group: daily-history-canonical-phase-b1
   cancel-in-progress: false
 
 jobs:
   repair:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 180
 
     steps:
       - name: Checkout
@@ -44,10 +59,9 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      # TEMPORARY FEATURE-BRANCH HARNESS - PHASE B.
-      # Main van giu workflow Repair cu.
-      # Tren feature/daily-history-canonical-store, workflow nay chay canonical sync.
-      - name: Canonical daily history sync
+      # TEMPORARY FEATURE-BRANCH HARNESS - PHASE B.1.
+      # Main van giu Daily History Repair production cu.
+      - name: Canonical bulk-safe sync
         env:
           VNSTOCK_API_KEY: ${{ secrets.VNSTOCK_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -56,4 +70,18 @@ jobs:
           CANONICAL_SYMBOLS: ${{ inputs.symbols }}
           CANONICAL_WRITE: ${{ inputs.write }}
           CANONICAL_CONFIRM: ${{ inputs.confirm }}
-        run: python src/canonical_history_sync.py
+          CANONICAL_RESUME_AFTER: ${{ inputs.resume_after }}
+          CANONICAL_MAX_SYMBOLS: ${{ inputs.max_symbols }}
+          CANONICAL_FORCE_PROVIDER: ${{ inputs.force_provider_check }}
+        run: python src/canonical_history_bulk.py
+
+      - name: Upload canonical bulk report
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: canonical-bulk-report-${{ github.run_id }}
+          path: |
+            canonical_bulk_report.json
+            canonical_bulk_report.csv
+          if-no-files-found: warn
+          retention-days: 14
