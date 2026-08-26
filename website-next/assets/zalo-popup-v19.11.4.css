@@ -1,0 +1,112 @@
+/* CCC v19.11.4 — Zalo join prompt. Standalone, no dependency on app JS. */
+.ccc-zalo-prompt[hidden]{display:none!important}
+.ccc-zalo-prompt{
+  position:fixed;
+  inset:0;
+  z-index:2147483000;
+  display:grid;
+  place-items:center;
+  padding:20px;
+  font-family:"Be Vietnam Pro",system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+}
+.ccc-zalo-prompt__backdrop{
+  position:absolute;
+  inset:0;
+  background:rgba(3,6,13,.74);
+  backdrop-filter:blur(5px);
+  -webkit-backdrop-filter:blur(5px);
+}
+.ccc-zalo-prompt__dialog{
+  position:relative;
+  width:min(388px,100%);
+  box-sizing:border-box;
+  padding:20px;
+  border:1px solid var(--border,rgba(148,163,184,.22));
+  border-radius:16px;
+  background:var(--card,#0d111a);
+  color:var(--foreground,#f7f8fb);
+  box-shadow:0 24px 70px rgba(0,0,0,.45);
+}
+.ccc-zalo-prompt__brand{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  margin-bottom:18px;
+}
+.ccc-zalo-prompt__logo{
+  width:44px;
+  height:44px;
+  flex:0 0 44px;
+  display:grid;
+  place-items:center;
+  border:1px solid rgba(0,104,255,.22);
+  border-radius:12px;
+  background:#fff;
+}
+.ccc-zalo-prompt__logo img{
+  display:block;
+  width:32px;
+  height:32px;
+}
+.ccc-zalo-prompt__eyebrow{
+  margin:0 0 3px;
+  color:var(--muted-foreground,#93a0b5);
+  font-size:10.5px;
+  font-weight:800;
+  line-height:1.25;
+  letter-spacing:.09em;
+  text-transform:uppercase;
+}
+.ccc-zalo-prompt h2{
+  margin:0;
+  color:var(--foreground,#f7f8fb);
+  font-size:18px;
+  font-weight:800;
+  line-height:1.28;
+  letter-spacing:-.015em;
+}
+.ccc-zalo-prompt__actions{
+  display:grid;
+  gap:10px;
+}
+.ccc-zalo-prompt__primary,
+.ccc-zalo-prompt__secondary{
+  min-height:44px;
+  box-sizing:border-box;
+  border-radius:10px;
+  font:inherit;
+  font-size:13px;
+  font-weight:800;
+  text-decoration:none;
+  cursor:pointer;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:8px;
+}
+.ccc-zalo-prompt__primary{
+  border:1px solid #0068ff;
+  background:#0068ff;
+  color:#fff;
+}
+.ccc-zalo-prompt__primary:hover{background:#075fe0}
+.ccc-zalo-prompt__secondary{
+  border:1px solid var(--border,rgba(148,163,184,.22));
+  background:transparent;
+  color:var(--foreground,#f7f8fb);
+}
+.ccc-zalo-prompt__secondary:hover{
+  background:var(--muted,rgba(148,163,184,.08));
+}
+body.ccc-zalo-prompt-open{overflow:hidden}
+@media(max-width:520px){
+  .ccc-zalo-prompt{padding:14px}
+  .ccc-zalo-prompt__dialog{padding:18px;border-radius:14px;width:min(360px,100%)}
+  .ccc-zalo-prompt h2{font-size:17px}
+}
+@media(prefers-reduced-motion:no-preference){
+  .ccc-zalo-prompt__dialog{animation:cccZaloPromptIn .18s ease-out both}
+  .ccc-zalo-prompt__backdrop{animation:cccZaloBackdropIn .18s ease-out both}
+  @keyframes cccZaloPromptIn{from{opacity:0;transform:translateY(8px) scale(.985)}to{opacity:1;transform:none}}
+  @keyframes cccZaloBackdropIn{from{opacity:0}to{opacity:1}}
+}
