@@ -1,1 +1,1 @@
-v19.11.4-zalo-popup
+v19.11.5-mobile-auth-hotfix
