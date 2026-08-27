@@ -4,8 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       trading_date:
-        description: "Ngay giao dich can bo sung (YYYY-MM-DD)."
-        required: true
+        description: "Ngay giao dich can bo sung (YYYY-MM-DD); de trong = ngay VN hien tai."
+        required: false
+        default: ""
         type: string
       symbols:
         description: "Danh sach ma; de trong = toan watchlist."
@@ -28,7 +29,7 @@ concurrency:
 jobs:
   eod-fallback:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
 
     steps:
       - name: Checkout
@@ -43,12 +44,25 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Fill daily history from final intraday snapshot
+      - name: Validate EOD script
+        run: python -m py_compile src/eod_daily_history_from_intraday.py
+
+      - name: Fill daily history from EOD sources
         env:
+          VNSTOCK_API_KEY: ${{ secrets.VNSTOCK_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           EOD_TRADING_DATE: ${{ inputs.trading_date }}
           EOD_SYMBOLS: ${{ inputs.symbols }}
           EOD_WRITE: ${{ inputs.write }}
-        run: python src/eod_daily_history_from_intraday.py
+        run: python -u src/eod_daily_history_from_intraday.py
+
+      - name: Upload EOD report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-history-eod-${{ github.run_id }}
+          path: daily_history_eod_report.json
+          if-no-files-found: warn
+          retention-days: 14
