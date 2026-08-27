@@ -1,1 +1,1 @@
-v19.11.4-zalo-popup
+v19.12.3-golden-board-local-golden-only

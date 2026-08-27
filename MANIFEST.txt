@@ -1,0 +1,9 @@
+FILES
+README_GOLDEN_BOARD_LOCAL_PREVIEW.txt
+docs/golden-board/GOLDEN_BOARD_LOCKED_RULES.md
+supabase/migrations/20260826174318_create_golden_board_history_foundation.sql
+website-next/VERSION.txt
+website-next/assets/golden-board-v19.12.0.css
+website-next/assets/golden-board-v19.12.0.js
+website-next/bang-vang/index.html
+website-next/index.html
