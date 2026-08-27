@@ -1,0 +1,81 @@
+name: Daily History Targeted Reconcile
+
+on:
+  workflow_dispatch:
+    inputs:
+      symbols:
+        description: "Mismatch symbols; de trong dung default 10 ma da audit."
+        required: false
+        default: "BCF,BRR,BTV,BTW,DNA,KTL,NQN,SEB,THN,VSN"
+        type: string
+      run_date:
+        description: "Daily Baseline history_exclusive_date can khoa."
+        required: true
+        default: "2026-08-27"
+        type: string
+      write:
+        description: "false = dry-run; true = reconcile daily_history + verify."
+        required: true
+        default: false
+        type: boolean
+      confirm:
+        description: "write=true bat buoc nhap RECONCILE."
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: daily-history-targeted-reconcile
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Validate reconcile script
+        run: |
+          python -m py_compile src/reconcile_daily_history_to_baseline.py
+          python -m py_compile src/backfill_daily_history.py
+          python -m py_compile src/compare_local_baseline.py
+          python -m py_compile src/daily_baseline_history_shadow.py
+          python -m py_compile src/finalize_clean_history.py
+
+      - name: Reconcile daily history to locked production baseline
+        env:
+          VNSTOCK_API_KEY: ${{ secrets.VNSTOCK_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          RECONCILE_SYMBOLS: ${{ inputs.symbols }}
+          RECONCILE_RUN_DATE: ${{ inputs.run_date }}
+          RECONCILE_WRITE: ${{ inputs.write }}
+          RECONCILE_CONFIRM: ${{ inputs.confirm }}
+        run: python -u src/reconcile_daily_history_to_baseline.py
+
+      - name: Upload reconcile report
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: daily-history-reconcile-${{ github.run_id }}
+          path: |
+            daily_history_reconcile_report.json
+            daily_history_reconcile_report.csv
+          if-no-files-found: warn
+          retention-days: 14
