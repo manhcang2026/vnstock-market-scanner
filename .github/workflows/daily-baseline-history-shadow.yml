@@ -1,0 +1,65 @@
+name: Daily Baseline History Shadow
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_date:
+        description: "history_exclusive_date YYYY-MM-DD; de trong = tu dong theo gio VN."
+        required: false
+        default: ""
+        type: string
+      symbols:
+        description: "Danh sach ma test; de trong = toan watchlist."
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: daily-baseline-history-shadow
+  cancel-in-progress: false
+
+jobs:
+  shadow:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Validate shadow scripts
+        run: |
+          python -m py_compile src/compare_local_baseline.py
+          python -m py_compile src/daily_baseline_history_shadow.py
+
+      - name: Compare local history with production baseline
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SHADOW_RUN_DATE: ${{ inputs.run_date }}
+          COMPARE_SYMBOLS: ${{ inputs.symbols }}
+        run: python -u src/daily_baseline_history_shadow.py
+
+      - name: Upload shadow report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-baseline-history-shadow-${{ github.run_id }}
+          path: |
+            baseline_compare_report.json
+            baseline_compare_report.csv
+          if-no-files-found: warn
+          retention-days: 14
