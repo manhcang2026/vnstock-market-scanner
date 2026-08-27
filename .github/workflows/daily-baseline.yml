@@ -2,6 +2,30 @@ name: Daily Baseline
 
 on:
   workflow_dispatch:
+    inputs:
+      engine:
+        description: "provider = he cu; local_history = test/cutover tu daily_history."
+        required: true
+        default: provider
+        type: choice
+        options:
+          - provider
+          - local_history
+      run_date:
+        description: "Chi local_history: history_exclusive_date YYYY-MM-DD; de trong = tu dong."
+        required: false
+        default: ""
+        type: string
+      write_local:
+        description: "Chi local_history: false = dry-run; true = ghi daily_baseline."
+        required: true
+        default: false
+        type: boolean
+      confirm:
+        description: "Chi local_history write=true: bat buoc nhap CUTOVER."
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -30,13 +54,29 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Calculate and push baseline
+      - name: Validate local history cutover script
+        if: ${{ inputs.engine == 'local_history' }}
+        run: python -m py_compile src/daily_baseline_from_history.py
+
+      - name: Calculate baseline - legacy provider engine
+        if: ${{ inputs.engine == 'provider' }}
         env:
           VNSTOCK_API_KEY: ${{ secrets.VNSTOCK_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: python src/daily_baseline_after_close.py
+
+      - name: Calculate baseline - local daily_history engine
+        if: ${{ inputs.engine == 'local_history' }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          LOCAL_BASELINE_RUN_DATE: ${{ inputs.run_date }}
+          LOCAL_BASELINE_WRITE: ${{ inputs.write_local }}
+          LOCAL_BASELINE_CONFIRM: ${{ inputs.confirm }}
+        run: python -u src/daily_baseline_from_history.py
 
       - name: Refresh RVOL30 baseline
         if: always()
