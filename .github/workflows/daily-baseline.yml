@@ -4,13 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       engine:
-        description: "provider = he cu; local_history = test/cutover tu daily_history."
+        description: "local_history = production default; provider = legacy rollback."
         required: true
-        default: provider
+        default: local_history
         type: choice
         options:
-          - provider
           - local_history
+          - provider
       run_date:
         description: "Chi local_history: history_exclusive_date YYYY-MM-DD; de trong = tu dong."
         required: false
