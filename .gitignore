@@ -6,3 +6,7 @@ __pycache__/
 # Generated financial pipeline artifacts - do not commit
 /tools/financial/work/
 /tools/financial/output/
+
+# Local Python virtual environment
+.venv/
+venv/

@@ -1,0 +1,19 @@
+MARKET SESSION GUARD STAGE 1 v1.1
+Base: main
+Target branch: hotfix/market-session-guard-2026-08-31
+
+Files:
+M  .github/workflows/daily-baseline.yml
+A  config/market_calendar_years.txt
+A  config/market_holidays.csv
+A  src/market_session_guard.py
+M  src/intraday_scan_optimized.py
+A  src/daily_baseline_guarded.py
+A  src/refresh_rvol_baseline_guarded.py
+A  tools/check_market_session_guard.py
+A  tools/audit_invalid_session.py
+A  README_MARKET_SESSION_GUARD.md
+
+No SQL. No Supabase write. No frontend.
+
+Calendar hardening: approved coverage now includes 2025 + 2026; 2027 fail-closed.
