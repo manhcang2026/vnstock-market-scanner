@@ -1,0 +1,14 @@
+FAKE SESSION RECOVERY — STAGE 2 DRY RUN
+
+Target branch:
+hotfix/recover-fake-session-2026-08-31
+
+Files:
+A  .github/workflows/recover-fake-session-dry-run.yml
+A  tools/recover_fake_session_dry_run.py
+A  README_RECOVERY_DRY_RUN.md
+A  MANIFEST_RECOVERY.txt
+
+Database writes: NONE
+SQL migrations: NONE
+Frontend changes: NONE
