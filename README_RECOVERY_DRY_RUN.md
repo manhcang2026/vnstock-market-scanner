@@ -46,14 +46,20 @@ After a second exact audit of the production inputs, the correct EOD reconstruct
 - total: 800
 - 4/4: 3
 - >=3 signals: 21
-- >=2 signals: 82
+- >=2 signals: 89
 - RVOL30 >=200%: 137
 - EOD 4/4 symbols: BVS, SSB, TLP
 
-IMPORTANT:
-An earlier preliminary estimate said `>=2 = 89`. That number was not produced
-by the final production-equivalent reconstruction. The exact scanner-input replay
-returns `82`; therefore Stage 2 uses 82 as the recovery checkpoint.
+IMPORTANT CORRECTION (v1.1):
+`>=2 = 89` is the correct point-in-time reconstruction.
+
+Why the earlier `82` check was wrong:
+- it used today's `latest_daily_baseline` view after the 28/08 EOD baseline had already been written;
+- that view currently contains many rows dated 28/08;
+- those rows did not exist yet when the 28/08 15:00 scanner ran.
+
+A historical replay must use the newest baseline row strictly BEFORE 28/08.
+The dry-run script does exactly that, and returns `>=2 = 89`.
 
 ## Safety
 

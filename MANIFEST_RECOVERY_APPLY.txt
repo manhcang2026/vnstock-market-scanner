@@ -1,0 +1,26 @@
+FAKE SESSION RECOVERY — STAGE 2B APPLY
+
+Target branch:
+hotfix/recover-fake-session-2026-08-31
+
+This package includes the corrected Stage 2 v1.1 dry-run plus the apply stage.
+
+Files added/updated relative to the previously published recovery branch:
+M  tools/recover_fake_session_dry_run.py
+M  README_RECOVERY_DRY_RUN.md
+M  MANIFEST_RECOVERY.txt
+A  tools/recover_fake_session_apply.py
+A  README_RECOVERY_APPLY.md
+A  MANIFEST_RECOVERY_APPLY.txt
+
+Writes when --apply is explicitly used:
+- UPSERT public.stock_snapshot (800 rows, conflict=symbol)
+- UPSERT public.golden_board_daily 28/08 backup rows (to neutralize capture-trigger drift)
+- DELETE public.intraday_snapshots WHERE trading_date = 2026-08-31
+
+Never changes:
+- public.scan_runs
+- public.daily_baseline
+- public.daily_history
+- public.rvol30_baseline
+- frontend

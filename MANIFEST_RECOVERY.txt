@@ -12,3 +12,5 @@ A  MANIFEST_RECOVERY.txt
 Database writes: NONE
 SQL migrations: NONE
 Frontend changes: NONE
+
+V1.1: corrected >=2 checkpoint from 82 to 89 after point-in-time baseline audit.

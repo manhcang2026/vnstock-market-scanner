@@ -14,7 +14,7 @@ LOOKBACK_DAYS = 35
 EXPECTED_TOTAL = 800
 EXPECTED_SIGNAL_4 = 3
 EXPECTED_SIGNAL_GE3 = 21
-EXPECTED_SIGNAL_GE2 = 82
+EXPECTED_SIGNAL_GE2 = 89
 EXPECTED_RVOL200 = 137
 EXPECTED_4_SYMBOLS = ["BVS", "SSB", "TLP"]
 
@@ -404,6 +404,7 @@ def main() -> None:
 
     print(f"Target session:           {TARGET_DATE}")
     print(f"Reconstructed rows:      {total}")
+    print("Baseline policy:         latest row strictly BEFORE target session")
     print(f"Missing baseline:        {missing_baseline}")
     print(f"Missing RVOL value:      {missing_rvol}")
     print(f"4/4:                     {k4}")
