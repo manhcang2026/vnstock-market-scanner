@@ -46,6 +46,7 @@ jobs:
           python -m py_compile src/refresh_rvol_baseline_guarded.py
 
       - name: Finalize daily_history from intraday snapshots
+        id: finalize
         env:
           VNSTOCK_API_KEY: ${{ secrets.VNSTOCK_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -56,6 +57,7 @@ jobs:
         run: python -u src/eod_daily_history_local.py
 
       - name: Calculate Daily Baseline from daily_history
+        if: ${{ steps.finalize.outputs.trading_day == 'true' }}
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
@@ -65,7 +67,7 @@ jobs:
         run: python -u src/daily_baseline_local_runtime.py
 
       - name: Refresh RVOL30 baseline
-        if: ${{ !inputs.dry_run }}
+        if: ${{ steps.finalize.outputs.trading_day == 'true' && !inputs.dry_run }}
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}

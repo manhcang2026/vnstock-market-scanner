@@ -28,6 +28,14 @@ def env_bool(name: str, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+def set_github_output(name: str, value: str) -> None:
+    path = os.getenv("GITHUB_OUTPUT", "").strip()
+    if not path:
+        return
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(f"{name}={value}\n")
+
+
 def write_report(report: dict[str, Any]) -> None:
     REPORT_JSON.write_text(
         json.dumps(report, ensure_ascii=False, indent=2, default=str),
@@ -41,6 +49,11 @@ def main() -> None:
     run_at = now_vn()
 
     decision = market_session_guard.session_decision(trading_date)
+    set_github_output(
+        "trading_day",
+        "true" if decision.trading_day else "false",
+    )
+
     report: dict[str, Any] = {
         "run_at": run_at.isoformat(),
         "trading_date": trading_date.isoformat(),
