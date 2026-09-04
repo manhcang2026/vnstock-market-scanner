@@ -1,4 +1,4 @@
-name: Daily Baseline
+name: Daily Baseline · Provider Fallback
 
 on:
   workflow_dispatch:
@@ -7,7 +7,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: daily-baseline
+  group: daily-baseline-provider-fallback
   cancel-in-progress: false
 
 jobs:
@@ -30,7 +30,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Calculate and push baseline
+      - name: Calculate provider baseline
         env:
           VNSTOCK_API_KEY: ${{ secrets.VNSTOCK_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}

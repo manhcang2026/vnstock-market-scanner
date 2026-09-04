@@ -1,18 +1,22 @@
 /**
- * Cài lại toàn bộ trigger của backend.
+ * Cài lại toàn bộ trigger backend production.
  *
- * QUAN TRỌNG: sau khi update file này trên GAS, chạy thủ công
- * installBackendTriggers() đúng MỘT LẦN để xóa trigger 10 phút cũ
- * và tạo trigger 5 phút mới.
+ * QUAN TRỌNG: sau khi update các file GAS, chạy thủ công
+ * installBackendTriggers() đúng MỘT LẦN để:
+ * - xóa Daily Baseline 01:00 cũ;
+ * - tạo EOD Finalize sau đóng cửa;
+ * - giữ Intraday + Market Pulse mỗi 5 phút.
  */
 function installBackendTriggers() {
   deleteBackendTriggers();
 
-  // Daily Baseline: thức dậy một lần trong khoảng 01:00–02:00.
+  // EOD Finalize: khoảng 15:30 giờ project (nearMinute ±15 phút).
+  // Mốc sớm nhất khoảng 15:15, sau safety cutoff 15:10 của Python.
   ScriptApp
-    .newTrigger('scheduledDailyBaseline')
+    .newTrigger('scheduledEodFinalize')
     .timeBased()
-    .atHour(1)
+    .atHour(15)
+    .nearMinute(30)
     .everyDays(1)
     .create();
 
@@ -34,8 +38,9 @@ function installBackendTriggers() {
   return {
     ok: true,
     cadence_minutes: 5,
+    eod_near: '15:30',
     triggers: [
-      'scheduledDailyBaseline',
+      'scheduledEodFinalize',
       'scheduledIntradayScan',
       'scheduledMarketPulseScan'
     ]
@@ -50,6 +55,8 @@ function deleteBackendTriggers() {
   const managedHandlers = new Set([
     'runDailyBaselineNow',
     'scheduledDailyBaseline',
+    'runEodFinalizeNow',
+    'scheduledEodFinalize',
     'scheduledIntradayScan',
     'runMarketPulseNow',
     'scheduledMarketPulseScan'
