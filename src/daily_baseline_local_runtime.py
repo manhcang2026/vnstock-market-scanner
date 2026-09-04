@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 import compare_local_baseline as compare
@@ -30,9 +30,19 @@ def env_bool(name: str, default: bool = False) -> bool:
 
 
 def resolve_run_date(run_at) -> date:
+    # Explicit exclusive cutoff remains available for repair/debug jobs.
     raw = os.getenv("LOCAL_BASELINE_RUN_DATE", "").strip()
     if raw:
         return date.fromisoformat(raw)
+
+    # EOD workflow accepts a trading_date. Baseline must include that completed
+    # session, therefore the history upper bound is trading_date + 1 day.
+    eod_trading_date = os.getenv("EOD_TRADING_DATE", "").strip()
+    if eod_trading_date:
+        return date.fromisoformat(eod_trading_date) + timedelta(days=1)
+
+    # Normal production path: derive the last completed approved session from
+    # the Vietnam market calendar.
     return market_session_guard.history_exclusive_date(run_at)
 
 
