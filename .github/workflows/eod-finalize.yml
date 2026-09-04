@@ -47,6 +47,7 @@ jobs:
 
       - name: Finalize daily_history from intraday snapshots
         env:
+          VNSTOCK_API_KEY: ${{ secrets.VNSTOCK_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}

@@ -1,33 +1,43 @@
 # EOD Local Baseline Cutover — 2026-09-05
 
-Production target after merge + GAS trigger reinstall:
+## Production architecture
 
-1. Intraday Scan writes `intraday_snapshots` every 5 minutes.
-2. GAS dispatches `eod-finalize.yml` around 15:30 VN on weekdays.
-3. EOD Finalize:
-   - writes valid positive-volume 15:00 snapshots to `daily_history`;
-   - does **zero provider calls**;
-   - fails closed if a final snapshot is actually missing;
-   - computes all 800 Daily Baseline rows from `daily_history` using the legacy-compatible 500 calendar-day window;
-   - verifies all 800 rows after write;
+1. Intraday Scan remains the primary market-data collector.
+2. After market close, `EOD Finalize · Local History`:
+   - reads the final intraday snapshot for all symbols;
+   - writes valid positive-volume bars directly to `daily_history`;
+   - uses KBS/VCI only as a targeted fallback when a final snapshot is missing,
+     invalid, or cannot establish an official bar (including ambiguous zero-volume
+     cases);
+   - calculates MA10 / MA200 / full-day VOL10 from `daily_history`;
+   - writes `daily_baseline`;
    - refreshes RVOL30.
-4. Supabase cron at 16:10 independently refreshes Same-Time VOL10 from `intraday_snapshots`.
-5. `daily-baseline.yml` remains manual provider fallback/repair only.
+3. Same-Time VOL10 is refreshed separately by Supabase cron.
 
-## One-time GAS action after merge
+## What is removed
 
-Update these GAS files from repo:
+The old nightly 800-symbol Daily Baseline provider scan is no longer part of
+the normal schedule. `daily-baseline.yml` remains available as a manual
+provider fallback / audit workflow.
 
-- `gas/00_Config.gs`
-- `gas/02_GitHubTrigger.gs`
-- `gas/03_TriggerManager.gs`
+## Holiday safety
 
-Then run `installBackendTriggers()` once.
+`market_session_guard` checks the approved Vietnam exchange calendar before
+EOD provider access. Weekends and configured holidays skip immediately.
 
-Expected managed triggers afterward:
+## Why targeted provider fallback remains
 
-- `scheduledEodFinalize`
-- `scheduledIntradayScan`
-- `scheduledMarketPulseScan`
+An intraday `price=0, volume=0` snapshot is not sufficient to prove that the
+official daily history has no bar. Real validation found symbols such as NQN
+and THN where VCI carried a valid zero-volume daily bar. Therefore the EOD job
+queries providers only for this ambiguous minority, preserving canonical
+history without returning to an 800-symbol nightly scan.
 
-The old `scheduledDailyBaseline` 01:00 trigger must be gone.
+## Trigger target
+
+After deployment, GAS should have only:
+- `scheduledEodFinalize` around 15:30 VN;
+- `scheduledIntradayScan` every 5 minutes;
+- `scheduledMarketPulseScan` every 5 minutes.
+
+The old `scheduledDailyBaseline` 01:00 trigger is removed.
