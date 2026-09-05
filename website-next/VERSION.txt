@@ -1,1 +1,1 @@
-v19.11.5-mobile-auth-hotfix
+v19.12.0-golden-membership-vol10
