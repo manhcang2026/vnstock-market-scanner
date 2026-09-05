@@ -222,6 +222,7 @@
     var path = normalizedAppPath();
     if (path === "/danh-sach") return "scanner";
     if (path === "/so-sanh-theo-nganh" || path === "/sang-loc-co-ban") return "research";
+    if (path === "/bang-vang") return "golden";
     if (path === "/huong-dan") return "guide";
     if (path === ACCOUNT_PATH) return "account";
     return "overview";
@@ -774,6 +775,7 @@
       industry: '<path d="M4 20V9l5-3v14M9 11l6-3v12M15 5l5 3v12M2 20h20"/>',
       watchlist: '<path d="m12 3 2.7 5.5 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9L12 3Z"/>',
       bell: '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/>',
+      trophy: '<path d="M8 4h8v3a4 4 0 0 1-8 0V4Z"/><path d="M8 6H4v1a5 5 0 0 0 5 5M16 6h4v1a5 5 0 0 1-5 5M12 11v5M8 20h8M9 16h6"/>',
       sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.66 6.34l1.41-1.41"/>',
       moon: '<path d="M20 15.5A8 8 0 0 1 8.5 4 8.5 8.5 0 1 0 20 15.5Z"/>',
       refresh: '<path d="M20 11a8 8 0 1 0-2.34 5.66"/><path d="M20 4v7h-7"/>',
@@ -800,7 +802,7 @@
     return navLink("/", "overview", "home", "Tổng quan") +
       navLink("/danh-sach", "scanner", "list", "DS mã theo dõi", "DS theo dõi") +
       navLink("/so-sanh-theo-nganh", "research", "industry", "Nghiên cứu", "Nghiên cứu") +
-      navPlaceholder("bell", "Cảnh báo") +
+      navLink("/bang-vang", "golden", "trophy", "Bảng vàng", "Bảng vàng") +
       navLink("/huong-dan", "guide", "help", "Hướng dẫn", "Hướng dẫn");
   }
 
@@ -809,7 +811,7 @@
       navLink("/", "overview", "home", "Tổng quan") +
       navLink("/danh-sach", "scanner", "list", "DS mã theo dõi", "DS theo dõi") +
       navLink("/so-sanh-theo-nganh", "research", "industry", "Nghiên cứu", "Nghiên cứu") +
-      navLink("/huong-dan", "guide", "help", "Hướng dẫn", "Hướng dẫn");
+      navLink("/bang-vang", "golden", "trophy", "Bảng vàng", "Bảng vàng");
     if (includeAccount) html += navLink(ACCOUNT_PATH, "account", "user", "Tài khoản");
     return html;
   }
@@ -818,6 +820,7 @@
     if (state.detail.open) return "Chi tiết cổ phiếu";
     if (state.route === "scanner") return "DS mã theo dõi";
     if (state.route === "research") return "Nghiên cứu";
+    if (state.route === "golden") return "Bảng vàng";
     if (state.route === "guide") return "Hướng dẫn";
     if (state.route === "account") return "Tài khoản";
     return "Tổng quan";
@@ -1355,6 +1358,12 @@
     return '<section class="market-pulse panel-anatomy market-pulse-rail"><header class="section-bar"><div><i class="status-dot"></i><h2>Toàn cảnh thị trường</h2><span>Cập nhật ' + esc(updated) + '</span></div><small>Cập nhật<br>' + esc(updated) + '</small></header><div class="market-pulse-grid">' + cards + '</div></section>';
   }
 
+  function goldenOverviewWidgetHtml() {
+    return window.CCCGolden && typeof window.CCCGolden.overviewShellHtml === "function"
+      ? window.CCCGolden.overviewShellHtml()
+      : "";
+  }
+
   function overviewBodyHtml() {
     var rows = filteredRows().slice(0, 10);
     var shown = rows;
@@ -1396,6 +1405,7 @@
 
     return '<section class="signal-density panel-anatomy"><header class="section-bar"><div><h2>Mật độ tín hiệu hôm nay</h2>' + densityCopy + '</div><small>' + esc(densityMeta) + '</small></header><div class="density-grid">' + densityHtml() + '</div></section>' +
       contextualUpsellHtml() +
+      goldenOverviewWidgetHtml() +
       '<section id="overview-results" class="in-scope-results panel-anatomy overview-group-' + esc(state.overview.group) + '"><header class="section-bar"><div><h2>' + esc(title) + '</h2><span id="overview-selection-summary">' + summary + '</span></div><small id="overview-selection-count">' + esc(countText) + '</small></header>' +
       (sampleMode() ? sampleIntroHtml() : "") +
       '<div class="overview-row-head"><span>Công ty</span><span>Giá / thay đổi</span><span>Khối lượng</span><span>Điểm nổi bật</span><span>CCC</span></div>' +
@@ -3512,11 +3522,18 @@
     return '<main id="main-content" class="wrap page-shell"><section class="page-heading page-header"><div><h1>' + esc(title) + '</h1><p>' + esc(copy) + '</p></div></section><div class="content-grid"><div class="content-main"><section class="panel-anatomy transplant-placeholder"><strong>Đang giữ mốc kiến trúc sạch.</strong><p>Màn hình này sẽ được hoàn thiện ở bước tiếp theo theo cùng chuẩn giao diện.</p></section></div></div></main>';
   }
 
+  function goldenPageHtml() {
+    return window.CCCGolden && typeof window.CCCGolden.pageShellHtml === "function"
+      ? window.CCCGolden.pageShellHtml()
+      : placeholderPageHtml("Bảng vàng", "Đang chuẩn bị dữ liệu Bảng vàng.");
+  }
+
   function routeHtml() {
     if (state.detail.open) return stockDetailPageHtml();
     if (state.route === "overview") return overviewPageHtml();
     if (state.route === "scanner") return scannerPageHtml();
     if (state.route === "research") return researchPageHtml();
+    if (state.route === "golden") return goldenPageHtml();
     if (state.route === "guide") return guidePageHtml();
     return accountPageHtml();
   }
@@ -3524,13 +3541,18 @@
   function render() {
     document.title = state.detail.open && state.detail.symbol
       ? state.detail.symbol + " — Chuyện Chợ Chứng"
-      : state.route === "guide"
-        ? "Hướng dẫn sử dụng — Chuyện Chợ Chứng"
-        : "Chuyện Chợ Chứng";
+      : state.route === "golden"
+        ? "Bảng vàng 4/4 — Chuyện Chợ Chứng"
+        : state.route === "guide"
+          ? "Hướng dẫn sử dụng — Chuyện Chợ Chứng"
+          : "Chuyện Chợ Chứng";
     app.innerHTML = headerHtml() + accessNoticeHtml() + routeHtml() + authDialogHtml() + passwordDialogHtml();
     bind();
     refreshLogoStates();
     updateCountdown();
+    if (window.CCCGolden && typeof window.CCCGolden.afterCoreRender === "function") {
+      window.CCCGolden.afterCoreRender();
+    }
   }
 
   function refreshLogoStates() {
@@ -4349,6 +4371,9 @@
         if (state.route === "overview") ensureOverview(true);
         if (state.route === "scanner") ensureScanner(true);
         if (state.route === "research") ensureResearch(true);
+        if ((state.route === "overview" || state.route === "golden") && window.CCCGolden && typeof window.CCCGolden.reload === "function") {
+          window.CCCGolden.reload();
+        }
       }
       ensureMarketPulse(true);
     });
