@@ -1,8 +1,8 @@
 /**
- * Chạy job Daily Baseline thủ công.
+ * Daily Baseline provider fallback thủ công.
  *
- * Hàm này KHÔNG kiểm tra thứ trong tuần.
- * Dùng khi cần test / chạy phục hồi thủ công từ GAS.
+ * Production không còn gọi workflow này hàng ngày.
+ * Chỉ dùng khi cần repair/audit dữ liệu lịch sử.
  */
 function runDailyBaselineNow() {
   return dispatchWorkflow_(
@@ -12,26 +12,46 @@ function runDailyBaselineNow() {
 
 
 /**
- * Daily Baseline production tự động.
- *
- * Chỉ dispatch GitHub từ thứ Ba đến thứ Bảy:
- * - Thứ Ba sáng lấy phiên chốt thứ Hai.
- * - ...
- * - Thứ Bảy sáng lấy phiên chốt thứ Sáu.
+ * Legacy handler để vô hiệu hóa trigger Daily Baseline 01:00 cũ.
+ * installBackendTriggers() sẽ xóa trigger này khỏi project.
  */
 function scheduledDailyBaseline() {
+  return {
+    ok: true,
+    skipped: 'legacy_daily_baseline_trigger_disabled'
+  };
+}
+
+
+/**
+ * Chạy EOD Finalize production thủ công.
+ * Pipeline: intraday_snapshots -> daily_history -> local daily_baseline -> RVOL30.
+ */
+function runEodFinalizeNow() {
+  return dispatchWorkflow_(
+    CONFIG.EOD_WORKFLOW_FILE
+  );
+}
+
+
+/**
+ * EOD Finalize production tự động.
+ * Trigger manager đánh thức khoảng 15:30 giờ project.
+ * Python Market Session Guard tự bỏ qua cuối tuần/ngày nghỉ lễ.
+ */
+function scheduledEodFinalize() {
   const now = new Date();
   const day = now.getDay();
 
-  if (day === 0 || day === 1) {
+  if (day === 0 || day === 6) {
     return {
       ok: true,
-      skipped: 'daily_baseline_off_day'
+      skipped: 'weekend'
     };
   }
 
   return dispatchWorkflow_(
-    CONFIG.DAILY_WORKFLOW_FILE
+    CONFIG.EOD_WORKFLOW_FILE
   );
 }
 
@@ -106,16 +126,13 @@ function scheduledIntradayScan() {
 }
 
 
-
-
 /**
  * Chạy Market Pulse thủ công.
  * Pipeline riêng, không phụ thuộc giờ CK Việt Nam.
- * Không cần thêm MARKET_PULSE_WORKFLOW_FILE vào 00_Config.gs.
  */
 function runMarketPulseNow() {
   return dispatchWorkflow_(
-    'market-pulse.yml'
+    CONFIG.MARKET_PULSE_WORKFLOW_FILE
   );
 }
 
@@ -126,7 +143,7 @@ function runMarketPulseNow() {
  */
 function scheduledMarketPulseScan() {
   return dispatchWorkflow_(
-    'market-pulse.yml'
+    CONFIG.MARKET_PULSE_WORKFLOW_FILE
   );
 }
 

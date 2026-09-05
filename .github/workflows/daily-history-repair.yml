@@ -1,0 +1,132 @@
+name: Daily History Repair
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: "finalize = lam sach history + EOD + shadow; compare = doi chieu sau Daily Baseline 01:00"
+        required: true
+        default: "finalize"
+        type: choice
+        options:
+          - finalize
+          - compare
+      symbols:
+        description: "De trong = toan bo watchlist; hoac nhap AAA,HPG,..."
+        required: false
+        default: ""
+        type: string
+      write:
+        description: "Chi finalize: false = dry-run; true = ghi daily_history."
+        required: true
+        default: false
+        type: boolean
+      confirm:
+        description: "Finalize write=true bat buoc nhap FINALIZE."
+        required: false
+        default: ""
+        type: string
+      rebase_symbols:
+        description: "Ma da review duoc phep rebase khi EXACT cu khong tai tao duoc."
+        required: false
+        default: "TN1,VIM"
+        type: string
+      rebase_confirm:
+        description: "Neu write=true va co rebase_symbols, bat buoc nhap REBASE."
+        required: false
+        default: ""
+        type: string
+      eod_date:
+        description: "Ngay EOD se append tu intraday/fallback provider."
+        required: true
+        default: "2026-08-26"
+        type: string
+      compare_run_date:
+        description: "Ngay baseline can doi chieu (sau job 01:00)."
+        required: true
+        default: "2026-08-27"
+        type: string
+      max_symbols:
+        description: "0 = tat ca. Co the dung de test chunk."
+        required: true
+        default: "0"
+        type: string
+      resume_after:
+        description: "Bulk alphabetical: tiep tuc sau ma nay. De trong = bat dau dau."
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: daily-history-clean-final
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Validate finalize scripts
+        if: ${{ inputs.operation == 'finalize' }}
+        run: python -m py_compile src/backfill_daily_history.py src/finalize_clean_history.py src/finalize_clean_history_rebase.py
+
+      - name: Finalize clean daily history
+        if: ${{ inputs.operation == 'finalize' }}
+        env:
+          VNSTOCK_API_KEY: ${{ secrets.VNSTOCK_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          FINALIZE_SYMBOLS: ${{ inputs.symbols }}
+          FINALIZE_WRITE: ${{ inputs.write }}
+          FINALIZE_CONFIRM: ${{ inputs.confirm }}
+          FINALIZE_REBASE_SYMBOLS: ${{ inputs.rebase_symbols }}
+          FINALIZE_REBASE_CONFIRM: ${{ inputs.rebase_confirm }}
+          FINALIZE_EOD_DATE: ${{ inputs.eod_date }}
+          FINALIZE_MAX_SYMBOLS: ${{ inputs.max_symbols }}
+          FINALIZE_RESUME_AFTER: ${{ inputs.resume_after }}
+        run: python src/finalize_clean_history_rebase.py
+
+      - name: Compare local vs production baseline
+        if: ${{ inputs.operation == 'compare' }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          COMPARE_SYMBOLS: ${{ inputs.symbols }}
+          COMPARE_RUN_DATE: ${{ inputs.compare_run_date }}
+        run: python src/compare_local_baseline.py
+
+      - name: Upload clean-history reports
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: clean-history-${{ inputs.operation }}-${{ github.run_id }}
+          path: |
+            clean_history_report.json
+            clean_history_report.csv
+            clean_history_rebase_report.json
+            shadow_baseline_legacy.json
+            shadow_baseline_legacy.csv
+            shadow_baseline_full.json
+            shadow_baseline_full.csv
+            baseline_compare_report.json
+            baseline_compare_report.csv
+          if-no-files-found: warn
+          retention-days: 14

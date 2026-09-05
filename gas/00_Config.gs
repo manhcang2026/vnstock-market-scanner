@@ -3,6 +3,7 @@ const CONFIG = Object.freeze({
   GITHUB_OWNER: 'manhcang2026',
   GITHUB_REPO: 'vnstock-market-scanner',
   DAILY_WORKFLOW_FILE: 'daily-baseline.yml',
+  EOD_WORKFLOW_FILE: 'eod-finalize.yml',
   INTRADAY_WORKFLOW_FILE: 'intraday-scan.yml',
   MARKET_PULSE_WORKFLOW_FILE: 'market-pulse.yml',
   GITHUB_BRANCH: 'main',
