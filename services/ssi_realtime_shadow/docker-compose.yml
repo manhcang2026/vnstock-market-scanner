@@ -1,0 +1,11 @@
+services:
+  collector:
+    build: .
+    container_name: ccc-ssi-shadow
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    environment:
+      DATABASE_PATH: /app/data/ssi_shadow.db
