@@ -11,7 +11,6 @@ from .market_session import (
     SessionType,
     classify_market_session,
     normalize_exchange,
-    rolling_window_ready,
 )
 
 
@@ -114,6 +113,10 @@ def volume_market_grid(exchange: str) -> tuple[VolumeGridPoint, ...]:
     """Build the valid historical volume grid from the shared session engine."""
     canonical = normalize_exchange(exchange)
     points: list[VolumeGridPoint] = []
+    continuous_bar_counts = {
+        SessionType.AM_CONTINUOUS.value: 0,
+        SessionType.PM_CONTINUOUS.value: 0,
+    }
     start = datetime.combine(_GRID_REFERENCE_DATE, datetime.min.time(), tzinfo=VN_TZ)
     moment = start.replace(hour=9)
     end = start.replace(hour=15)
@@ -145,15 +148,18 @@ def volume_market_grid(exchange: str) -> tuple[VolumeGridPoint, ...]:
                 )
             )
         elif session.is_continuous:
+            segment = session.session_type.value
+            continuous_bar_counts[segment] += 1
+            bar_count = continuous_bar_counts[segment]
             points.append(
                 VolumeGridPoint(
                     minute=minute,
-                    session_segment=session.session_type.value,
+                    session_segment=segment,
                     is_continuous=True,
                     is_opening=False,
                     is_closing=False,
-                    rolling_15_ready=rolling_window_ready(session, 15),
-                    rolling_30_ready=rolling_window_ready(session, 30),
+                    rolling_15_ready=bar_count >= 15,
+                    rolling_30_ready=bar_count >= 30,
                 )
             )
         moment += timedelta(minutes=1)
@@ -229,7 +235,6 @@ def build_symbol_volume_baseline(
             SessionType.PM_CONTINUOUS.value: [],
         }
         for point in grid:
-            observed = point.minute in day
             if point.is_continuous:
                 volume = day.get(point.minute, 0)
                 cumulative += volume
@@ -241,8 +246,8 @@ def build_symbol_volume_baseline(
                     point_samples.rolling_15.append(sum(segment[-15:]))
                 if point.rolling_30_ready:
                     point_samples.rolling_30.append(sum(segment[-30:]))
-            elif observed:
-                volume = day[point.minute]
+            else:
+                volume = day.get(point.minute, 0)
                 cumulative += volume
                 point_samples = samples[point.minute]
                 point_samples.cumulative.append(cumulative)

@@ -5,6 +5,8 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Iterable
 
+import pytest
+
 from app.storage import SQLiteStore
 from app.volume_baseline import build_volume_baseline, volume_market_grid
 from app.volume_baseline_build import build_parser
@@ -78,8 +80,10 @@ def test_hose_grid_separates_opening_continuous_and_close_buckets() -> None:
     assert grid["09:30"].rolling_15_ready
     assert not grid["09:44"].rolling_30_ready
     assert grid["09:45"].rolling_30_ready
-    assert not grid["13:14"].rolling_15_ready
-    assert grid["13:15"].rolling_15_ready
+    assert not grid["13:13"].rolling_15_ready
+    assert grid["13:14"].rolling_15_ready
+    assert not grid["13:28"].rolling_30_ready
+    assert grid["13:29"].rolling_30_ready
     assert grid["14:45"].session_segment == "CLOSE_BUCKET"
     assert not grid["14:45"].is_continuous
     assert not grid["14:45"].rolling_15_ready
@@ -93,12 +97,16 @@ def test_hnx_and_upcom_grid_boundaries_follow_market_session_engine() -> None:
     assert len(hnx_points) == 241
     assert len(upcom_points) == 270
     assert hnx["09:00"].is_continuous
-    assert not hnx["09:14"].rolling_15_ready
-    assert hnx["09:15"].rolling_15_ready
-    assert not hnx["09:29"].rolling_30_ready
-    assert hnx["09:30"].rolling_30_ready
+    assert not hnx["09:13"].rolling_15_ready
+    assert hnx["09:14"].rolling_15_ready
+    assert not hnx["09:28"].rolling_30_ready
+    assert hnx["09:29"].rolling_30_ready
     assert hnx["14:45"].session_segment == "CLOSE_BUCKET"
     assert upcom["14:59"].is_continuous
+    assert not upcom["09:13"].rolling_15_ready
+    assert upcom["09:14"].rolling_15_ready
+    assert not upcom["09:28"].rolling_30_ready
+    assert upcom["09:29"].rolling_30_ready
     assert "15:00" not in upcom
 
 
@@ -117,6 +125,164 @@ def test_volume_baseline_cli_accepts_sample_arguments() -> None:
     )
     assert args.lookback == 10
     assert args.symbols == ["HPG", "SSI", "VIX"]
+
+
+@pytest.mark.parametrize(("symbol", "exchange"), [("SHS", "HNX"), ("BSR", "UPCOM")])
+def test_hnx_upcom_morning_windows_use_exact_closed_bar_count(
+    tmp_path: Path, symbol: str, exchange: str
+) -> None:
+    history = tmp_path / f"{exchange}-history.db"
+    output = tmp_path / f"{exchange}-baseline.db"
+    _history_db(
+        history,
+        [
+            (symbol, exchange, "2026-09-10", "09:00", 100),
+            (symbol, exchange, "2026-09-10", "09:14", 14),
+            (symbol, exchange, "2026-09-10", "09:15", 999),
+            (symbol, exchange, "2026-09-10", "09:29", 29),
+            (symbol, exchange, "2026-09-10", "09:30", 777),
+        ],
+    )
+    build_volume_baseline(history_db=history, output_db=output)
+
+    connection = _connect(output)
+    values = {
+        row["minute"]: row
+        for row in connection.execute(
+            "SELECT * FROM volume_baseline WHERE symbol=? "
+            "AND minute IN ('09:14','09:15','09:29','09:30')",
+            (symbol,),
+        )
+    }
+    assert values["09:14"]["avg_volume_15"] == 114
+    assert values["09:15"]["avg_volume_15"] == 1013
+    assert values["09:29"]["avg_volume_30"] == 1142
+    assert values["09:30"]["avg_volume_30"] == 1819
+    connection.close()
+
+
+def test_hose_morning_windows_exclude_opening_and_use_exact_bar_count(
+    tmp_path: Path,
+) -> None:
+    history = tmp_path / "hose-history.db"
+    output = tmp_path / "hose-baseline.db"
+    _history_db(
+        history,
+        [
+            ("HPG", "HOSE", "2026-09-10", "09:15", 5000),
+            ("HPG", "HOSE", "2026-09-10", "09:16", 100),
+            ("HPG", "HOSE", "2026-09-10", "09:30", 14),
+            ("HPG", "HOSE", "2026-09-10", "09:31", 999),
+            ("HPG", "HOSE", "2026-09-10", "09:45", 29),
+            ("HPG", "HOSE", "2026-09-10", "09:46", 777),
+        ],
+    )
+    build_volume_baseline(history_db=history, output_db=output)
+
+    connection = _connect(output)
+    values = {
+        row["minute"]: row
+        for row in connection.execute(
+            "SELECT * FROM volume_baseline WHERE symbol='HPG' "
+            "AND minute IN ('09:30','09:31','09:45','09:46')"
+        )
+    }
+    assert values["09:30"]["avg_volume_15"] == 114
+    assert values["09:31"]["avg_volume_15"] == 1013
+    assert values["09:45"]["avg_volume_30"] == 1142
+    assert values["09:46"]["avg_volume_30"] == 1819
+    connection.close()
+
+
+@pytest.mark.parametrize(
+    ("symbol", "exchange"),
+    [("HPG", "HOSE"), ("SHS", "HNX"), ("BSR", "UPCOM")],
+)
+def test_afternoon_windows_use_exact_closed_bar_count(
+    tmp_path: Path, symbol: str, exchange: str
+) -> None:
+    history = tmp_path / f"{exchange}-pm-history.db"
+    output = tmp_path / f"{exchange}-pm-baseline.db"
+    _history_db(
+        history,
+        [
+            (symbol, exchange, "2026-09-10", "13:00", 100),
+            (symbol, exchange, "2026-09-10", "13:14", 14),
+            (symbol, exchange, "2026-09-10", "13:15", 999),
+            (symbol, exchange, "2026-09-10", "13:29", 29),
+            (symbol, exchange, "2026-09-10", "13:30", 777),
+        ],
+    )
+    build_volume_baseline(history_db=history, output_db=output)
+
+    connection = _connect(output)
+    values = {
+        row["minute"]: row
+        for row in connection.execute(
+            "SELECT * FROM volume_baseline WHERE symbol=? "
+            "AND minute IN ('13:14','13:15','13:29','13:30')",
+            (symbol,),
+        )
+    }
+    assert values["13:14"]["avg_volume_15"] == 114
+    assert values["13:15"]["avg_volume_15"] == 1013
+    assert values["13:29"]["avg_volume_30"] == 1142
+    assert values["13:30"]["avg_volume_30"] == 1819
+    connection.close()
+
+
+def test_missing_hose_auction_rows_contribute_zero_samples(tmp_path: Path) -> None:
+    history = tmp_path / "hose-auction-history.db"
+    output = tmp_path / "hose-auction-baseline.db"
+    _history_db(
+        history,
+        [
+            ("HPG", "HOSE", "2026-09-09", "09:15", 100),
+            ("HPG", "HOSE", "2026-09-09", "14:45", 50),
+            ("HPG", "HOSE", "2026-09-10", "09:16", 20),
+        ],
+    )
+    build_volume_baseline(history_db=history, output_db=output)
+
+    connection = _connect(output)
+    opening = connection.execute(
+        "SELECT * FROM volume_baseline WHERE symbol='HPG' AND minute='09:15'"
+    ).fetchone()
+    closing = connection.execute(
+        "SELECT * FROM volume_baseline WHERE symbol='HPG' AND minute='14:45'"
+    ).fetchone()
+    assert opening["avg_opening_volume"] == 50
+    assert opening["avg_cumulative_volume"] == 50
+    assert opening["historical_sessions"] == 2
+    assert closing["avg_cumulative_volume"] == 85
+    assert closing["historical_sessions"] == 2
+    assert closing["avg_volume_15"] is None
+    connection.close()
+
+
+def test_missing_hnx_close_contributes_final_cumulative_sample(
+    tmp_path: Path,
+) -> None:
+    history = tmp_path / "hnx-close-history.db"
+    output = tmp_path / "hnx-close-baseline.db"
+    _history_db(
+        history,
+        [
+            ("SHS", "HNX", "2026-09-09", "09:00", 100),
+            ("SHS", "HNX", "2026-09-09", "14:45", 50),
+            ("SHS", "HNX", "2026-09-10", "09:00", 20),
+        ],
+    )
+    build_volume_baseline(history_db=history, output_db=output)
+
+    connection = _connect(output)
+    closing = connection.execute(
+        "SELECT * FROM volume_baseline WHERE symbol='SHS' AND minute='14:45'"
+    ).fetchone()
+    assert closing["avg_cumulative_volume"] == 85
+    assert closing["historical_sessions"] == 2
+    assert closing["avg_volume_15"] is None
+    connection.close()
 
 
 def test_hose_opening_and_close_affect_cumulative_but_not_rolling(
