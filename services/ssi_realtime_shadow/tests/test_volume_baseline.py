@@ -127,7 +127,7 @@ def test_volume_baseline_cli_accepts_sample_arguments() -> None:
     assert args.symbols == ["HPG", "SSI", "VIX"]
 
 
-@pytest.mark.parametrize(("symbol", "exchange"), [("SHS", "HNX"), ("BSR", "UPCOM")])
+@pytest.mark.parametrize(("symbol", "exchange"), [("SHS", "HNX"), ("VGI", "UPCOM")])
 def test_hnx_upcom_morning_windows_use_exact_closed_bar_count(
     tmp_path: Path, symbol: str, exchange: str
 ) -> None:
@@ -196,7 +196,7 @@ def test_hose_morning_windows_exclude_opening_and_use_exact_bar_count(
 
 @pytest.mark.parametrize(
     ("symbol", "exchange"),
-    [("HPG", "HOSE"), ("SHS", "HNX"), ("BSR", "UPCOM")],
+    [("HPG", "HOSE"), ("SHS", "HNX"), ("VGI", "UPCOM")],
 )
 def test_afternoon_windows_use_exact_closed_bar_count(
     tmp_path: Path, symbol: str, exchange: str
@@ -400,6 +400,8 @@ def test_lookback_uses_latest_ten_sessions_and_coverage_keeps_all_history(
     ).fetchone()
     assert coverage["available_sessions"] == 12
     assert coverage["baseline_sessions_used"] == 10
+    assert coverage["active_sessions_available"] == 12
+    assert coverage["active_sessions_used"] == 10
     assert coverage["first_history_date"] == dates[0]
     assert coverage["last_history_date"] == dates[-1]
     assert baseline["historical_sessions"] == 10
@@ -434,9 +436,214 @@ def test_four_sessions_report_four_and_no_history_symbol_does_not_fail(
     ).fetchone()[0] == 4
     assert no_history["available_sessions"] == 0
     assert no_history["baseline_sessions_used"] == 0
+    assert no_history["active_sessions_available"] == 0
+    assert no_history["active_sessions_used"] == 0
     assert no_history["first_history_date"] is None
+    assert no_history["last_history_date"] is None
+    assert connection.execute(
+        "SELECT COUNT(*) FROM volume_baseline WHERE symbol='NOHIST'"
+    ).fetchone()[0] == 0
     assert summary.symbols_without_history == 1
     connection.close()
+
+
+def test_global_calendar_zero_fills_whole_missing_sessions_between_active_days(
+    tmp_path: Path,
+) -> None:
+    history = tmp_path / "history.db"
+    output = tmp_path / "baseline.db"
+    dates = _weekdays(date(2026, 8, 24), 10)
+    calendar_bars = [("VNM", "HOSE", item, "09:16", 1) for item in dates]
+    _history_db(
+        history,
+        calendar_bars
+        + [
+            ("SHS", "HNX", dates[0], "09:00", 100),
+            ("SHS", "HNX", dates[-1], "09:14", 300),
+        ],
+    )
+
+    build_volume_baseline(
+        history_db=history, output_db=output, symbols=["SHS"], lookback=10
+    )
+
+    connection = _connect(output)
+    coverage = connection.execute(
+        "SELECT * FROM volume_baseline_coverage WHERE symbol='SHS'"
+    ).fetchone()
+    rolling = connection.execute(
+        "SELECT * FROM volume_baseline WHERE symbol='SHS' AND minute='09:14'"
+    ).fetchone()
+    rolling_30 = connection.execute(
+        "SELECT * FROM volume_baseline WHERE symbol='SHS' AND minute='09:29'"
+    ).fetchone()
+    close = connection.execute(
+        "SELECT * FROM volume_baseline WHERE symbol='SHS' AND minute='14:45'"
+    ).fetchone()
+    assert coverage["available_sessions"] == 10
+    assert coverage["baseline_sessions_used"] == 10
+    assert coverage["active_sessions_available"] == 2
+    assert coverage["active_sessions_used"] == 2
+    assert coverage["first_history_date"] == dates[0]
+    assert coverage["last_history_date"] == dates[-1]
+    assert rolling["historical_sessions"] == 10
+    assert rolling["avg_cumulative_volume"] == 40
+    assert rolling["avg_volume_15"] == 40
+    assert rolling_30["historical_sessions"] == 10
+    assert rolling_30["avg_volume_30"] == 40
+    assert close["historical_sessions"] == 10
+    assert close["avg_cumulative_volume"] == 40
+    connection.close()
+
+
+def test_global_calendar_includes_trailing_missing_sessions_after_last_trade(
+    tmp_path: Path,
+) -> None:
+    history = tmp_path / "history.db"
+    output = tmp_path / "baseline.db"
+    dates = _weekdays(date(2026, 8, 24), 10)
+    _history_db(
+        history,
+        [("VNM", "HOSE", item, "09:16", 1) for item in dates]
+        + [
+            ("HPG", "HOSE", dates[0], "09:15", 100),
+            ("HPG", "HOSE", dates[4], "09:16", 100),
+        ],
+    )
+
+    build_volume_baseline(history_db=history, output_db=output, symbols=["HPG"])
+
+    connection = _connect(output)
+    coverage = connection.execute(
+        "SELECT * FROM volume_baseline_coverage WHERE symbol='HPG'"
+    ).fetchone()
+    opening = connection.execute(
+        "SELECT * FROM volume_baseline WHERE symbol='HPG' AND minute='09:15'"
+    ).fetchone()
+    close = connection.execute(
+        "SELECT * FROM volume_baseline WHERE symbol='HPG' AND minute='14:45'"
+    ).fetchone()
+    assert coverage["available_sessions"] == 10
+    assert coverage["active_sessions_available"] == 2
+    assert coverage["last_history_date"] == dates[4]
+    assert opening["historical_sessions"] == 10
+    assert opening["avg_opening_volume"] == 10
+    assert close["historical_sessions"] == 10
+    assert close["avg_cumulative_volume"] == 20
+    connection.close()
+
+
+def test_newly_observed_symbol_excludes_calendar_sessions_before_first_bar(
+    tmp_path: Path,
+) -> None:
+    history = tmp_path / "history.db"
+    output = tmp_path / "baseline.db"
+    dates = _weekdays(date(2026, 8, 24), 10)
+    _history_db(
+        history,
+        [("VNM", "HOSE", item, "09:16", 1) for item in dates]
+        + [
+            ("NEW", "HNX", dates[7], "09:00", 90),
+            ("NEW", "HNX", dates[9], "09:00", 30),
+        ],
+    )
+
+    build_volume_baseline(history_db=history, output_db=output, symbols=["NEW"])
+
+    connection = _connect(output)
+    coverage = connection.execute(
+        "SELECT * FROM volume_baseline_coverage WHERE symbol='NEW'"
+    ).fetchone()
+    row = connection.execute(
+        "SELECT * FROM volume_baseline WHERE symbol='NEW' AND minute='09:14'"
+    ).fetchone()
+    assert coverage["available_sessions"] == 3
+    assert coverage["baseline_sessions_used"] == 3
+    assert coverage["active_sessions_available"] == 2
+    assert coverage["active_sessions_used"] == 2
+    assert coverage["first_history_date"] == dates[7]
+    assert coverage["last_history_date"] == dates[9]
+    assert row["historical_sessions"] == 3
+    assert row["avg_volume_15"] == 40
+    connection.close()
+
+
+def test_active_sessions_used_only_counts_active_dates_inside_lookback(
+    tmp_path: Path,
+) -> None:
+    history = tmp_path / "history.db"
+    output = tmp_path / "baseline.db"
+    dates = _weekdays(date(2026, 8, 24), 12)
+    _history_db(
+        history,
+        [("VNM", "HOSE", item, "09:16", 1) for item in dates]
+        + [
+            ("SHS", "HNX", dates[0], "09:00", 100),
+            ("SHS", "HNX", dates[-1], "09:00", 200),
+        ],
+    )
+
+    build_volume_baseline(
+        history_db=history, output_db=output, symbols=["SHS"], lookback=10
+    )
+
+    connection = _connect(output)
+    coverage = connection.execute(
+        "SELECT * FROM volume_baseline_coverage WHERE symbol='SHS'"
+    ).fetchone()
+    row = connection.execute(
+        "SELECT * FROM volume_baseline WHERE symbol='SHS' AND minute='09:14'"
+    ).fetchone()
+    assert coverage["available_sessions"] == 12
+    assert coverage["baseline_sessions_used"] == 10
+    assert coverage["active_sessions_available"] == 2
+    assert coverage["active_sessions_used"] == 1
+    assert row["historical_sessions"] == 10
+    assert row["avg_volume_15"] == 20
+    connection.close()
+
+
+def test_existing_derived_coverage_schema_migrates_without_touching_raw_db(
+    tmp_path: Path,
+) -> None:
+    history = tmp_path / "history.db"
+    output = tmp_path / "baseline.db"
+    _history_db(history, [("HPG", "HOSE", "2026-09-10", "09:16", 10)])
+    connection = sqlite3.connect(output)
+    connection.execute(
+        """
+        CREATE TABLE volume_baseline_coverage (
+            symbol TEXT PRIMARY KEY,
+            exchange TEXT,
+            available_sessions INTEGER NOT NULL,
+            baseline_sessions_used INTEGER NOT NULL,
+            first_history_date TEXT,
+            last_history_date TEXT
+        )
+        """
+    )
+    connection.commit()
+    connection.close()
+    raw_before = history.read_bytes()
+
+    build_volume_baseline(history_db=history, output_db=output, symbols=["HPG"])
+
+    connection = _connect(output)
+    columns = {
+        row["name"]
+        for row in connection.execute("PRAGMA table_info(volume_baseline_coverage)")
+    }
+    coverage = connection.execute(
+        "SELECT * FROM volume_baseline_coverage WHERE symbol='HPG'"
+    ).fetchone()
+    assert {"active_sessions_available", "active_sessions_used"} <= columns
+    assert coverage["active_sessions_available"] == 1
+    assert coverage["active_sessions_used"] == 1
+    assert connection.execute(
+        "SELECT value FROM volume_baseline_metadata WHERE key='schema_version'"
+    ).fetchone()[0] == "2"
+    connection.close()
+    assert history.read_bytes() == raw_before
 
 
 def test_rebuild_is_deterministic_idempotent_and_raw_history_is_unchanged(

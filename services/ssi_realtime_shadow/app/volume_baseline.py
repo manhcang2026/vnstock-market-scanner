@@ -35,6 +35,8 @@ CREATE TABLE IF NOT EXISTS volume_baseline_coverage (
     exchange TEXT,
     available_sessions INTEGER NOT NULL,
     baseline_sessions_used INTEGER NOT NULL,
+    active_sessions_available INTEGER NOT NULL,
+    active_sessions_used INTEGER NOT NULL,
     first_history_date TEXT,
     last_history_date TEXT
 );
@@ -84,6 +86,8 @@ class CoverageRow:
     exchange: str | None
     available_sessions: int
     baseline_sessions_used: int
+    active_sessions_available: int
+    active_sessions_used: int
     first_history_date: str | None
     last_history_date: str | None
 
@@ -107,6 +111,13 @@ class _PointSamples:
 _GRID_REFERENCE_DATE = date(2026, 9, 14)
 _OPENING_BUCKETS = {"HOSE": "09:15"}
 _CLOSING_BUCKETS = {"HOSE": "14:45", "HNX": "14:45"}
+_COVERAGE_MIGRATIONS = (
+    (
+        "active_sessions_available",
+        "active_sessions_available INTEGER NOT NULL DEFAULT 0",
+    ),
+    ("active_sessions_used", "active_sessions_used INTEGER NOT NULL DEFAULT 0"),
+)
 
 
 def volume_market_grid(exchange: str) -> tuple[VolumeGridPoint, ...]:
@@ -175,6 +186,7 @@ def build_symbol_volume_baseline(
     raw_bars: Iterable[RawVolumeBar],
     *,
     lookback: int,
+    trading_calendar: Sequence[str],
 ) -> tuple[CoverageRow, list[BaselineRow]]:
     if lookback < 1:
         raise ValueError("lookback must be positive")
@@ -191,6 +203,8 @@ def build_symbol_volume_baseline(
                 exchange=None,
                 available_sessions=0,
                 baseline_sessions_used=0,
+                active_sessions_available=0,
+                active_sessions_used=0,
                 first_history_date=None,
                 last_history_date=None,
             ),
@@ -199,26 +213,50 @@ def build_symbol_volume_baseline(
 
     grid = volume_market_grid(exchange)
     valid_minutes = {point.minute for point in grid}
+    active_dates = sorted({bar.trading_date for bar in bars})
     by_date: dict[str, dict[str, int]] = {}
     for bar in bars:
         if bar.minute not in valid_minutes:
-            continue
-        trading_date = date.fromisoformat(bar.trading_date)
-        if trading_date.weekday() >= 5:
             continue
         if bar.volume < 0:
             raise ValueError(f"Negative historical volume for {symbol}")
         by_date.setdefault(bar.trading_date, {})[bar.minute] = bar.volume
 
-    available_dates = sorted(by_date)
-    selected_dates = available_dates[-lookback:]
+    if not active_dates:
+        return (
+            CoverageRow(
+                symbol=symbol,
+                exchange=exchange,
+                available_sessions=0,
+                baseline_sessions_used=0,
+                active_sessions_available=0,
+                active_sessions_used=0,
+                first_history_date=None,
+                last_history_date=None,
+            ),
+            [],
+        )
+    first_observed_date = active_dates[0]
+    eligible_dates = [
+        trading_date
+        for trading_date in trading_calendar
+        if trading_date >= first_observed_date
+    ]
+    selected_dates = eligible_dates[-lookback:]
+    active_date_set = set(active_dates)
     coverage = CoverageRow(
         symbol=symbol,
         exchange=exchange,
-        available_sessions=len(available_dates),
+        available_sessions=len(eligible_dates),
         baseline_sessions_used=len(selected_dates),
-        first_history_date=available_dates[0] if available_dates else None,
-        last_history_date=available_dates[-1] if available_dates else None,
+        active_sessions_available=sum(
+            trading_date in active_date_set for trading_date in eligible_dates
+        ),
+        active_sessions_used=sum(
+            trading_date in active_date_set for trading_date in selected_dates
+        ),
+        first_history_date=first_observed_date,
+        last_history_date=active_dates[-1],
     )
     if not selected_dates:
         return coverage, []
@@ -228,7 +266,7 @@ def build_symbol_volume_baseline(
         for point in grid
     }
     for trading_date in selected_dates:
-        day = by_date[trading_date]
+        day = by_date.get(trading_date, {})
         cumulative = 0
         segment_volumes: dict[str, list[int]] = {
             SessionType.AM_CONTINUOUS.value: [],
@@ -290,6 +328,35 @@ def _table_exists(connection: sqlite3.Connection, table: str) -> bool:
         (table,),
     ).fetchone()
     return row is not None
+
+
+def _load_trading_calendar(connection: sqlite3.Connection) -> list[str]:
+    return [
+        str(row[0])
+        for row in connection.execute(
+            """
+            SELECT DISTINCT trading_date
+            FROM minute_bars
+            WHERE quality_status = 'TRUSTED'
+              AND data_source = 'SSI_REST'
+            ORDER BY trading_date
+            """
+        )
+    ]
+
+
+def _migrate_baseline_schema(connection: sqlite3.Connection) -> None:
+    columns = {
+        row["name"]
+        for row in connection.execute(
+            "PRAGMA table_info(volume_baseline_coverage)"
+        ).fetchall()
+    }
+    for name, definition in _COVERAGE_MIGRATIONS:
+        if name not in columns:
+            connection.execute(
+                f"ALTER TABLE volume_baseline_coverage ADD COLUMN {definition}"
+            )
 
 
 def _source_symbols(
@@ -363,14 +430,17 @@ def build_volume_baseline(
     output = sqlite3.connect(output_db)
     try:
         selected_symbols = _source_symbols(history, symbols)
+        trading_calendar = _load_trading_calendar(history)
         output.executescript(BASELINE_SCHEMA)
+        output.row_factory = sqlite3.Row
+        _migrate_baseline_schema(output)
         output.execute("BEGIN IMMEDIATE")
         output.execute("DELETE FROM volume_baseline")
         output.execute("DELETE FROM volume_baseline_coverage")
         output.execute("DELETE FROM volume_baseline_metadata")
         output.executemany(
             "INSERT INTO volume_baseline_metadata(key, value) VALUES (?, ?)",
-            (("schema_version", "1"), ("lookback", str(lookback))),
+            (("schema_version", "2"), ("lookback", str(lookback))),
         )
 
         baseline_row_count = 0
@@ -380,19 +450,23 @@ def build_volume_baseline(
                 symbol,
                 _load_raw_bars(history, symbol),
                 lookback=lookback,
+                trading_calendar=trading_calendar,
             )
             output.execute(
                 """
                 INSERT INTO volume_baseline_coverage (
                     symbol, exchange, available_sessions, baseline_sessions_used,
+                    active_sessions_available, active_sessions_used,
                     first_history_date, last_history_date
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     coverage.symbol,
                     coverage.exchange,
                     coverage.available_sessions,
                     coverage.baseline_sessions_used,
+                    coverage.active_sessions_available,
+                    coverage.active_sessions_used,
                     coverage.first_history_date,
                     coverage.last_history_date,
                 ),
