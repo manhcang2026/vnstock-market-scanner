@@ -4,16 +4,126 @@ import logging
 import signal
 import threading
 import time
+from collections.abc import Callable
 from datetime import datetime
 from types import SimpleNamespace
 
 from .collector import QuoteCollector
 from .market_session import VN_TZ, market_feed_stale
+from .realtime_volume import RealtimeVolumeEngine, VolumeEvent, VolumeSnapshot
 from .settings import Settings
 from .storage import SQLiteStore
 from .universe import load_universe
 
 LOG = logging.getLogger("ssi_shadow")
+
+
+class VolumeShadowQALogger:
+    def __init__(
+        self,
+        symbols: tuple[str, ...],
+        *,
+        logger: logging.Logger = LOG,
+    ) -> None:
+        self.symbols = frozenset(symbols)
+        self.logger = logger
+        self._last_signatures: dict[str, tuple[object, ...]] = {}
+
+    def log_if_changed(self, snapshot: VolumeSnapshot) -> bool:
+        if snapshot.symbol not in self.symbols:
+            return False
+        signature = (
+            snapshot.trading_date,
+            snapshot.as_of_minute,
+            snapshot.metrics_trusted,
+            snapshot.quality_status,
+            snapshot.reasons,
+        )
+        if self._last_signatures.get(snapshot.symbol) == signature:
+            return False
+        self._last_signatures[snapshot.symbol] = signature
+        self.logger.info(
+            "VOLUME_SHADOW symbol=%s date=%s as_of=%s cum=%s "
+            "day_rvol=%s vol15=%s rvol15=%s vol30=%s rvol30=%s "
+            "opening_rvol=%s sessions=%s active_sessions=%s trusted=%s "
+            "quality=%s reasons=%s",
+            snapshot.symbol,
+            snapshot.trading_date,
+            snapshot.as_of_minute or "null",
+            snapshot.cumulative_volume,
+            _log_value(snapshot.day_rvol),
+            _log_value(snapshot.volume_15),
+            _log_value(snapshot.rvol_15),
+            _log_value(snapshot.volume_30),
+            _log_value(snapshot.rvol_30),
+            _log_value(snapshot.opening_rvol),
+            snapshot.baseline_sessions_used,
+            snapshot.active_sessions_used,
+            str(snapshot.metrics_trusted).lower(),
+            snapshot.quality_status,
+            ",".join(snapshot.reasons),
+        )
+        return True
+
+
+def _log_value(value: object | None) -> str:
+    return "null" if value is None else str(value)
+
+
+def _start_volume_shadow(settings: Settings) -> RealtimeVolumeEngine | None:
+    if not settings.volume_engine_enabled:
+        LOG.info("CCC V2 volume shadow disabled")
+        return None
+    try:
+        engine = RealtimeVolumeEngine(settings.volume_baseline_path)
+    except Exception:
+        LOG.exception(
+            "CCC V2 volume shadow failed to start; continuing V1 collector: "
+            "baseline=%s",
+            settings.volume_baseline_path,
+        )
+        return None
+    baseline = engine.baseline
+    LOG.info(
+        "CCC V2 volume shadow enabled: baseline=%s schema=%s lookback=%s "
+        "coverage=%s points=%s qa_symbols=%s",
+        baseline.source_path,
+        baseline.schema_version,
+        baseline.lookback,
+        len(baseline.coverage),
+        len(baseline.points),
+        ",".join(settings.volume_shadow_symbols),
+    )
+    return engine
+
+
+def _volume_event_handler(
+    engine: RealtimeVolumeEngine,
+    qa_logger: VolumeShadowQALogger,
+    on_snapshot_logged: Callable[[], None],
+) -> Callable[[VolumeEvent], None]:
+    def handle(event: VolumeEvent) -> None:
+        snapshot = engine.on_event(event)
+        if qa_logger.log_if_changed(snapshot):
+            on_snapshot_logged()
+
+    return handle
+
+
+def _advance_volume_shadow(
+    engine: RealtimeVolumeEngine,
+    qa_logger: VolumeShadowQALogger,
+    collector: QuoteCollector,
+    now: datetime,
+) -> None:
+    try:
+        changed = engine.advance_time(now)
+        for snapshot in changed.values():
+            if qa_logger.log_if_changed(snapshot):
+                collector.stats.volume_shadow_snapshots += 1
+    except Exception:
+        collector.stats.volume_shadow_advance_errors += 1
+        LOG.exception("CCC V2 volume shadow advance_time failed")
 
 
 def _ssi_config(settings: Settings) -> SimpleNamespace:
@@ -42,6 +152,12 @@ def main() -> int:
     )
     stop_event = threading.Event()
     stream_error = threading.Event()
+    volume_engine = _start_volume_shadow(settings)
+    volume_qa_logger = (
+        VolumeShadowQALogger(settings.volume_shadow_symbols)
+        if volume_engine is not None
+        else None
+    )
 
     def shutdown(signum: int, _frame: object) -> None:
         LOG.info("Received signal %s; shutting down", signum)
@@ -68,7 +184,22 @@ def main() -> int:
             stream_error.set()
 
         started_at = datetime.now(VN_TZ)
-        collector = QuoteCollector(universe, store, started_at=started_at)
+        collector: QuoteCollector
+
+        def snapshot_logged() -> None:
+            collector.stats.volume_shadow_snapshots += 1
+
+        volume_handler = (
+            _volume_event_handler(volume_engine, volume_qa_logger, snapshot_logged)
+            if volume_engine is not None and volume_qa_logger is not None
+            else None
+        )
+        collector = QuoteCollector(
+            universe,
+            store,
+            started_at=started_at,
+            volume_event_handler=volume_handler,
+        )
         store.set_meta("started_at", started_at.isoformat(), started_at.isoformat())
         store.set_meta("channel", settings.ssi_channel, started_at.isoformat())
         store.set_meta("universe_size", str(len(universe)), started_at.isoformat())
@@ -88,6 +219,13 @@ def main() -> int:
                 raise RuntimeError("SSI stream reported an error; process will exit for restart")
 
             now = datetime.now(VN_TZ)
+            if volume_engine is not None and volume_qa_logger is not None:
+                _advance_volume_shadow(
+                    volume_engine,
+                    volume_qa_logger,
+                    collector,
+                    now,
+                )
             if market_feed_stale(
                 now,
                 collector_started_at=started_at,

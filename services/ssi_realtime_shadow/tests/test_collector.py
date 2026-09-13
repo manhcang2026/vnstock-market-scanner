@@ -7,6 +7,7 @@ import pytest
 
 from app.collector import QuoteCollector
 from app.market_session import VN_TZ
+from app.realtime_volume import VolumeEvent
 from app.storage import SQLiteStore
 
 
@@ -431,3 +432,125 @@ def test_existing_database_is_migrated_without_rebuilding_data(tmp_path: Path) -
     reopened = SQLiteStore(db)
     assert reopened._conn.execute("SELECT COUNT(*) FROM minute_bars").fetchone()[0] == 1
     reopened.close()
+
+
+def test_volume_callback_receives_exact_post_accounting_canonical_event(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteStore(tmp_path / "test.db", commit_every_events=100)
+    received: list[VolumeEvent] = []
+
+    def handler(event: VolumeEvent) -> None:
+        assert store._conn.execute("SELECT COUNT(*) FROM minute_bars").fetchone()[0] == 1
+        assert store._conn.execute("SELECT COUNT(*) FROM latest_quotes").fetchone()[0] == 1
+        received.append(event)
+
+    collector = QuoteCollector(
+        {"HPG"},
+        store,
+        started_at=started_at(8, 30),
+        volume_event_handler=handler,
+    )
+    collector.on_message(
+        market_event(Market="HSX", Time="09:00:10", TotalVol=1_000)
+    )
+
+    assert len(received) == 1
+    event = received[0]
+    assert event.symbol == "HPG"
+    assert event.exchange == "HOSE"
+    assert event.trading_date == "2026-09-14"
+    assert event.event_time == started_at(9, 0, 10)
+    assert event.minute == "09:00"
+    assert event.volume_delta == 1_000
+    assert event.total_volume == 1_000
+    assert event.quality_status == "TRUSTED"
+    assert not event.is_partial
+    assert not event.has_gap
+    assert collector.stats.volume_shadow_events == 1
+    assert collector.stats.volume_shadow_event_errors == 0
+    store.close()
+
+
+def test_none_volume_callback_preserves_collector_behavior(tmp_path: Path) -> None:
+    store = SQLiteStore(tmp_path / "test.db", commit_every_events=1)
+    collector = QuoteCollector(
+        {"HPG"}, store, started_at=started_at(8, 30), volume_event_handler=None
+    )
+
+    collector.on_message(market_event())
+
+    assert collector.stats.accepted_events == 1
+    assert collector.stats.volume_shadow_events == 0
+    assert collector.stats.volume_shadow_event_errors == 0
+    assert store._conn.execute("SELECT COUNT(*) FROM minute_bars").fetchone()[0] == 1
+    store.close()
+
+
+def test_volume_callback_exception_is_isolated_after_audit_writes(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    store = SQLiteStore(tmp_path / "test.db", commit_every_events=1)
+
+    def broken_handler(_event: VolumeEvent) -> None:
+        raise RuntimeError("shadow boom")
+
+    collector = QuoteCollector(
+        {"HPG"},
+        store,
+        started_at=started_at(8, 30),
+        volume_event_handler=broken_handler,
+    )
+    with caplog.at_level(logging.ERROR):
+        collector.on_message(market_event())
+
+    assert collector.stats.accepted_events == 1
+    assert collector.stats.volume_shadow_events == 1
+    assert collector.stats.volume_shadow_event_errors == 1
+    assert store._conn.execute("SELECT COUNT(*) FROM minute_bars").fetchone()[0] == 1
+    assert store._conn.execute("SELECT COUNT(*) FROM latest_quotes").fetchone()[0] == 1
+    assert "symbol=HPG minute=09:00" in caplog.text
+    assert "shadow boom" in caplog.text
+    store.close()
+
+
+def test_volume_event_construction_failure_is_also_isolated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = SQLiteStore(tmp_path / "test.db", commit_every_events=1)
+
+    def broken_event(**_kwargs: object) -> VolumeEvent:
+        raise ValueError("contract boom")
+
+    monkeypatch.setattr("app.collector.VolumeEvent", broken_event)
+    collector = QuoteCollector(
+        {"HPG"},
+        store,
+        started_at=started_at(8, 30),
+        volume_event_handler=lambda _event: None,
+    )
+
+    collector.on_message(market_event())
+
+    assert collector.stats.accepted_events == 1
+    assert collector.stats.volume_shadow_events == 1
+    assert collector.stats.volume_shadow_event_errors == 1
+    assert store._conn.execute("SELECT COUNT(*) FROM minute_bars").fetchone()[0] == 1
+    store.close()
+
+
+@pytest.mark.parametrize("market", ["UNKNOWN", None])
+def test_unknown_or_missing_exchange_does_not_emit_volume_event(
+    tmp_path: Path, market: str | None
+) -> None:
+    store = SQLiteStore(tmp_path / "test.db", commit_every_events=1)
+    received: list[VolumeEvent] = []
+    collector = QuoteCollector(
+        {"HPG"}, store, volume_event_handler=received.append
+    )
+    event = market_event(Market=market)
+    collector.on_message(event)
+
+    assert received == []
+    assert collector.stats.volume_shadow_events == 0
+    store.close()

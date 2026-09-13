@@ -4,7 +4,7 @@ import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from .market_session import (
     VN_TZ,
@@ -14,6 +14,7 @@ from .market_session import (
     normalize_exchange,
 )
 from .normalization import parse_trading_date
+from .realtime_volume import VolumeEvent
 from .storage import SQLiteStore
 
 LOG = logging.getLogger(__name__)
@@ -143,6 +144,10 @@ class CollectorStats:
     ignored_malformed_trading_date: int = 0
     ignored_non_equity_market: int = 0
     ignored_unknown_market: int = 0
+    volume_shadow_events: int = 0
+    volume_shadow_event_errors: int = 0
+    volume_shadow_advance_errors: int = 0
+    volume_shadow_snapshots: int = 0
 
 
 class QuoteCollector:
@@ -152,6 +157,7 @@ class QuoteCollector:
         store: SQLiteStore,
         *,
         started_at: datetime | None = None,
+        volume_event_handler: Callable[[VolumeEvent], object] | None = None,
     ) -> None:
         self.universe = universe
         self.store = store
@@ -160,6 +166,7 @@ class QuoteCollector:
         self._prev_total: dict[tuple[str, str], int] = {}
         self._initialized_keys: set[tuple[str, str]] = set()
         self.last_event_at: datetime | None = None
+        self.volume_event_handler = volume_event_handler
 
     def _can_seed_from_zero(self, event_at: datetime, exchange: str | None) -> bool:
         if exchange is None or not market_feed_expected(event_at, exchange):
@@ -343,6 +350,29 @@ class QuoteCollector:
             )
             self.stats.accepted_events += 1
             self.last_event_at = now
+            if exchange is not None and self.volume_event_handler is not None:
+                self.stats.volume_shadow_events += 1
+                try:
+                    volume_event = VolumeEvent(
+                        symbol=symbol,
+                        exchange=exchange,
+                        trading_date=trading_date,
+                        event_time=event_at,
+                        minute=minute,
+                        volume_delta=volume_delta,
+                        total_volume=effective_total_volume,
+                        quality_status=quality_status,
+                        is_partial=is_partial,
+                        has_gap=has_gap,
+                    )
+                    self.volume_event_handler(volume_event)
+                except Exception:
+                    self.stats.volume_shadow_event_errors += 1
+                    LOG.exception(
+                        "CCC V2 volume shadow event failed: symbol=%s minute=%s",
+                        symbol,
+                        minute,
+                    )
 
     def snapshot_stats(self) -> dict[str, int]:
         return {
@@ -353,4 +383,8 @@ class QuoteCollector:
             "ignored_malformed_trading_date": self.stats.ignored_malformed_trading_date,
             "ignored_non_equity_market": self.stats.ignored_non_equity_market,
             "ignored_unknown_market": self.stats.ignored_unknown_market,
+            "volume_shadow_events": self.stats.volume_shadow_events,
+            "volume_shadow_event_errors": self.stats.volume_shadow_event_errors,
+            "volume_shadow_advance_errors": self.stats.volume_shadow_advance_errors,
+            "volume_shadow_snapshots": self.stats.volume_shadow_snapshots,
         }

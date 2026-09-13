@@ -23,6 +23,31 @@ def _env_int(name: str, default: int) -> int:
     return int(raw) if raw not in (None, "") else default
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise RuntimeError(f"Invalid boolean environment variable {name}: {raw!r}")
+
+
+def _service_path(raw: str) -> Path:
+    path = Path(raw).expanduser()
+    return path if path.is_absolute() else ROOT / path
+
+
+def _symbol_list(raw: str) -> tuple[str, ...]:
+    return tuple(
+        dict.fromkeys(
+            symbol.strip().upper() for symbol in raw.split(",") if symbol.strip()
+        )
+    )
+
+
 @dataclass(frozen=True)
 class Settings:
     ssi_consumer_id: str
@@ -40,6 +65,9 @@ class Settings:
     commit_every_events: int
     commit_every_seconds: int
     log_level: str
+    volume_engine_enabled: bool
+    volume_baseline_path: Path
+    volume_shadow_symbols: tuple[str, ...]
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -62,4 +90,14 @@ class Settings:
             commit_every_events=_env_int("COMMIT_EVERY_EVENTS", 500),
             commit_every_seconds=_env_int("COMMIT_EVERY_SECONDS", 1),
             log_level=_env("LOG_LEVEL", "INFO").upper(),
+            volume_engine_enabled=_env_bool("VOLUME_ENGINE_ENABLED", False),
+            volume_baseline_path=_service_path(
+                _env(
+                    "VOLUME_BASELINE_PATH",
+                    str(ROOT / "data" / "ccc_v2_baseline.db"),
+                )
+            ),
+            volume_shadow_symbols=_symbol_list(
+                _env("VOLUME_SHADOW_SYMBOLS", "HPG,SHS,VGI")
+            ),
         )
