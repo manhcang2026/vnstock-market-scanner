@@ -263,6 +263,39 @@ def test_normalizes_strict_date_time_and_direct_interval_volume() -> None:
     assert (bar.open, bar.high, bar.low, bar.close) == (27.1, 27.5, 27.0, 27.4)
 
 
+@pytest.mark.parametrize("exchange_hint", ["HOSE", "HNX"])
+def test_missing_provider_market_uses_trusted_exchange_hint(
+    exchange_hint: str,
+) -> None:
+    provider_row = row()
+    provider_row.pop("Market")
+    bar = normalize_historical_record(provider_row, exchange_hint=exchange_hint)
+    assert bar is not None
+    assert bar.exchange == exchange_hint
+
+
+def test_missing_provider_market_without_hint_is_rejected() -> None:
+    provider_row = row()
+    provider_row.pop("Market")
+    assert normalize_historical_record(provider_row) is None
+
+
+def test_matching_provider_market_and_trusted_hint_is_accepted() -> None:
+    bar = normalize_historical_record(row(market="HOSE"), exchange_hint="HSX")
+    assert bar is not None
+    assert bar.exchange == "HOSE"
+
+
+def test_conflicting_provider_market_and_trusted_hint_is_rejected(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    assert (
+        normalize_historical_record(row(market="HOSE"), exchange_hint="HNX")
+        is None
+    )
+    assert "provider exchange HOSE conflicts with trusted exchange HNX" in caplog.text
+
+
 @pytest.mark.parametrize(
     ("alias", "expected"),
     [("HOSE", "HOSE"), ("HSX", "HOSE"), ("HNX", "HNX"), ("UPCOM", "UPCOM"), ("UPCO", "UPCOM")],
@@ -397,6 +430,7 @@ def test_checkpoint_success_and_completed_resume_skip(tmp_path: Path) -> None:
         store=store,
         client=fetcher,
         symbols=["HPG"],
+        exchange_map={"HPG": "HOSE"},
         from_date=date(2026, 9, 12),
         to_date=date(2026, 9, 12),
         output=lambda _: None,
@@ -406,6 +440,7 @@ def test_checkpoint_success_and_completed_resume_skip(tmp_path: Path) -> None:
         store=store,
         client=fetcher,
         symbols=["HPG"],
+        exchange_map={"HPG": "HOSE"},
         from_date=date(2026, 9, 12),
         to_date=date(2026, 9, 12),
         output=lambda _: None,
@@ -438,6 +473,7 @@ def test_empty_provider_result_can_complete_with_zero_rows(tmp_path: Path) -> No
         store=store,
         client=Fetcher(),
         symbols=["HPG"],
+        exchange_map={"HPG": "HOSE"},
         from_date=date(2026, 9, 12),
         to_date=date(2026, 9, 12),
         output=output.append,
@@ -452,6 +488,80 @@ def test_empty_provider_result_can_complete_with_zero_rows(tmp_path: Path) -> No
     store.close()
 
 
+def test_bootstrap_enriches_missing_provider_market_from_trusted_map(
+    tmp_path: Path,
+) -> None:
+    class Fetcher:
+        def fetch_intraday_ohlc(
+            self,
+            symbol: str,
+            from_date: date,
+            to_date: date,
+            resolution: int = 1,
+        ) -> list[dict]:
+            provider_row = row(symbol=symbol)
+            provider_row.pop("Market")
+            return [provider_row]
+
+    store = SQLiteStore(tmp_path / "enriched.db")
+    summary = run_bootstrap(
+        store=store,
+        client=Fetcher(),
+        symbols=["HPG"],
+        exchange_map={"HPG": "HOSE"},
+        from_date=date(2026, 9, 12),
+        to_date=date(2026, 9, 12),
+        output=lambda _: None,
+    )
+    checkpoint = store.get_historical_checkpoint(
+        "HPG", "2026-09-12", "2026-09-12", 1
+    )
+    saved_exchange = store._conn.execute(
+        "SELECT exchange FROM minute_bars WHERE symbol = 'HPG'"
+    ).fetchone()[0]
+    assert summary.completed == 1 and summary.failed == 0
+    assert checkpoint is not None and checkpoint.status == "COMPLETED"
+    assert saved_exchange == "HOSE"
+    store.close()
+
+
+def test_bootstrap_missing_trusted_exchange_fails_before_provider_fetch(
+    tmp_path: Path,
+) -> None:
+    class Fetcher:
+        calls = 0
+
+        def fetch_intraday_ohlc(
+            self,
+            symbol: str,
+            from_date: date,
+            to_date: date,
+            resolution: int = 1,
+        ) -> list[dict]:
+            self.calls += 1
+            return [row(symbol=symbol)]
+
+    store = SQLiteStore(tmp_path / "missing-exchange.db")
+    fetcher = Fetcher()
+    summary = run_bootstrap(
+        store=store,
+        client=fetcher,
+        symbols=["HPG"],
+        exchange_map={},
+        from_date=date(2026, 9, 12),
+        to_date=date(2026, 9, 12),
+        output=lambda _: None,
+    )
+    checkpoint = store.get_historical_checkpoint(
+        "HPG", "2026-09-12", "2026-09-12", 1
+    )
+    assert summary.failed == 1 and summary.completed == 0
+    assert fetcher.calls == 0
+    assert checkpoint is not None and checkpoint.status == "FAILED"
+    assert "missing trusted exchange metadata for HPG" in (checkpoint.error or "")
+    store.close()
+
+
 def test_nonempty_provider_result_with_no_valid_bars_fails_checkpoint(
     tmp_path: Path,
 ) -> None:
@@ -463,15 +573,14 @@ def test_nonempty_provider_result_with_no_valid_bars_fails_checkpoint(
             to_date: date,
             resolution: int = 1,
         ) -> list[dict]:
-            invalid = row(symbol=symbol)
-            invalid.pop("Market")
-            return [invalid]
+            return [row(symbol=symbol, provider_time="malformed")]
 
     store = SQLiteStore(tmp_path / "all-rejected.db")
     summary = run_bootstrap(
         store=store,
         client=Fetcher(),
         symbols=["HPG"],
+        exchange_map={"HPG": "HOSE"},
         from_date=date(2026, 9, 12),
         to_date=date(2026, 9, 12),
         output=lambda _: None,
@@ -507,6 +616,7 @@ def test_partial_normalization_reports_raw_valid_and_rejected_counts(
         store=store,
         client=Fetcher(),
         symbols=["HPG"],
+        exchange_map={"HPG": "HOSE"},
         from_date=date(2026, 9, 12),
         to_date=date(2026, 9, 12),
         output=output.append,
@@ -535,6 +645,7 @@ def test_symbol_failure_is_checkpointed_and_does_not_stop_next_symbol(tmp_path: 
         store=store,
         client=Fetcher(),
         symbols=["BBB", "AAA"],
+        exchange_map={"AAA": "HOSE", "BBB": "HOSE"},
         from_date=date(2026, 9, 12),
         to_date=date(2026, 9, 12),
         output=lambda _: None,

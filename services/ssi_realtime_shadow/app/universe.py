@@ -6,6 +6,7 @@ from pathlib import Path
 
 import requests
 
+from .market_session import normalize_exchange
 from .settings import Settings
 
 LOG = logging.getLogger(__name__)
@@ -48,6 +49,63 @@ def _load_supabase(settings: Settings) -> set[str]:
     response.raise_for_status()
     rows = response.json()
     return _normalize([row.get("symbol", "") for row in rows if isinstance(row, dict)])
+
+
+def load_exchange_map(settings: Settings) -> dict[str, str]:
+    """Load the trusted symbol-to-exchange map from public.stock_metadata."""
+    if not settings.supabase_url or not settings.supabase_key:
+        raise RuntimeError(
+            "SUPABASE_URL/SUPABASE_KEY are required to load exchange metadata"
+        )
+    url = settings.supabase_url.rstrip("/") + "/rest/v1/stock_metadata"
+    headers = {
+        "apikey": settings.supabase_key,
+        "Authorization": f"Bearer {settings.supabase_key}",
+        "Accept": "application/json",
+    }
+    params = {
+        "select": "symbol,exchange",
+        "order": "symbol.asc",
+        "limit": "2000",
+    }
+    response = requests.get(url, headers=headers, params=params, timeout=30)
+    response.raise_for_status()
+    rows = response.json()
+    if not isinstance(rows, list):
+        raise RuntimeError("Supabase stock_metadata response is not a row list")
+
+    exchange_map: dict[str, str] = {}
+    conflicting_symbols: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            LOG.warning("Ignoring non-object stock_metadata row")
+            continue
+        symbol = str(row.get("symbol") or "").strip().upper()
+        raw_exchange = row.get("exchange")
+        if not SYMBOL_RE.match(symbol):
+            LOG.warning("Ignoring stock_metadata row with invalid symbol=%r", symbol)
+            continue
+        try:
+            exchange = normalize_exchange(str(raw_exchange or ""))
+        except ValueError:
+            LOG.warning(
+                "Ignoring stock_metadata row for %s with invalid exchange=%r",
+                symbol,
+                raw_exchange,
+            )
+            continue
+        if symbol in conflicting_symbols:
+            continue
+        existing = exchange_map.get(symbol)
+        if existing is not None and existing != exchange:
+            exchange_map.pop(symbol)
+            conflicting_symbols.add(symbol)
+            LOG.warning("Ignoring conflicting exchange metadata for %s", symbol)
+            continue
+        exchange_map[symbol] = exchange
+
+    LOG.info("Loaded exchange metadata for %s symbols", len(exchange_map))
+    return exchange_map
 
 
 def load_universe(settings: Settings) -> set[str]:

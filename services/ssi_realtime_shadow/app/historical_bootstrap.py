@@ -4,7 +4,7 @@ import argparse
 import logging
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Callable, Iterable, Protocol
+from typing import Callable, Iterable, Mapping, Protocol
 
 from .market_session import VN_TZ
 from .settings import Settings
@@ -14,7 +14,7 @@ from .ssi_historical import (
     normalize_historical_record,
 )
 from .storage import SQLiteStore
-from .universe import load_universe
+from .universe import load_exchange_map, load_universe
 
 
 LOG = logging.getLogger(__name__)
@@ -58,6 +58,7 @@ def run_bootstrap(
     store: SQLiteStore,
     client: HistoricalFetcher,
     symbols: Iterable[str],
+    exchange_map: Mapping[str, str],
     from_date: date,
     to_date: date,
     output: Callable[[str], None] = print,
@@ -85,12 +86,19 @@ def run_bootstrap(
         )
         store.commit()
         try:
+            exchange_hint = exchange_map.get(symbol)
+            if exchange_hint is None:
+                raise SSIHistoricalError(
+                    f"missing trusted exchange metadata for {symbol}"
+                )
             raw_rows = client.fetch_intraday_ohlc(
                 symbol, from_date, to_date, resolution=RESOLUTION
             )
             normalized = []
             for raw_row in raw_rows:
-                bar = normalize_historical_record(raw_row)
+                bar = normalize_historical_record(
+                    raw_row, exchange_hint=exchange_hint
+                )
                 if bar is not None and bar.symbol == symbol:
                     normalized.append(bar)
             raw_count = len(raw_rows)
@@ -190,6 +198,7 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
     symbols = _parse_symbols(args.symbols) if args.symbols else load_universe(settings)
+    exchange_map = load_exchange_map(settings)
     ordered = sorted(symbols)
     if args.limit_symbols is not None:
         ordered = ordered[: args.limit_symbols]
@@ -212,6 +221,7 @@ def main(argv: list[str] | None = None) -> int:
             store=store,
             client=client,
             symbols=ordered,
+            exchange_map=exchange_map,
             from_date=args.from_date,
             to_date=args.to_date,
         )

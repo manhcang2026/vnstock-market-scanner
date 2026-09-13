@@ -72,22 +72,59 @@ def _parse_provider_time(value: Any) -> tuple[str, str] | None:
     return None
 
 
-def normalize_historical_record(record: dict[str, Any]) -> HistoricalBar | None:
+def normalize_historical_record(
+    record: dict[str, Any], exchange_hint: str | None = None
+) -> HistoricalBar | None:
     """Normalize one official SSI REST interval bar without inventing timestamps."""
     symbol = str(_first(record, "Symbol", "symbol") or "").strip().upper()
     if not symbol:
         LOG.warning("Rejected historical row with missing Symbol")
         return None
 
-    raw_market = str(
-        _first(record, "Market", "market", "Exchange", "exchange") or ""
-    ).strip().upper()
+    raw_market = next(
+        (
+            str(record[name]).strip().upper()
+            for name in ("Market", "market", "Exchange", "exchange")
+            if record.get(name) is not None and str(record[name]).strip()
+        ),
+        "",
+    )
     if raw_market in NON_EQUITY_MARKETS:
         return None
-    try:
-        exchange = normalize_exchange(raw_market)
-    except ValueError:
-        LOG.warning("Rejected historical row for %s with market=%r", symbol, raw_market)
+
+    hint: str | None = None
+    if exchange_hint is not None:
+        try:
+            hint = normalize_exchange(exchange_hint)
+        except ValueError:
+            LOG.warning(
+                "Rejected historical row for %s with invalid exchange hint=%r",
+                symbol,
+                exchange_hint,
+            )
+            return None
+
+    if raw_market:
+        try:
+            exchange = normalize_exchange(raw_market)
+        except ValueError:
+            LOG.warning(
+                "Rejected historical row for %s with market=%r", symbol, raw_market
+            )
+            return None
+        if hint is not None and exchange != hint:
+            LOG.warning(
+                "Rejected historical row for %s: provider exchange %s conflicts "
+                "with trusted exchange %s",
+                symbol,
+                exchange,
+                hint,
+            )
+            return None
+    elif hint is not None:
+        exchange = hint
+    else:
+        LOG.warning("Rejected historical row for %s with missing exchange", symbol)
         return None
 
     trading_date = parse_trading_date(
@@ -432,10 +469,12 @@ class SSIHistoricalClient:
         return list(unique.values())
 
 
-def normalize_historical_rows(rows: Iterable[dict[str, Any]]) -> list[HistoricalBar]:
+def normalize_historical_rows(
+    rows: Iterable[dict[str, Any]], exchange_hint: str | None = None
+) -> list[HistoricalBar]:
     unique: dict[tuple[str, str, str], HistoricalBar] = {}
     for row in rows:
-        bar = normalize_historical_record(row)
+        bar = normalize_historical_record(row, exchange_hint=exchange_hint)
         if bar is not None:
             unique.setdefault((bar.symbol, bar.trading_date, bar.minute), bar)
     return list(unique.values())
