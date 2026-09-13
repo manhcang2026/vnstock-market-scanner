@@ -193,7 +193,10 @@ def _session_expects_feed(session: MarketSession) -> bool:
     )
 
 
-def _feed_window_start(moment: datetime, exchange: str | None = None) -> datetime | None:
+def market_feed_window_start(
+    moment: datetime, exchange: str | None = None
+) -> datetime | None:
+    """Return the start of the active morning/afternoon feed window."""
     exchanges = (
         (normalize_exchange(exchange),) if exchange is not None else tuple(_SESSIONS)
     )
@@ -222,6 +225,20 @@ def _feed_window_start(moment: datetime, exchange: str | None = None) -> datetim
     return min(starts) if starts else None
 
 
+def market_day_feed_start(moment: datetime, exchange: str) -> datetime | None:
+    """Return the first active feed time for the local trading day."""
+    local_moment = _localize(moment)
+    canonical_exchange = normalize_exchange(exchange)
+    if local_moment.weekday() >= 5:
+        return None
+    first_active = next(
+        definition
+        for definition in _SESSIONS[canonical_exchange]
+        if definition.session_type is not SessionType.LUNCH_BREAK
+    )
+    return _at(local_moment.date(), first_active.start)
+
+
 def market_feed_stale(
     moment: datetime,
     *,
@@ -238,7 +255,7 @@ def market_feed_stale(
     if not market_feed_expected(local_moment, exchange):
         return False
 
-    window_start = _feed_window_start(local_moment, exchange)
+    window_start = market_feed_window_start(local_moment, exchange)
     if window_start is None:
         return False
 

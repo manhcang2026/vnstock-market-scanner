@@ -40,7 +40,6 @@ def main() -> int:
         commit_every_events=settings.commit_every_events,
         commit_every_seconds=settings.commit_every_seconds,
     )
-    collector = QuoteCollector(universe, store)
     stop_event = threading.Event()
     stream_error = threading.Event()
 
@@ -69,6 +68,7 @@ def main() -> int:
             stream_error.set()
 
         started_at = datetime.now(VN_TZ)
+        collector = QuoteCollector(universe, store, started_at=started_at)
         store.set_meta("started_at", started_at.isoformat(), started_at.isoformat())
         store.set_meta("channel", settings.ssi_channel, started_at.isoformat())
         store.set_meta("universe_size", str(len(universe)), started_at.isoformat())
