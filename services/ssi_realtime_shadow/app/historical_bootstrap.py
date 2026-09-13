@@ -8,7 +8,11 @@ from typing import Callable, Iterable, Protocol
 
 from .market_session import VN_TZ
 from .settings import Settings
-from .ssi_historical import SSIHistoricalClient, normalize_historical_rows
+from .ssi_historical import (
+    SSIHistoricalClient,
+    SSIHistoricalError,
+    normalize_historical_record,
+)
 from .storage import SQLiteStore
 from .universe import load_universe
 
@@ -35,6 +39,7 @@ class BootstrapSummary:
     valid_rows: int
     inserted_rows: int
     existing_rows: int
+    rejected_rows: int
 
 
 def _cli_date(value: str) -> date:
@@ -62,6 +67,7 @@ def run_bootstrap(
     from_key = from_date.isoformat()
     to_key = to_date.isoformat()
     completed = skipped = failed = valid_rows = inserted_rows = existing_rows = 0
+    rejected_rows = 0
 
     for index, symbol in enumerate(ordered_symbols, start=1):
         prefix = f"[{index}/{len(ordered_symbols)}] {symbol}"
@@ -82,7 +88,24 @@ def run_bootstrap(
             raw_rows = client.fetch_intraday_ohlc(
                 symbol, from_date, to_date, resolution=RESOLUTION
             )
-            bars = [bar for bar in normalize_historical_rows(raw_rows) if bar.symbol == symbol]
+            normalized = []
+            for raw_row in raw_rows:
+                bar = normalize_historical_record(raw_row)
+                if bar is not None and bar.symbol == symbol:
+                    normalized.append(bar)
+            raw_count = len(raw_rows)
+            valid_count = len(normalized)
+            rejected_count = raw_count - valid_count
+            unique_bars = {
+                (bar.symbol, bar.trading_date, bar.minute): bar for bar in normalized
+            }
+            bars = list(unique_bars.values())
+            if raw_count > 0 and not bars:
+                raise SSIHistoricalError(
+                    "provider returned rows but none could be normalized "
+                    f"(raw_count={raw_count}, valid_count=0, "
+                    f"rejected_count={rejected_count})"
+                )
             inserted = 0
             for bar in bars:
                 if store.insert_historical_bar(
@@ -113,9 +136,11 @@ def run_bootstrap(
             valid_rows += len(bars)
             inserted_rows += inserted
             existing_rows += existing
+            rejected_rows += rejected_count
             output(
-                f"{prefix} completed rows={len(bars)} inserted={inserted} "
-                f"existing={existing}"
+                f"{prefix} completed raw_count={raw_count} "
+                f"valid_count={valid_count} rejected_count={rejected_count} "
+                f"rows={len(bars)} inserted={inserted} existing={existing}"
             )
         except Exception as exc:
             failed += 1
@@ -139,6 +164,7 @@ def run_bootstrap(
         valid_rows=valid_rows,
         inserted_rows=inserted_rows,
         existing_rows=existing_rows,
+        rejected_rows=rejected_rows,
     )
 
 
@@ -196,7 +222,8 @@ def main(argv: list[str] | None = None) -> int:
         "summary "
         f"completed={summary.completed} skipped={summary.skipped} "
         f"failed={summary.failed} rows={summary.valid_rows} "
-        f"inserted={summary.inserted_rows} existing={summary.existing_rows}"
+        f"inserted={summary.inserted_rows} existing={summary.existing_rows} "
+        f"rejected={summary.rejected_rows}"
     )
     return 1 if summary.failed else 0
 

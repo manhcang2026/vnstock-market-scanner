@@ -12,6 +12,7 @@ from app.market_session import VN_TZ
 from app.ssi_historical import (
     SSIHTTPError,
     SSIHistoricalClient,
+    SSIHistoricalError,
     normalize_historical_record,
     normalize_historical_rows,
 )
@@ -130,6 +131,45 @@ def test_paginates_using_total_record_and_reuses_access_token() -> None:
     assert all(call["headers"]["Authorization"] == "Bearer test-token" for call in gets)
 
 
+@pytest.mark.parametrize(
+    "provider_status", ["Success", "success", 200, 200.0, "200", "200.0"]
+)
+def test_accepts_documented_provider_success_status(provider_status: Any) -> None:
+    payload = {
+        "data": [row()],
+        "message": "Success",
+        "status": provider_status,
+        "totalRecord": 1,
+    }
+    session = FakeSession([token_response(), FakeResponse(200, payload)])
+    assert len(
+        client(session).fetch_intraday_ohlc(
+            "HPG", "12/09/2026", "12/09/2026"
+        )
+    ) == 1
+
+
+def test_rejects_unknown_provider_status_string() -> None:
+    session = FakeSession(
+        [
+            token_response(),
+            FakeResponse(
+                200,
+                {
+                    "data": [row()],
+                    "message": "Failed",
+                    "status": "Failed",
+                    "totalRecord": 1,
+                },
+            ),
+        ]
+    )
+    with pytest.raises(SSIHistoricalError, match="provider status 'Failed'"):
+        client(session).fetch_intraday_ohlc(
+            "HPG", "12/09/2026", "12/09/2026"
+        )
+
+
 def test_duplicate_provider_rows_are_deduplicated() -> None:
     duplicate = row()
     session = FakeSession(
@@ -162,6 +202,55 @@ def test_large_ranges_are_split_without_silent_truncation() -> None:
     assert get_calls[1]["params"]["fromDate"] == "12/09/2026"
     assert get_calls[1]["params"]["toDate"] == "12/09/2026"
     assert get_calls[2]["params"]["fromDate"] == "13/09/2026"
+
+
+def test_page_index_never_exceeds_ten_and_large_range_is_split() -> None:
+    class SplitSession:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, Any]] = []
+
+        def request(self, method: str, url: str, **kwargs: Any) -> FakeResponse:
+            self.calls.append({"method": method, "url": url, **kwargs})
+            if method == "POST":
+                return token_response()
+            params = kwargs["params"]
+            page_index = params["pageIndex"]
+            if params["fromDate"] != params["toDate"]:
+                total = 11
+            else:
+                total = 6 if params["fromDate"] == "12/09/2026" else 5
+            return FakeResponse(
+                200,
+                {
+                    "status": "Success",
+                    "message": "Success",
+                    "data": [
+                        row(
+                            trading_date=params["fromDate"],
+                            provider_time=f"09:{page_index:02d}:00",
+                        )
+                    ],
+                    "totalRecord": total,
+                },
+            )
+
+    session = SplitSession()
+    rows = client(session, page_size=1).fetch_intraday_ohlc(
+        "HPG", "12/09/2026", "13/09/2026"
+    )
+    get_calls = [call for call in session.calls if call["method"] == "GET"]
+    assert len(rows) == 11
+    assert max(call["params"]["pageIndex"] for call in get_calls) == 6
+    assert all(call["params"]["pageIndex"] <= 10 for call in get_calls)
+    assert sum(
+        call["params"]["fromDate"] != call["params"]["toDate"]
+        for call in get_calls
+    ) == 1
+
+
+def test_constructor_rejects_page_limit_above_official_maximum() -> None:
+    with pytest.raises(ValueError, match="pageIndex limit 10"):
+        client(FakeSession([]), max_pages_per_range=11)
 
 
 def test_normalizes_strict_date_time_and_direct_interval_volume() -> None:
@@ -329,6 +418,101 @@ def test_checkpoint_success_and_completed_resume_skip(tmp_path: Path) -> None:
     assert checkpoint is not None and checkpoint.status == "COMPLETED"
     assert checkpoint.row_count == 1 and checkpoint.completed_at is not None
     assert checkpoint.attempt_count == 1
+    store.close()
+
+
+def test_empty_provider_result_can_complete_with_zero_rows(tmp_path: Path) -> None:
+    class Fetcher:
+        def fetch_intraday_ohlc(
+            self,
+            symbol: str,
+            from_date: date,
+            to_date: date,
+            resolution: int = 1,
+        ) -> list[dict]:
+            return []
+
+    store = SQLiteStore(tmp_path / "empty.db")
+    output: list[str] = []
+    summary = run_bootstrap(
+        store=store,
+        client=Fetcher(),
+        symbols=["HPG"],
+        from_date=date(2026, 9, 12),
+        to_date=date(2026, 9, 12),
+        output=output.append,
+    )
+    checkpoint = store.get_historical_checkpoint(
+        "HPG", "2026-09-12", "2026-09-12", 1
+    )
+    assert summary.completed == 1 and summary.failed == 0
+    assert checkpoint is not None and checkpoint.status == "COMPLETED"
+    assert checkpoint.row_count == 0
+    assert "raw_count=0 valid_count=0 rejected_count=0" in output[0]
+    store.close()
+
+
+def test_nonempty_provider_result_with_no_valid_bars_fails_checkpoint(
+    tmp_path: Path,
+) -> None:
+    class Fetcher:
+        def fetch_intraday_ohlc(
+            self,
+            symbol: str,
+            from_date: date,
+            to_date: date,
+            resolution: int = 1,
+        ) -> list[dict]:
+            invalid = row(symbol=symbol)
+            invalid.pop("Market")
+            return [invalid]
+
+    store = SQLiteStore(tmp_path / "all-rejected.db")
+    summary = run_bootstrap(
+        store=store,
+        client=Fetcher(),
+        symbols=["HPG"],
+        from_date=date(2026, 9, 12),
+        to_date=date(2026, 9, 12),
+        output=lambda _: None,
+    )
+    checkpoint = store.get_historical_checkpoint(
+        "HPG", "2026-09-12", "2026-09-12", 1
+    )
+    assert summary.failed == 1 and summary.completed == 0
+    assert checkpoint is not None and checkpoint.status == "FAILED"
+    assert "provider returned rows but none could be normalized" in (
+        checkpoint.error or ""
+    )
+    store.close()
+
+
+def test_partial_normalization_reports_raw_valid_and_rejected_counts(
+    tmp_path: Path,
+) -> None:
+    class Fetcher:
+        def fetch_intraday_ohlc(
+            self,
+            symbol: str,
+            from_date: date,
+            to_date: date,
+            resolution: int = 1,
+        ) -> list[dict]:
+            invalid = row(symbol=symbol, provider_time="malformed")
+            return [row(symbol=symbol), invalid]
+
+    store = SQLiteStore(tmp_path / "partially-rejected.db")
+    output: list[str] = []
+    summary = run_bootstrap(
+        store=store,
+        client=Fetcher(),
+        symbols=["HPG"],
+        from_date=date(2026, 9, 12),
+        to_date=date(2026, 9, 12),
+        output=output.append,
+    )
+    assert summary.completed == 1 and summary.rejected_rows == 1
+    assert "raw_count=2 valid_count=1 rejected_count=1" in output[0]
     store.close()
 
 

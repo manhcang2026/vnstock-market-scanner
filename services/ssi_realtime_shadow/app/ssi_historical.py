@@ -20,6 +20,7 @@ INTRADAY_PATH = "api/v2/Market/IntradayOhlc"
 TOKEN_PATH = "api/v2/Market/AccessToken"
 RETRYABLE_STATUS_CODES = {408, 425, 429, 500, 502, 503, 504}
 NON_EQUITY_MARKETS = {"DER"}
+MAX_PAGE_INDEX = 10
 PROVIDER_TIME_RE = re.compile(r"^(?:\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?|\d{6})$")
 
 
@@ -147,6 +148,12 @@ def _coerce_date(value: date | str) -> date:
     return date.fromisoformat(parsed)
 
 
+def _provider_status_is_success(status: Any) -> bool:
+    if isinstance(status, str):
+        return status.strip().casefold() in {"200", "200.0", "success"}
+    return status in {200, 200.0}
+
+
 class SSIHistoricalClient:
     """Small, retry-aware client following the inspected official SDK flow."""
 
@@ -162,7 +169,7 @@ class SSIHistoricalClient:
         request_timeout: float = 30,
         max_attempts: int = 4,
         page_size: int = 1000,
-        max_pages_per_range: int = 50,
+        max_pages_per_range: int = MAX_PAGE_INDEX,
         max_retry_delay: float = 60,
     ) -> None:
         if not consumer_id or not consumer_secret:
@@ -171,6 +178,11 @@ class SSIHistoricalClient:
             raise ValueError("page_size must be between 1 and 1000")
         if max_attempts < 1 or max_pages_per_range < 1:
             raise ValueError("retry and pagination limits must be positive")
+        if max_pages_per_range > MAX_PAGE_INDEX:
+            raise ValueError(
+                f"max_pages_per_range must not exceed SSI pageIndex limit "
+                f"{MAX_PAGE_INDEX}"
+            )
         self.base_url = base_url.rstrip("/") + "/"
         self.consumer_id = consumer_id
         self.consumer_secret = consumer_secret
@@ -268,7 +280,9 @@ class SSIHistoricalClient:
             if not isinstance(payload, dict):
                 raise SSIHistoricalError(f"SSI returned an invalid payload for {path}")
             provider_status = payload.get("status")
-            if provider_status is not None and str(provider_status) not in {"200", "200.0"}:
+            if provider_status is not None and not _provider_status_is_success(
+                provider_status
+            ):
                 raise SSIHistoricalError(
                     f"SSI provider status {provider_status!r} for {path}"
                 )
@@ -318,6 +332,10 @@ class SSIHistoricalClient:
         page_index: int,
         resolution: int,
     ) -> tuple[list[dict[str, Any]], int | None]:
+        if not 1 <= page_index <= MAX_PAGE_INDEX:
+            raise ValueError(
+                f"page_index must be between 1 and {MAX_PAGE_INDEX}"
+            )
         payload = self._request_json(
             "GET",
             INTRADAY_PATH,
