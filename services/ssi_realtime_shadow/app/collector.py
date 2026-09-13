@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import datetime
 from typing import Any, Iterable
 
 from .market_session import (
@@ -13,6 +13,7 @@ from .market_session import (
     market_feed_window_start,
     normalize_exchange,
 )
+from .normalization import parse_trading_date
 from .storage import SQLiteStore
 
 LOG = logging.getLogger(__name__)
@@ -46,18 +47,6 @@ def _to_int(value: Any) -> int | None:
         return int(float(value))
     except (TypeError, ValueError):
         return None
-
-
-def _parse_date(value: Any, fallback: date) -> str | None:
-    if value is None or not str(value).strip():
-        return fallback.isoformat()
-    text = str(value).strip()
-    for fmt in ("%d%m%Y", "%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%Y/%m/%d"):
-        try:
-            return datetime.strptime(text, fmt).date().isoformat()
-        except ValueError:
-            pass
-    return None
 
 
 def _parse_time(value: Any, fallback: datetime) -> tuple[str, str]:
@@ -213,7 +202,7 @@ class QuoteCollector:
                 continue
 
             raw_trading_date = _first(payload, "TradingDate")
-            trading_date = _parse_date(raw_trading_date, now.date())
+            trading_date = parse_trading_date(raw_trading_date, fallback=now.date())
             if trading_date is None:
                 self.stats.ignored_malformed_trading_date += 1
                 LOG.warning(

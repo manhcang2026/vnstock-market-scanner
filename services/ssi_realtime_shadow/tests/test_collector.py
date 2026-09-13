@@ -409,11 +409,22 @@ def test_existing_database_is_migrated_without_rebuilding_data(tmp_path: Path) -
         row["name"]
         for row in store._conn.execute("PRAGMA index_list(minute_bars)").fetchall()
     }
-    assert {"exchange", "quality_status", "has_gap", "gap_from", "gap_to"} <= columns
+    assert {
+        "exchange",
+        "quality_status",
+        "has_gap",
+        "gap_from",
+        "gap_to",
+        "data_source",
+        "provider_time",
+    } <= columns
     assert row["symbol"] == "HPG"
     assert row["volume"] == 1000
     assert row["quality_status"] == "LEGACY_UNVERIFIED"
     assert row["has_gap"] == 0
+    assert store._conn.execute(
+        "SELECT data_source FROM minute_bars"
+    ).fetchone()[0] == "SSI_STREAM"
     assert "idx_minute_bars_pending_gaps" in indexes
     store.close()
 

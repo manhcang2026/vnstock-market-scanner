@@ -26,6 +26,8 @@ CREATE TABLE IF NOT EXISTS minute_bars (
     has_gap INTEGER NOT NULL DEFAULT 0,
     gap_from TEXT,
     gap_to TEXT,
+    data_source TEXT NOT NULL DEFAULT 'SSI_STREAM',
+    provider_time TEXT,
     updated_at TEXT NOT NULL,
     PRIMARY KEY (trading_date, minute, symbol)
 );
@@ -60,6 +62,20 @@ CREATE TABLE IF NOT EXISTS collector_meta (
     value TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS historical_bootstrap_checkpoints (
+    symbol TEXT NOT NULL,
+    from_date TEXT NOT NULL,
+    to_date TEXT NOT NULL,
+    resolution INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    row_count INTEGER NOT NULL DEFAULT 0,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    last_attempt_at TEXT NOT NULL,
+    completed_at TEXT,
+    error TEXT,
+    PRIMARY KEY (symbol, from_date, to_date, resolution)
+);
 """
 
 
@@ -71,6 +87,20 @@ class LatestQuoteState:
     updated_at: str
 
 
+@dataclass(frozen=True)
+class HistoricalCheckpoint:
+    symbol: str
+    from_date: str
+    to_date: str
+    resolution: int
+    status: str
+    row_count: int
+    attempt_count: int
+    last_attempt_at: str
+    completed_at: str | None
+    error: str | None
+
+
 _MINUTE_BAR_MIGRATIONS = (
     ("exchange", "exchange TEXT"),
     (
@@ -80,6 +110,8 @@ _MINUTE_BAR_MIGRATIONS = (
     ("has_gap", "has_gap INTEGER NOT NULL DEFAULT 0"),
     ("gap_from", "gap_from TEXT"),
     ("gap_to", "gap_to TEXT"),
+    ("data_source", "data_source TEXT NOT NULL DEFAULT 'SSI_STREAM'"),
+    ("provider_time", "provider_time TEXT"),
 )
 
 
@@ -279,6 +311,152 @@ class SQLiteStore:
                 ON CONFLICT(symbol) DO UPDATE SET {assignments}
                 """,
                 values,
+            )
+            self._touch()
+
+    def insert_historical_bar(
+        self,
+        *,
+        trading_date: str,
+        minute: str,
+        symbol: str,
+        exchange: str,
+        open_price: float,
+        high: float,
+        low: float,
+        close: float,
+        volume: int,
+        provider_time: str,
+        updated_at: str,
+    ) -> bool:
+        """Insert one complete REST bar without mutating an existing canonical row."""
+        with self._lock:
+            cursor = self._conn.execute(
+                """
+                INSERT OR IGNORE INTO minute_bars (
+                    trading_date, minute, symbol, open, high, low, close,
+                    volume, last_total_volume, event_count, is_partial, exchange,
+                    quality_status, has_gap, gap_from, gap_to, data_source,
+                    provider_time, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 1, 0, ?,
+                          'TRUSTED', 0, NULL, NULL, 'SSI_REST', ?, ?)
+                """,
+                (
+                    trading_date,
+                    minute,
+                    symbol,
+                    open_price,
+                    high,
+                    low,
+                    close,
+                    max(0, int(volume)),
+                    exchange,
+                    provider_time,
+                    updated_at,
+                ),
+            )
+            if cursor.rowcount:
+                self._touch()
+                return True
+            return False
+
+    def get_historical_checkpoint(
+        self,
+        symbol: str,
+        from_date: str,
+        to_date: str,
+        resolution: int,
+    ) -> HistoricalCheckpoint | None:
+        with self._lock:
+            row = self._conn.execute(
+                """
+                SELECT symbol, from_date, to_date, resolution, status, row_count,
+                       attempt_count, last_attempt_at, completed_at, error
+                FROM historical_bootstrap_checkpoints
+                WHERE symbol = ? AND from_date = ? AND to_date = ?
+                      AND resolution = ?
+                """,
+                (symbol, from_date, to_date, resolution),
+            ).fetchone()
+            return HistoricalCheckpoint(**dict(row)) if row else None
+
+    def mark_historical_checkpoint_running(
+        self,
+        symbol: str,
+        from_date: str,
+        to_date: str,
+        resolution: int,
+        attempted_at: str,
+    ) -> None:
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO historical_bootstrap_checkpoints (
+                    symbol, from_date, to_date, resolution, status, row_count,
+                    attempt_count, last_attempt_at, completed_at, error
+                ) VALUES (?, ?, ?, ?, 'RUNNING', 0, 1, ?, NULL, NULL)
+                ON CONFLICT(symbol, from_date, to_date, resolution) DO UPDATE SET
+                    status = 'RUNNING',
+                    attempt_count = historical_bootstrap_checkpoints.attempt_count + 1,
+                    last_attempt_at = excluded.last_attempt_at,
+                    completed_at = NULL,
+                    error = NULL
+                """,
+                (symbol, from_date, to_date, resolution, attempted_at),
+            )
+            self._touch()
+
+    def mark_historical_checkpoint_completed(
+        self,
+        symbol: str,
+        from_date: str,
+        to_date: str,
+        resolution: int,
+        row_count: int,
+        completed_at: str,
+    ) -> None:
+        with self._lock:
+            self._conn.execute(
+                """
+                UPDATE historical_bootstrap_checkpoints
+                SET status = 'COMPLETED', row_count = ?, completed_at = ?, error = NULL
+                WHERE symbol = ? AND from_date = ? AND to_date = ?
+                      AND resolution = ?
+                """,
+                (row_count, completed_at, symbol, from_date, to_date, resolution),
+            )
+            self._touch()
+
+    def mark_historical_checkpoint_failed(
+        self,
+        symbol: str,
+        from_date: str,
+        to_date: str,
+        resolution: int,
+        error: str,
+        failed_at: str,
+    ) -> None:
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO historical_bootstrap_checkpoints (
+                    symbol, from_date, to_date, resolution, status, row_count,
+                    attempt_count, last_attempt_at, completed_at, error
+                ) VALUES (?, ?, ?, ?, 'FAILED', 0, 1, ?, NULL, ?)
+                ON CONFLICT(symbol, from_date, to_date, resolution) DO UPDATE SET
+                    status = 'FAILED',
+                    last_attempt_at = excluded.last_attempt_at,
+                    completed_at = NULL,
+                    error = excluded.error
+                """,
+                (
+                    symbol,
+                    from_date,
+                    to_date,
+                    resolution,
+                    failed_at,
+                    error[:1000],
+                ),
             )
             self._touch()
 

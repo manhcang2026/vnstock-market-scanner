@@ -37,6 +37,19 @@ Xem nhanh dữ liệu đã thu:
 python -m app.status
 ```
 
+## Bootstrap lịch sử 1 phút
+
+Có thể nạp OHLC 1 phút từ SSI FastConnect Data vào cùng SQLite local. Lệnh có
+checkpoint theo symbol và chỉ thêm phút chưa tồn tại; không sửa hoặc cộng dồn lại
+bar realtime đã có.
+
+```bat
+python -m app.historical_bootstrap --from-date 01/09/2026 --to-date 11/09/2026 --symbols HPG,SSI,VIX
+```
+
+Bỏ `--symbols` để dùng scanner universe hiện tại; có thể thêm
+`--limit-symbols 10` khi kiểm thử phạm vi nhỏ. Credential tiếp tục lấy từ `.env`.
+
 ## Chạy bằng Docker sau khi có Oracle/VPS
 
 SSI phát hành Python client dạng `.tar.gz`/`.whl`. Repository CCC là public nên archive SDK không được commit.
