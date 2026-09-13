@@ -264,22 +264,74 @@ def test_hose_opening_bucket_is_excluded_from_rolling_volume(
     assert rolling.cumulative_volume == 25
 
 
-def test_hose_close_bucket_updates_day_but_not_rolling_volume(tmp_path: Path) -> None:
+def test_hnx_close_and_plo_events_share_bucket_until_1500(tmp_path: Path) -> None:
     path = tmp_path / "baseline.db"
     _write_baseline(path)
     engine = RealtimeVolumeEngine(path)
-    engine.on_event(_event("HPG", "HOSE", "14:29", 15))
-    before_close = engine.on_event(_event("HPG", "HOSE", "14:30", 50))
+    engine.on_event(_event("SHS", "HNX", "14:29", 10))
+    before_close = engine.on_event(_event("SHS", "HNX", "14:30", 1))
     assert before_close.as_of_minute == "14:29"
-    assert before_close.volume_15 == 15
+    assert before_close.cumulative_volume == 10
+    engine.on_event(_event("SHS", "HNX", "14:46", 2))
+    not_closed = engine.advance_time(_at("14:46"))
+    assert "SHS" not in not_closed
+    assert engine.get_snapshot("SHS").as_of_minute == "14:29"
+    engine.on_event(_event("SHS", "HNX", "14:59", 3))
 
-    engine.advance_time(_at("14:46"))
+    engine.advance_time(_at("15:00"))
+
+    at_close = engine.get_snapshot("SHS")
+    assert at_close.as_of_minute == "14:45"
+    assert at_close.cumulative_volume == 16
+    assert at_close.volume_15 is None
+    assert at_close.volume_30 is None
+
+
+def test_hose_post_trading_events_join_close_bucket_until_1500(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "baseline.db"
+    _write_baseline(path)
+    engine = RealtimeVolumeEngine(path)
+    engine.on_event(_event("HPG", "HOSE", "14:30", 4))
+    engine.on_event(_event("HPG", "HOSE", "14:46", 5))
+    engine.on_event(_event("HPG", "HOSE", "14:59", 6))
+
+    engine.advance_time(_at("14:59"))
+    assert engine.get_snapshot("HPG").as_of_minute == "14:29"
+    engine.advance_time(_at("15:00"))
 
     at_close = engine.get_snapshot("HPG")
     assert at_close.as_of_minute == "14:45"
-    assert at_close.cumulative_volume == 65
+    assert at_close.cumulative_volume == 15
     assert at_close.volume_15 is None
     assert at_close.volume_30 is None
+
+
+def test_upcom_1459_remains_a_normal_continuous_minute(tmp_path: Path) -> None:
+    path = tmp_path / "baseline.db"
+    _write_baseline(path)
+    engine = RealtimeVolumeEngine(path)
+    engine.on_event(_event("VGI", "UPCOM", "14:59", 30))
+
+    engine.advance_time(_at("15:00"))
+
+    snapshot = engine.get_snapshot("VGI")
+    assert snapshot.as_of_minute == "14:59"
+    assert snapshot.cumulative_volume == 30
+    assert snapshot.volume_15 == 30
+    assert snapshot.volume_30 == 30
+
+
+def test_close_phase_event_after_bucket_finalized_fails_safely(tmp_path: Path) -> None:
+    path = tmp_path / "baseline.db"
+    _write_baseline(path)
+    engine = RealtimeVolumeEngine(path)
+    engine.on_event(_event("SHS", "HNX", "14:30", 1))
+    engine.advance_time(_at("15:00"))
+
+    with pytest.raises(ValueError, match="already completed minute"):
+        engine.on_event(_event("SHS", "HNX", "14:59", 1))
 
 
 def test_hnx_first_completed_rvol15_and_rvol30_boundaries(tmp_path: Path) -> None:
@@ -453,6 +505,121 @@ def test_gap_partial_and_nontrusted_quality_propagate_to_completed_metrics(
     assert expected_reason in snapshot.reasons
 
 
+def test_first_mid_session_gap_taints_zero_filled_snapshot_immediately(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "baseline.db"
+    _write_baseline(path)
+    engine = RealtimeVolumeEngine(path)
+
+    snapshot = engine.on_event(
+        _event(
+            "SHS",
+            "HNX",
+            "10:30",
+            0,
+            quality_status="GAP",
+            is_partial=True,
+            has_gap=True,
+        )
+    )
+
+    assert snapshot.as_of_minute == "10:29"
+    assert not snapshot.metrics_trusted
+    assert "CURRENT_GAP" in snapshot.reasons
+    assert "CURRENT_PARTIAL" in snapshot.reasons
+    assert "NON_TRUSTED_QUALITY" in snapshot.reasons
+
+
+@pytest.mark.parametrize(
+    ("quality_status", "is_partial", "has_gap", "expected_reason"),
+    [
+        ("GAP", True, True, "CURRENT_GAP"),
+        ("PARTIAL", True, False, "CURRENT_PARTIAL"),
+        ("MISSING_TOTAL_VOLUME", False, False, "NON_TRUSTED_QUALITY"),
+    ],
+)
+def test_current_untrusted_event_taints_existing_completed_snapshot_immediately(
+    tmp_path: Path,
+    quality_status: str,
+    is_partial: bool,
+    has_gap: bool,
+    expected_reason: str,
+) -> None:
+    path = tmp_path / "baseline.db"
+    _write_baseline(path)
+    engine = RealtimeVolumeEngine(path)
+    engine.on_event(_event("SHS", "HNX", "09:00", 15))
+    engine.advance_time(_at("09:15"))
+    assert engine.get_snapshot("SHS").metrics_trusted
+
+    snapshot = engine.on_event(
+        _event(
+            "SHS",
+            "HNX",
+            "09:15",
+            0,
+            quality_status=quality_status,
+            is_partial=is_partial,
+            has_gap=has_gap,
+        )
+    )
+
+    assert snapshot.as_of_minute == "09:14"
+    assert snapshot.volume_15 == 15
+    assert not snapshot.metrics_trusted
+    assert expected_reason in snapshot.reasons
+
+
+def test_trading_date_change_clears_integrity_taint(tmp_path: Path) -> None:
+    path = tmp_path / "baseline.db"
+    _write_baseline(path)
+    engine = RealtimeVolumeEngine(path)
+    tainted = engine.on_event(
+        _event(
+            "SHS",
+            "HNX",
+            "10:30",
+            0,
+            quality_status="GAP",
+            is_partial=True,
+            has_gap=True,
+        )
+    )
+    assert not tainted.metrics_trusted
+
+    still_tainted = engine.on_event(_event("SHS", "HNX", "10:31", 1))
+    assert not still_tainted.metrics_trusted
+    assert "CURRENT_GAP" in still_tainted.reasons
+
+    reset = engine.on_event(
+        _event("SHS", "HNX", "09:00", 1, trading_date="2026-09-15")
+    )
+
+    assert reset.trading_date == "2026-09-15"
+    assert reset.metrics_trusted
+    assert "CURRENT_GAP" not in reset.reasons
+    assert "CURRENT_PARTIAL" not in reset.reasons
+    assert "NON_TRUSTED_QUALITY" not in reset.reasons
+
+
+def test_trusted_current_provisional_event_keeps_completed_snapshot_trusted(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "baseline.db"
+    _write_baseline(path)
+    engine = RealtimeVolumeEngine(path)
+    engine.on_event(_event("SHS", "HNX", "09:00", 15))
+    engine.advance_time(_at("09:15"))
+
+    snapshot = engine.on_event(_event("SHS", "HNX", "09:15", 999))
+
+    assert snapshot.as_of_minute == "09:14"
+    assert snapshot.volume_15 == 15
+    assert snapshot.metrics_trusted
+    assert snapshot.reasons == ("OK",)
+
+
 def test_current_partial_minute_is_not_used_in_completed_rvol(tmp_path: Path) -> None:
     path = tmp_path / "baseline.db"
     _write_baseline(path)
@@ -477,6 +644,8 @@ def test_current_partial_minute_is_not_used_in_completed_rvol(tmp_path: Path) ->
     assert current.volume_15 == 15
     assert current.rvol_15 == 1
     assert current.quality_status == "PARTIAL"
+    assert not current.metrics_trusted
+    assert "CURRENT_PARTIAL" in current.reasons
 
 
 def test_snapshot_exposes_baseline_and_active_session_coverage(tmp_path: Path) -> None:

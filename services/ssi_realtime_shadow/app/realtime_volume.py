@@ -160,6 +160,7 @@ class _DayState:
     latest_event_time: datetime | None = None
     latest_is_partial: bool = False
     latest_has_gap: bool = False
+    integrity_reasons: set[str] = field(default_factory=set)
     finalized_quality_reasons: set[str] = field(default_factory=set)
     snapshot: VolumeSnapshot | None = None
 
@@ -519,6 +520,7 @@ class RealtimeVolumeEngine:
             exchange: {point.minute: index for index, point in enumerate(grid)}
             for exchange, grid in self._grids.items()
         }
+        self._closing_completion_minute = self._load_closing_completion_minutes()
 
     @property
     def baseline(self) -> VolumeBaselineSnapshot:
@@ -588,30 +590,31 @@ class RealtimeVolumeEngine:
 
             if state.latest_event_time and event.event_time < state.latest_event_time:
                 raise ValueError(f"Out-of-order event_time for {event.symbol}")
-            self._finalize_before(state, event.minute)
+
             bucket = self._event_bucket(event)
             if bucket is not None:
                 bucket_index = self._grid_index(event.exchange, bucket)
                 if bucket_index <= state.last_finalized_index:
                     raise ValueError(
-                        f"Event targets an already completed minute: {event.symbol}/{bucket}"
+                        f"Event targets an already completed minute: "
+                        f"{event.symbol}/{bucket}"
                     )
-                state.minute_buckets[bucket] = (
-                    state.minute_buckets.get(bucket, 0) + event.volume_delta
-                )
-                reasons = state.bucket_reasons.setdefault(bucket, set())
-                if event.has_gap:
-                    reasons.add("CURRENT_GAP")
-                if event.is_partial:
-                    reasons.add("CURRENT_PARTIAL")
-                if event.quality_status != "TRUSTED":
-                    reasons.add("NON_TRUSTED_QUALITY")
 
+            event_integrity_reasons = self._event_integrity_reasons(event)
+            state.integrity_reasons.update(event_integrity_reasons)
             state.latest_total_volume = event.total_volume
             state.latest_quality_status = event.quality_status
             state.latest_event_time = event.event_time
             state.latest_is_partial = event.is_partial
             state.latest_has_gap = event.has_gap
+            self._finalize_before(state, event.minute)
+            if bucket is not None:
+                state.minute_buckets[bucket] = (
+                    state.minute_buckets.get(bucket, 0) + event.volume_delta
+                )
+                reasons = state.bucket_reasons.setdefault(bucket, set())
+                reasons.update(event_integrity_reasons)
+
             state.snapshot = self._refresh_latest_quality(state)
             return state.snapshot
 
@@ -662,17 +665,59 @@ class RealtimeVolumeEngine:
             return exact.minute
         if (
             session.session_type is SessionType.POST_TRADING
-            and exact is not None
-            and exact.is_closing
+            and event.exchange in self._closing_completion_minute
         ):
-            return exact.minute
+            return next(point.minute for point in grid if point.is_closing)
         return None
+
+    @staticmethod
+    def _event_integrity_reasons(event: VolumeEvent) -> set[str]:
+        reasons: set[str] = set()
+        if event.has_gap:
+            reasons.add("CURRENT_GAP")
+        if event.is_partial:
+            reasons.add("CURRENT_PARTIAL")
+        if event.quality_status != "TRUSTED":
+            reasons.add("NON_TRUSTED_QUALITY")
+        return reasons
+
+    def _load_closing_completion_minutes(self) -> dict[str, str]:
+        completion_minutes: dict[str, str] = {}
+        reference_date = date(2026, 9, 14)
+        for exchange, grid in self._grids.items():
+            close_point = next((point for point in grid if point.is_closing), None)
+            if close_point is None:
+                continue
+            hour, minute = (int(value) for value in close_point.minute.split(":"))
+            close_label_time = datetime(
+                reference_date.year,
+                reference_date.month,
+                reference_date.day,
+                hour,
+                minute,
+                tzinfo=VN_TZ,
+            )
+            session = classify_market_session(exchange, close_label_time)
+            if (
+                session.session_type is not SessionType.POST_TRADING
+                or session.session_end is None
+            ):
+                raise ValueError(
+                    f"Missing post-trading completion boundary for {exchange}"
+                )
+            completion_minutes[exchange] = session.session_end.strftime("%H:%M")
+        return completion_minutes
 
     def _finalize_before(self, state: _DayState, minute: str) -> None:
         grid = self._grids[state.exchange]
         target = state.last_finalized_index
         for index in range(state.last_finalized_index + 1, len(grid)):
-            if grid[index].minute >= minute:
+            point = grid[index]
+            completion_minute = self._closing_completion_minute.get(state.exchange)
+            if point.is_closing and completion_minute is not None:
+                if minute < completion_minute:
+                    break
+            elif point.minute >= minute:
                 break
             target = index
         self._finalize_to(state, target)
@@ -707,7 +752,7 @@ class RealtimeVolumeEngine:
     ) -> VolumeSnapshot:
         coverage = self._coverage(state.symbol)
         baseline = self._baseline.points.get((state.symbol, point.minute))
-        reasons = set(state.finalized_quality_reasons)
+        reasons = set(state.finalized_quality_reasons | state.integrity_reasons)
         if coverage.baseline_sessions_used == 0 or baseline is None:
             reasons.add("NO_BASELINE")
         elif coverage.baseline_sessions_used < self._baseline.lookback:
@@ -779,7 +824,9 @@ class RealtimeVolumeEngine:
             first_history_date=coverage.first_history_date,
             last_history_date=coverage.last_history_date,
             quality_status=state.latest_quality_status,
-            metrics_trusted=not state.finalized_quality_reasons,
+            metrics_trusted=not (
+                state.finalized_quality_reasons or state.integrity_reasons
+            ),
             metric_availability=availability,
             reasons=tuple(sorted(reasons)) if reasons else ("OK",),
         )
@@ -787,14 +834,21 @@ class RealtimeVolumeEngine:
     def _refresh_latest_quality(self, state: _DayState) -> VolumeSnapshot:
         if state.snapshot is None:
             return self._empty_snapshot(state)
+        reasons = set(state.snapshot.reasons)
+        reasons.discard("OK")
+        reasons.update(state.integrity_reasons)
         return replace(
             state.snapshot,
             quality_status=state.latest_quality_status,
+            metrics_trusted=not (
+                state.finalized_quality_reasons or state.integrity_reasons
+            ),
+            reasons=tuple(sorted(reasons)) if reasons else ("OK",),
         )
 
     def _empty_snapshot(self, state: _DayState) -> VolumeSnapshot:
         coverage = self._coverage(state.symbol)
-        reasons = {"OUTSIDE_ROLLING_WINDOW"}
+        reasons = {"OUTSIDE_ROLLING_WINDOW"} | state.integrity_reasons
         if coverage.baseline_sessions_used == 0:
             reasons.add("NO_BASELINE")
         elif coverage.baseline_sessions_used < self._baseline.lookback:
@@ -824,7 +878,7 @@ class RealtimeVolumeEngine:
             first_history_date=coverage.first_history_date,
             last_history_date=coverage.last_history_date,
             quality_status=state.latest_quality_status,
-            metrics_trusted=True,
+            metrics_trusted=not state.integrity_reasons,
             metric_availability=MappingProxyType(
                 {
                     "day_rvol": False,
