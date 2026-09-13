@@ -4,26 +4,16 @@ import logging
 import signal
 import threading
 import time
-from datetime import datetime, time as dtime
+from datetime import datetime
 from types import SimpleNamespace
-from zoneinfo import ZoneInfo
 
 from .collector import QuoteCollector
+from .market_session import VN_TZ, market_feed_stale
 from .settings import Settings
 from .storage import SQLiteStore
 from .universe import load_universe
 
-VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 LOG = logging.getLogger("ssi_shadow")
-
-
-def _market_should_be_streaming(now: datetime) -> bool:
-    if now.weekday() >= 5:
-        return False
-    t = now.time()
-    morning = dtime(8, 45) <= t <= dtime(11, 35)
-    afternoon = dtime(12, 55) <= t <= dtime(15, 5)
-    return morning or afternoon
 
 
 def _ssi_config(settings: Settings) -> SimpleNamespace:
@@ -98,10 +88,11 @@ def main() -> int:
                 raise RuntimeError("SSI stream reported an error; process will exit for restart")
 
             now = datetime.now(VN_TZ)
-            if (
-                _market_should_be_streaming(now)
-                and collector.last_event_at is not None
-                and (now - collector.last_event_at).total_seconds() > settings.stale_stream_seconds
+            if market_feed_stale(
+                now,
+                collector_started_at=started_at,
+                last_accepted_event_at=collector.last_event_at,
+                stale_after_seconds=settings.stale_stream_seconds,
             ):
                 raise RuntimeError(
                     f"SSI stream stale for more than {settings.stale_stream_seconds}s during market session"

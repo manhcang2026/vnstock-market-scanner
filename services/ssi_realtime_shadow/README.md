@@ -1,13 +1,15 @@
 # SSI Realtime Shadow Collector
 
-Service này thu dữ liệu SSI FCData `X:ALL` song song với pipeline hiện tại và **không ghi đè production `stock_snapshot`** trong giai đoạn shadow.
+Service này thu dữ liệu SSI FCData `X:ALL` song song với pipeline hiện tại, là nền tảng ingest cho CCC V2, và **không ghi đè production `stock_snapshot`** trong giai đoạn shadow.
+
+Đặc tả engine V2: [`../../docs/product/CCC_V2_PRODUCT_ENGINE_SPEC_v2.0.md`](../../docs/product/CCC_V2_PRODUCT_ENGINE_SPEC_v2.0.md).
 
 ## Nguyên tắc
 
 - SSI FCData là nguồn realtime mới.
 - Chỉ giữ các mã thuộc scanner universe CCC (~800 mã).
 - Lưu dữ liệu 1 phút vào SQLite local để nhẹ, portable và không làm đầy Supabase Free.
-- Pipeline cũ vẫn chạy bình thường trong ít nhất 10 phiên đối chiếu.
+- Pipeline cũ vẫn chạy bình thường trong giai đoạn shadow/cutover.
 - Không commit `consumerID`, `consumerSecret`, Supabase service-role key hoặc SSI SDK archive vào Git.
 
 ## Chạy trực tiếp trên Windows khi chờ Oracle
@@ -74,6 +76,6 @@ Phiên bản này **chưa ghi production Supabase**. Mục tiêu đầu tiên l�
 - continuity theo phút;
 - reconnect;
 - giá/volume so với pipeline cũ;
-- dữ liệu đủ để xây RVOL30 chuẩn 10 phiên.
+- dữ liệu ingest đủ tin cậy để làm đầu vào cho các engine CCC V2 tiếp theo.
 
 Sau khi đạt tiêu chí cutover, service mới mở rộng API/WebSocket và writer sang bảng production/shadow phù hợp.
