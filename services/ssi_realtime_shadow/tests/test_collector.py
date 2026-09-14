@@ -1,3 +1,4 @@
+import json
 import logging
 import sqlite3
 from datetime import datetime
@@ -5,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from app.collector import QuoteCollector
+from app.collector import QuoteCollector, _extract_payloads
 from app.market_session import VN_TZ
 from app.realtime_volume import VolumeEvent
 from app.storage import SQLiteStore
@@ -26,6 +27,107 @@ def market_event(**overrides: object) -> dict[str, object]:
 
 def started_at(hour: int, minute: int, second: int = 0) -> datetime:
     return datetime(2026, 9, 14, hour, minute, second, tzinfo=VN_TZ)
+
+
+def official_x_payload(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "RType": "X",
+        "TradingDate": "14/09/2026",
+        "Time": "10:30:00",
+        "Symbol": "HPG",
+        "LastPrice": 27000,
+        "TotalVol": 123456,
+        "Exchange": "HOSE",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_extracts_official_ssi_content_json_string() -> None:
+    inner = official_x_payload()
+    outer = {"DataType": "X", "Content": json.dumps(inner)}
+
+    assert list(_extract_payloads(outer)) == [inner]
+
+
+def test_extracts_official_ssi_content_dict() -> None:
+    inner = official_x_payload(Symbol="SHS", Exchange="HNX")
+
+    assert list(_extract_payloads({"DataType": "X", "Content": inner})) == [inner]
+
+
+def test_extracts_lowercase_content_envelope() -> None:
+    inner = official_x_payload(Symbol="VGI", Exchange="UPCOM")
+
+    assert list(_extract_payloads({"DataType": "X", "content": inner})) == [inner]
+
+
+def test_extracts_x_trade_content_list_wrapper() -> None:
+    payloads = [
+        official_x_payload(Symbol="HPG"),
+        official_x_payload(Symbol="SHS", Exchange="HNX"),
+    ]
+    outer = {
+        "DataType": "X-TRADE",
+        "Content": [json.dumps(payloads[0]), payloads[1]],
+    }
+
+    assert list(_extract_payloads(outer)) == payloads
+
+
+def test_malformed_content_does_not_crash() -> None:
+    assert list(_extract_payloads({"DataType": "X", "Content": "{broken"})) == []
+
+
+def test_direct_symbol_payload_still_extracts_unchanged() -> None:
+    payload = official_x_payload()
+
+    assert list(_extract_payloads(payload)) == [payload]
+
+
+@pytest.mark.parametrize("key", ["data", "payload", "message"])
+def test_legacy_envelopes_still_extract(key: str) -> None:
+    payload = official_x_payload()
+
+    assert list(_extract_payloads({key: json.dumps(payload)})) == [payload]
+
+
+def test_collector_accepts_official_x_all_wrapper_and_emits_volume_event(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteStore(tmp_path / "test.db", commit_every_events=1)
+    received: list[VolumeEvent] = []
+    collector = QuoteCollector(
+        {"HPG"},
+        store,
+        started_at=started_at(8, 30),
+        volume_event_handler=received.append,
+    )
+    inner = official_x_payload()
+
+    collector.on_message(
+        {"DataType": "X", "Content": json.dumps(inner, separators=(",", ":"))}
+    )
+
+    bar = store._conn.execute(
+        "SELECT symbol, minute, volume FROM minute_bars"
+    ).fetchone()
+    quote = store._conn.execute(
+        "SELECT symbol, event_time, total_volume FROM latest_quotes"
+    ).fetchone()
+    assert collector.stats.received_messages == 1
+    assert collector.stats.accepted_events == 1
+    assert bar["symbol"] == "HPG"
+    assert bar["minute"] == "10:30"
+    assert bar["volume"] == 123456
+    assert quote["symbol"] == "HPG"
+    assert quote["event_time"] == "10:30:00"
+    assert quote["total_volume"] == 123456
+    assert len(received) == 1
+    assert received[0].symbol == "HPG"
+    assert received[0].volume_delta == 123456
+    assert collector.stats.volume_shadow_events == 1
+    store.close()
 
 
 def test_minute_volume_uses_cumulative_delta(tmp_path: Path) -> None:

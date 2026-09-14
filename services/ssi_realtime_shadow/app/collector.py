@@ -126,7 +126,16 @@ def _extract_payloads(message: Any) -> Iterable[dict[str, Any]]:
     if _first(message, "Symbol"):
         return [message]
 
-    for key in ("data", "Data", "payload", "Payload", "message", "Message"):
+    for key in (
+        "Content",
+        "content",
+        "data",
+        "Data",
+        "payload",
+        "Payload",
+        "message",
+        "Message",
+    ):
         nested = message.get(key)
         if nested is not None:
             payloads = list(_extract_payloads(nested))
