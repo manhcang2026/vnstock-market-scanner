@@ -12,6 +12,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from .access_control import (
+    AuthenticationRequired,
+    EntitlementServiceUnavailable,
+    SupabaseEntitlementClient,
+    TechnicalAccessDecision,
+    extract_bearer_token,
+)
 from .chart_data import ChartDataStore, SYMBOL_RE
 
 
@@ -85,29 +92,74 @@ def _response(handler: BaseHTTPRequestHandler, status: int, payload: dict) -> No
 
 
 class ChartAPIHandler(BaseHTTPRequestHandler):
-    server_version = "CCCChartAPI/1.1"
+    server_version = "CCCChartAPI/1.2"
 
     @property
     def store(self) -> ChartDataStore:
         return self.server.store  # type: ignore[attr-defined]
 
+    @property
+    def access_client(self) -> SupabaseEntitlementClient:
+        return self.server.access_client  # type: ignore[attr-defined]
+
     def log_message(self, format: str, *args) -> None:
+        # Standard access log only; Authorization header is never logged here.
         super().log_message(format, *args)
+
+    def _technical_access(
+        self, symbol: str
+    ) -> tuple[TechnicalAccessDecision | None, bool]:
+        token = extract_bearer_token(self.headers.get("Authorization"))
+        if token is None:
+            _response(
+                self,
+                HTTPStatus.UNAUTHORIZED,
+                {
+                    "error": "AUTH_REQUIRED",
+                    "message": "Authenticated Supabase session required.",
+                },
+            )
+            return None, False
+
+        try:
+            decision = self.access_client.check(token=token, symbol=symbol)
+        except AuthenticationRequired:
+            _response(
+                self,
+                HTTPStatus.UNAUTHORIZED,
+                {
+                    "error": "INVALID_OR_EXPIRED_SESSION",
+                    "message": "Please sign in again.",
+                },
+            )
+            return None, False
+        except EntitlementServiceUnavailable:
+            # Fail closed: protected data is not returned if entitlement authority fails.
+            _response(
+                self,
+                HTTPStatus.SERVICE_UNAVAILABLE,
+                {
+                    "error": "ENTITLEMENT_UNAVAILABLE",
+                    "message": "Technical access could not be verified.",
+                },
+            )
+            return None, False
+
+        return decision, True
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
+
+        # Private-network health endpoint. Nginx must not rewrite a public URL here.
         if parsed.path == "/health":
             _response(
                 self,
                 HTTPStatus.OK,
-                {
-                    "ok": True,
-                    "history_db": str(self.store.history_path),
-                    "realtime_db": str(self.store.realtime_path),
-                },
+                {"ok": True, "service": "ccc-chart-api"},
             )
             return
 
+        # Public Market Quote: intentionally public by product contract.
         quote_prefix = "/v1/quote/"
         if parsed.path.startswith(quote_prefix):
             try:
@@ -139,16 +191,64 @@ class ChartAPIHandler(BaseHTTPRequestHandler):
             _response(self, HTTPStatus.OK, quote)
             return
 
-        prefix = "/v1/chart/"
-        if not parsed.path.startswith(prefix):
+        # Authenticated entitlement introspection for Stock Detail locked/unlocked state.
+        access_prefix = "/v1/access/"
+        if parsed.path.startswith(access_prefix):
+            try:
+                symbol = _normalize_symbol(parsed.path[len(access_prefix) :])
+            except ValueError as exc:
+                _response(
+                    self,
+                    HTTPStatus.BAD_REQUEST,
+                    {"error": "INVALID_REQUEST", "message": str(exc)},
+                )
+                return
+
+            decision, authenticated = self._technical_access(symbol)
+            if not authenticated or decision is None:
+                return
+
+            _response(self, HTTPStatus.OK, decision.to_public_payload())
+            return
+
+        # Price/volume chart is treated as part of the authenticated technical
+        # workspace for V2. The backend enforces entitlement before touching chart data.
+        chart_prefix = "/v1/chart/"
+        if not parsed.path.startswith(chart_prefix):
             _response(self, HTTPStatus.NOT_FOUND, {"error": "NOT_FOUND"})
             return
 
-        symbol = parsed.path[len(prefix) :].strip().upper()
+        try:
+            symbol = _normalize_symbol(parsed.path[len(chart_prefix) :])
+        except ValueError as exc:
+            _response(
+                self,
+                HTTPStatus.BAD_REQUEST,
+                {"error": "INVALID_REQUEST", "message": str(exc)},
+            )
+            return
+
+        decision, authenticated = self._technical_access(symbol)
+        if not authenticated or decision is None:
+            return
+        if not decision.technical_allowed:
+            _response(
+                self,
+                HTTPStatus.FORBIDDEN,
+                {
+                    "error": "TECHNICAL_ACCESS_DENIED",
+                    "symbol": symbol,
+                    "reason": decision.reason,
+                    "plan_code": decision.plan_code,
+                },
+            )
+            return
+
         query = parse_qs(parsed.query)
         today = datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).date().isoformat()
         date_from = query.get("from", [today])[0]
         date_to = query.get("to", [today])[0]
+
         try:
             resolution = int(query.get("resolution", ["1"])[0])
             include_invalid = _bool_arg(query.get("include_invalid", ["0"])[0])
@@ -190,8 +290,15 @@ class ChartAPIHandler(BaseHTTPRequestHandler):
 class ChartHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, address, handler, store: ChartDataStore):
+    def __init__(
+        self,
+        address,
+        handler,
+        store: ChartDataStore,
+        access_client: SupabaseEntitlementClient | None = None,
+    ):
         self.store = store
+        self.access_client = access_client or SupabaseEntitlementClient()
         super().__init__(address, handler)
 
 
@@ -222,7 +329,12 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     store = ChartDataStore(args.history, args.realtime)
-    server = ChartHTTPServer((args.host, args.port), ChartAPIHandler, store)
+    server = ChartHTTPServer(
+        (args.host, args.port),
+        ChartAPIHandler,
+        store,
+        SupabaseEntitlementClient(),
+    )
     print(
         f"CCC Chart API listening on {args.host}:{args.port} "
         f"history={args.history} realtime={args.realtime}",
