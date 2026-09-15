@@ -29,6 +29,11 @@ CREATE TABLE minute_bars (
     updated_at TEXT NOT NULL,
     PRIMARY KEY (trading_date, minute, symbol)
 );
+
+CREATE TABLE daily_finalize_runs (
+    trading_date TEXT PRIMARY KEY,
+    status TEXT NOT NULL
+);
 """
 
 
@@ -78,7 +83,19 @@ def _insert(
     con.close()
 
 
-def test_history_is_canonical_and_realtime_fills_new_day(tmp_path: Path) -> None:
+def _finalize(path: Path, *, day: str, status: str) -> None:
+    con = sqlite3.connect(path)
+    con.execute(
+        "INSERT INTO daily_finalize_runs(trading_date, status) VALUES (?, ?)",
+        (day, status),
+    )
+    con.commit()
+    con.close()
+
+
+def test_finalized_history_is_canonical_by_day_and_realtime_fills_new_day(
+    tmp_path: Path,
+) -> None:
     history = tmp_path / "history.db"
     realtime = tmp_path / "realtime.db"
     _make_db(history)
@@ -96,8 +113,11 @@ def test_history_is_canonical_and_realtime_fills_new_day(tmp_path: Path) -> None
         day="2026-09-15",
         minute="09:00",
         close=11.0,
-        source="SSI_STREAM_FINAL",
+        source="SSI_REST",
     )
+    _finalize(history, day="2026-09-15", status="REST_PASS")
+
+    # Conflicting + extra realtime bars on a finalized day must both be ignored.
     _insert(
         realtime,
         day="2026-09-15",
@@ -106,6 +126,16 @@ def test_history_is_canonical_and_realtime_fills_new_day(tmp_path: Path) -> None
         high=100.0,
         source="SSI_STREAM",
     )
+    _insert(
+        realtime,
+        day="2026-09-15",
+        minute="09:01",
+        close=98.0,
+        high=100.0,
+        source="SSI_STREAM",
+    )
+
+    # Current/unfinalized day is still allowed to come from realtime.
     _insert(
         realtime,
         day="2026-09-16",
@@ -124,10 +154,101 @@ def test_history_is_canonical_and_realtime_fills_new_day(tmp_path: Path) -> None
     )
 
     assert len(result.bars) == 3
+    assert result.bars[0].data_source == "SSI_REST"
     assert result.bars[1].close == 11.0
-    assert result.bars[1].data_source == "SSI_STREAM_FINAL"
+    assert result.bars[1].data_source == "SSI_REST"
     assert result.bars[2].close == 12.0
     assert result.bars[2].data_source == "SSI_STREAM"
+    assert result.source_counts == {"SSI_REST": 2, "SSI_STREAM": 1}
+
+
+def test_finalized_day_suppresses_realtime_even_when_symbol_has_no_history_bar(
+    tmp_path: Path,
+) -> None:
+    history = tmp_path / "history.db"
+    realtime = tmp_path / "realtime.db"
+    _make_db(history)
+    _make_db(realtime)
+
+    _finalize(history, day="2026-09-15", status="REST_PASS")
+    _insert(
+        realtime,
+        day="2026-09-15",
+        minute="09:00",
+        symbol="HPG",
+        source="SSI_STREAM",
+    )
+
+    result = ChartDataStore(history, realtime).query(
+        symbol="HPG",
+        date_from="2026-09-15",
+        date_to="2026-09-15",
+    )
+
+    assert result.bars == ()
+    assert result.source_counts == {}
+
+
+def test_legacy_rest_history_without_finalize_metadata_is_canonical(
+    tmp_path: Path,
+) -> None:
+    history = tmp_path / "history.db"
+    realtime = tmp_path / "realtime.db"
+    _make_db(history)
+    _make_db(realtime)
+
+    _insert(
+        history,
+        day="2026-09-14",
+        minute="09:00",
+        source="SSI_REST",
+    )
+    _insert(
+        realtime,
+        day="2026-09-14",
+        minute="09:01",
+        source="SSI_STREAM",
+    )
+
+    result = ChartDataStore(history, realtime).query(
+        symbol="HPG",
+        date_from="2026-09-14",
+        date_to="2026-09-14",
+    )
+
+    assert len(result.bars) == 1
+    assert result.bars[0].minute == "09:00"
+    assert result.bars[0].data_source == "SSI_REST"
+
+
+def test_blocked_day_can_still_use_realtime_fill(tmp_path: Path) -> None:
+    history = tmp_path / "history.db"
+    realtime = tmp_path / "realtime.db"
+    _make_db(history)
+    _make_db(realtime)
+
+    _insert(
+        history,
+        day="2026-09-15",
+        minute="09:00",
+        source="SSI_REST",
+    )
+    _finalize(history, day="2026-09-15", status="REST_BLOCKED")
+    _insert(
+        realtime,
+        day="2026-09-15",
+        minute="09:01",
+        source="SSI_STREAM",
+    )
+
+    result = ChartDataStore(history, realtime).query(
+        symbol="HPG",
+        date_from="2026-09-15",
+        date_to="2026-09-15",
+    )
+
+    assert len(result.bars) == 2
+    assert result.source_counts == {"SSI_REST": 1, "SSI_STREAM": 1}
 
 
 def test_invalid_ohlc_is_filtered_by_default(tmp_path: Path) -> None:

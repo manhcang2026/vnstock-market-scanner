@@ -9,6 +9,8 @@ from typing import Iterable
 
 SYMBOL_RE = re.compile(r"^[A-Z0-9]{2,12}$")
 ALLOWED_RESOLUTIONS = {1, 5, 15, 30, 60}
+FINALIZED_STATUSES = {"PASS", "REST_PASS"}
+CANONICAL_HISTORY_SOURCES = {"SSI_REST", "SSI_STREAM_FINAL"}
 
 
 @dataclass(frozen=True)
@@ -102,6 +104,72 @@ def _fetch_rows(
         ).fetchall()
     finally:
         conn.close()
+
+
+def _fetch_finalize_statuses(
+    path: Path,
+    *,
+    date_from: str,
+    date_to: str,
+) -> dict[str, str]:
+    """Return day-level finalize states when the metadata table exists."""
+    conn = _connect_readonly(path)
+    if conn is None:
+        return {}
+    try:
+        exists = conn.execute(
+            """
+            SELECT 1
+            FROM sqlite_master
+            WHERE type='table' AND name='daily_finalize_runs'
+            """
+        ).fetchone()
+        if not exists:
+            return {}
+        return {
+            str(row["trading_date"]): str(row["status"])
+            for row in conn.execute(
+                """
+                SELECT trading_date, status
+                FROM daily_finalize_runs
+                WHERE trading_date BETWEEN ? AND ?
+                """,
+                (date_from, date_to),
+            ).fetchall()
+        }
+    finally:
+        conn.close()
+
+
+def _canonical_history_dates(
+    history_rows: Iterable[sqlite3.Row],
+    finalize_statuses: dict[str, str],
+) -> set[str]:
+    """Choose dates where history wins at the whole-day level.
+
+    PASS/REST_PASS is authoritative even when one symbol has no historical bars.
+    Older SSI_REST/SSI_STREAM_FINAL history created before daily-finalize metadata
+    existed is also canonical. Explicit BLOCKED/REST_BLOCKED metadata prevents
+    legacy-source inference for that day.
+    """
+    canonical = {
+        day
+        for day, status in finalize_statuses.items()
+        if status in FINALIZED_STATUSES
+    }
+
+    sources_by_day: dict[str, set[str]] = {}
+    for row in history_rows:
+        day = str(row["trading_date"])
+        sources_by_day.setdefault(day, set()).add(str(row["data_source"]))
+
+    for day, sources in sources_by_day.items():
+        if day in finalize_statuses:
+            continue
+        if sources & CANONICAL_HISTORY_SOURCES:
+            canonical.add(day)
+
+    return canonical
 
 
 def _row_to_bar(row: sqlite3.Row, *, invalid_override: bool = False) -> ChartBar:
@@ -211,16 +279,28 @@ class ChartDataStore:
             date_from=date_from,
             date_to=date_to,
         )
+        finalize_statuses = _fetch_finalize_statuses(
+            self.history_path,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        canonical_dates = _canonical_history_dates(
+            history_rows,
+            finalize_statuses,
+        )
 
-        # History is canonical after daily finalize. Realtime only fills keys not yet
-        # promoted (normally the current trading day).
+        # History wins for an entire canonical day. Realtime may only fill a date
+        # that has not been finalized/canonicalized yet (normally the current day).
         merged: dict[tuple[str, str], sqlite3.Row] = {
             (str(row["trading_date"]), str(row["minute"])): row
             for row in history_rows
         }
         for row in realtime_rows:
+            day = str(row["trading_date"])
+            if day in canonical_dates:
+                continue
             merged.setdefault(
-                (str(row["trading_date"]), str(row["minute"])),
+                (day, str(row["minute"])),
                 row,
             )
 
