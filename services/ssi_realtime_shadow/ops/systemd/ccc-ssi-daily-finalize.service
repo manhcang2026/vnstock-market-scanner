@@ -1,0 +1,9 @@
+[Unit]
+Description=CCC SSI daily finalize
+Requires=docker.service
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/docker exec ccc-ssi-shadow python -m app.daily_finalize --source /app/data/ssi_shadow.db --history /app/data/ssi_history_2026.db
+TimeoutStartSec=15min

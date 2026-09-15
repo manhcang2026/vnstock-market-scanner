@@ -1,0 +1,11 @@
+[Unit]
+Description=Run CCC SSI daily finalize after market close
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 15:35:00 Asia/Ho_Chi_Minh
+Persistent=true
+AccuracySec=1min
+Unit=ccc-ssi-daily-finalize.service
+
+[Install]
+WantedBy=timers.target

@@ -1,6 +1,7 @@
 services:
   collector:
     build: .
+    image: ccc-ssi-realtime:local
     container_name: ccc-ssi-shadow
     restart: unless-stopped
     env_file:
@@ -9,3 +10,20 @@ services:
       - ./data:/app/data
     environment:
       DATABASE_PATH: /app/data/ssi_shadow.db
+
+  chart-api:
+    image: ccc-ssi-realtime:local
+    container_name: ccc-chart-api
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data:ro
+    command:
+      - python
+      - -m
+      - app.chart_api
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8787"
+    ports:
+      - "127.0.0.1:8787:8787"
