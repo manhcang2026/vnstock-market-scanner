@@ -1,9 +1,9 @@
 [Unit]
-Description=CCC SSI daily finalize
+Description=CCC SSI daily finalize with REST fallback
 Requires=docker.service
 After=docker.service network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/docker exec ccc-ssi-shadow python -m app.daily_finalize --source /app/data/ssi_shadow.db --history /app/data/ssi_history_2026.db
-TimeoutStartSec=15min
+ExecStart=/opt/ccc-realtime/app/services/ssi_realtime_shadow/ops/systemd/ccc-ssi-daily-finalize-wrapper.sh
+TimeoutStartSec=45min
