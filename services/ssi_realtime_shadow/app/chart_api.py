@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sqlite3
 from dataclasses import asdict
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -11,11 +12,66 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from .chart_data import ChartDataStore
+from .chart_data import ChartDataStore, SYMBOL_RE
+
+
+QUOTE_COLUMNS = (
+    "symbol",
+    "trading_date",
+    "event_time",
+    "last_price",
+    "total_volume",
+    "ref_price",
+    "open",
+    "high",
+    "low",
+    "close",
+    "bid_price1",
+    "bid_vol1",
+    "ask_price1",
+    "ask_vol1",
+    "change",
+    "ratio_change",
+    "exchange",
+    "trading_session",
+    "trading_status",
+    "updated_at",
+)
 
 
 def _bool_arg(value: str | None) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _normalize_symbol(symbol: str) -> str:
+    normalized = symbol.strip().upper()
+    if not SYMBOL_RE.fullmatch(normalized):
+        raise ValueError("invalid symbol")
+    return normalized
+
+
+def _fetch_latest_quote(path: Path, symbol: str) -> dict | None:
+    """Read one current quote from the realtime SQLite DB in read-only mode."""
+    symbol = _normalize_symbol(symbol)
+    if not path.exists():
+        return None
+
+    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5)
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("PRAGMA query_only=ON")
+        conn.execute("PRAGMA busy_timeout=5000")
+        row = conn.execute(
+            f"SELECT {', '.join(QUOTE_COLUMNS)} FROM latest_quotes WHERE symbol = ?",
+            (symbol,),
+        ).fetchone()
+        if row is None:
+            return None
+        payload = {column: row[column] for column in QUOTE_COLUMNS}
+        payload["source"] = "SSI_STREAM"
+        return payload
+    finally:
+        conn.close()
 
 
 def _response(handler: BaseHTTPRequestHandler, status: int, payload: dict) -> None:
@@ -29,14 +85,13 @@ def _response(handler: BaseHTTPRequestHandler, status: int, payload: dict) -> No
 
 
 class ChartAPIHandler(BaseHTTPRequestHandler):
-    server_version = "CCCChartAPI/1.0"
+    server_version = "CCCChartAPI/1.1"
 
     @property
     def store(self) -> ChartDataStore:
         return self.server.store  # type: ignore[attr-defined]
 
     def log_message(self, format: str, *args) -> None:
-        # Keep standard HTTP access logs, but avoid reverse-DNS work.
         super().log_message(format, *args)
 
     def do_GET(self) -> None:
@@ -51,6 +106,37 @@ class ChartAPIHandler(BaseHTTPRequestHandler):
                     "realtime_db": str(self.store.realtime_path),
                 },
             )
+            return
+
+        quote_prefix = "/v1/quote/"
+        if parsed.path.startswith(quote_prefix):
+            try:
+                symbol = _normalize_symbol(parsed.path[len(quote_prefix) :])
+                quote = _fetch_latest_quote(self.store.realtime_path, symbol)
+            except ValueError as exc:
+                _response(
+                    self,
+                    HTTPStatus.BAD_REQUEST,
+                    {"error": "INVALID_REQUEST", "message": str(exc)},
+                )
+                return
+            except (sqlite3.Error, OSError) as exc:
+                _response(
+                    self,
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                    {"error": "INTERNAL_ERROR", "message": type(exc).__name__},
+                )
+                return
+
+            if quote is None:
+                _response(
+                    self,
+                    HTTPStatus.NOT_FOUND,
+                    {"error": "QUOTE_NOT_FOUND", "symbol": symbol},
+                )
+                return
+
+            _response(self, HTTPStatus.OK, quote)
             return
 
         prefix = "/v1/chart/"
