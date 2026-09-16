@@ -69,10 +69,17 @@ def _validate_date(value: str) -> str:
         raise ValueError("date must be YYYY-MM-DD") from exc
 
 
-def _connect_readonly(path: Path) -> sqlite3.Connection | None:
+def _connect_readonly(
+    path: Path,
+    *,
+    immutable: bool = False,
+) -> sqlite3.Connection | None:
     if not path.exists():
         return None
-    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=15)
+    uri = f"file:{path}?mode=ro"
+    if immutable:
+        uri += "&immutable=1"
+    conn = sqlite3.connect(uri, uri=True, timeout=15)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA query_only=ON")
     conn.execute("PRAGMA busy_timeout=15000")
@@ -85,8 +92,9 @@ def _fetch_rows(
     symbol: str,
     date_from: str,
     date_to: str,
+    immutable: bool = False,
 ) -> list[sqlite3.Row]:
-    conn = _connect_readonly(path)
+    conn = _connect_readonly(path, immutable=immutable)
     if conn is None:
         return []
     try:
@@ -111,9 +119,10 @@ def _fetch_finalize_statuses(
     *,
     date_from: str,
     date_to: str,
+    immutable: bool = False,
 ) -> dict[str, str]:
     """Return day-level finalize states when the metadata table exists."""
-    conn = _connect_readonly(path)
+    conn = _connect_readonly(path, immutable=immutable)
     if conn is None:
         return {}
     try:
@@ -272,6 +281,7 @@ class ChartDataStore:
             symbol=symbol,
             date_from=date_from,
             date_to=date_to,
+            immutable=True,
         )
         realtime_rows = _fetch_rows(
             self.realtime_path,
@@ -283,6 +293,7 @@ class ChartDataStore:
             self.history_path,
             date_from=date_from,
             date_to=date_to,
+            immutable=True,
         )
         canonical_dates = _canonical_history_dates(
             history_rows,
