@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Iterable
 
 SYMBOL_RE = re.compile(r"^[A-Z0-9]{2,12}$")
-ALLOWED_RESOLUTIONS = {1, 5, 15, 30, 60}
+ALLOWED_RESOLUTIONS = {1, 5, 15, 30, 60, 1440}
 FINALIZED_STATUSES = {"PASS", "REST_PASS"}
 CANONICAL_HISTORY_SOURCES = {"SSI_REST", "SSI_STREAM_FINAL"}
 
@@ -214,8 +214,40 @@ def _quality_rank(status: str) -> int:
 
 
 def _aggregate(bars: Iterable[ChartBar], resolution: int) -> tuple[ChartBar, ...]:
+    bars = tuple(bars)
     if resolution == 1:
-        return tuple(bars)
+        return bars
+
+    if resolution == 1440:
+        grouped_daily: dict[str, list[ChartBar]] = {}
+        for bar in bars:
+            grouped_daily.setdefault(bar.trading_date, []).append(bar)
+
+        out_daily: list[ChartBar] = []
+        for trading_date, items in sorted(grouped_daily.items()):
+            items.sort(key=lambda item: item.minute)
+            first = items[0]
+            last = items[-1]
+            worst = max(items, key=lambda item: _quality_rank(item.quality_status))
+            sources = {item.data_source for item in items}
+            out_daily.append(
+                ChartBar(
+                    trading_date=trading_date,
+                    minute="09:00",
+                    symbol=first.symbol,
+                    exchange=first.exchange,
+                    open=first.open,
+                    high=max(item.high for item in items),
+                    low=min(item.low for item in items),
+                    close=last.close,
+                    volume=sum(item.volume for item in items),
+                    quality_status=worst.quality_status,
+                    data_source=next(iter(sources)) if len(sources) == 1 else "MIXED",
+                    provider_time=last.provider_time,
+                )
+            )
+        return tuple(out_daily)
+
     grouped: dict[tuple[str, int], list[ChartBar]] = {}
     for bar in bars:
         hour, minute = (int(part) for part in bar.minute.split(":", 1))

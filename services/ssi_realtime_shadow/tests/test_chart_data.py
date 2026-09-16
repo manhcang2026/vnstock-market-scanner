@@ -338,3 +338,33 @@ def test_five_minute_aggregation(tmp_path: Path) -> None:
     assert bar.low == 9
     assert bar.close == 12
     assert bar.volume == 600
+
+
+def test_daily_aggregation_returns_one_bar_per_trading_date(tmp_path: Path) -> None:
+    history = tmp_path / "history.db"
+    realtime = tmp_path / "realtime.db"
+    _make_db(history)
+    _make_db(realtime)
+
+    _insert(history, day="2026-09-15", minute="09:00",
+            open_price=10, high=11, low=9, close=10.5, volume=100)
+    _insert(history, day="2026-09-15", minute="14:45",
+            open_price=10.5, high=12, low=10, close=11.5, volume=200)
+    _insert(realtime, day="2026-09-16", minute="09:00",
+            open_price=12, high=13, low=11, close=12.5, volume=300,
+            source="SSI_STREAM")
+
+    result = ChartDataStore(history, realtime).query(
+        symbol="HPG",
+        date_from="2026-09-15",
+        date_to="2026-09-16",
+        resolution=1440,
+    )
+
+    assert len(result.bars) == 2
+    assert result.bars[0].open == 10
+    assert result.bars[0].high == 12
+    assert result.bars[0].low == 9
+    assert result.bars[0].close == 11.5
+    assert result.bars[0].volume == 300
+    assert result.bars[1].trading_date == "2026-09-16"
