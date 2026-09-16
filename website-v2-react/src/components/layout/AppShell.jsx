@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../auth/AuthContext'
+import { findUniqueStockByName } from '../../lib/stockSearch'
 
 const navItems = [
   { to: '/', label: 'Tổng quan', short: 'Tổng quan' },
@@ -9,12 +10,15 @@ const navItems = [
   { to: '/sang-loc-co-ban', label: 'Sàng lọc cơ bản', short: 'Sàng lọc' },
 ]
 
+const SYMBOL_RE = /^[A-Z0-9]{2,12}$/
+
 function navClass({ isActive }) {
   return `nav-link${isActive ? ' is-active' : ''}`
 }
 
 export default function AppShell() {
   const [theme, setTheme] = useState(() => localStorage.getItem('ccc-theme') || 'dark')
+  const [searchBusy, setSearchBusy] = useState(false)
   const navigate = useNavigate()
   const { user, ready } = useAuth()
 
@@ -23,11 +27,36 @@ export default function AppShell() {
     localStorage.setItem('ccc-theme', theme)
   }, [theme])
 
-  function onSearch(event) {
+  async function onSearch(event) {
     event.preventDefault()
     const form = new FormData(event.currentTarget)
-    const query = String(form.get('q') || '').trim().toUpperCase()
-    navigate(query ? `/danh-sach?q=${encodeURIComponent(query)}` : '/danh-sach')
+    const rawQuery = String(form.get('q') || '').trim()
+    const tickerQuery = rawQuery.toUpperCase()
+
+    if (!rawQuery) {
+      navigate('/danh-sach')
+      return
+    }
+
+    if (SYMBOL_RE.test(tickerQuery)) {
+      navigate(`/co-phieu/${encodeURIComponent(tickerQuery)}`)
+      return
+    }
+
+    setSearchBusy(true)
+    try {
+      const match = await findUniqueStockByName(rawQuery)
+      if (match?.symbol) {
+        navigate(`/co-phieu/${encodeURIComponent(match.symbol)}`)
+        return
+      }
+    } catch {
+      // Fall through to Scanner search when metadata lookup is unavailable.
+    } finally {
+      setSearchBusy(false)
+    }
+
+    navigate(`/danh-sach?q=${encodeURIComponent(tickerQuery)}`)
   }
 
   return (
@@ -49,7 +78,9 @@ export default function AppShell() {
             autoComplete="off"
             aria-label="Tìm mã chứng khoán"
           />
-          <button type="submit">Tìm</button>
+          <button type="submit" disabled={searchBusy}>
+            {searchBusy ? '...' : 'Tìm'}
+          </button>
         </form>
 
         <div className="top-actions">
