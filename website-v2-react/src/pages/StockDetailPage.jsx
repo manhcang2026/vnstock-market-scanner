@@ -1,11 +1,28 @@
-import { useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
-import PriceVolumeChart from '../components/stock/PriceVolumeChart'
 import { fetchChart, fetchQuote, fetchTechnicalAccess } from '../lib/cccApi'
 import '../styles/stock-detail.css'
 
+const TradingChart = lazy(() => import('../components/stock/TradingChart'))
+
 const SYMBOL_RE = /^[A-Z0-9]{2,12}$/
+const ALLOWED_RESOLUTIONS = new Set([5, 15, 30, 60, 1440])
+
+const LOOKBACK_DAYS = {
+  5: 7,
+  15: 30,
+  30: 60,
+  60: 120,
+  1440: 730,
+}
+
+function subtractDays(dateText, days) {
+  const [year, month, day] = dateText.split('-').map(Number)
+  const date = new Date(Date.UTC(year, month - 1, day))
+  date.setUTCDate(date.getUTCDate() - days)
+  return date.toISOString().slice(0, 10)
+}
 
 function normalizeSymbol(value) {
   return String(value || '').trim().toUpperCase()
@@ -35,6 +52,7 @@ export default function StockDetailPage() {
   const validSymbol = SYMBOL_RE.test(symbol)
   const { user, accessToken, ready } = useAuth()
 
+  const [resolution, setResolution] = useState(5)
   const [quoteState, setQuoteState] = useState({ symbol: '', data: null, error: '' })
   const [accessState, setAccessState] = useState({ symbol: '', data: null, error: '' })
   const [chartState, setChartState] = useState({ key: '', data: null, error: '' })
@@ -93,13 +111,16 @@ export default function StockDetailPage() {
   }, [ready, user, accessToken, fetchedAccess])
 
   const chartDate = quote?.trading_date || ''
-  const chartKey = `${symbol}:${chartDate}`
+  const lookbackDays = LOOKBACK_DAYS[resolution] ?? 30
+  const chartFrom = chartDate ? subtractDays(chartDate, lookbackDays) : ''
+  const chartKey = `${symbol}:${chartFrom}:${chartDate}:${resolution}`
 
   useEffect(() => {
     if (!validSymbol || !chartDate || !accessToken || !access?.technical_allowed) return undefined
+    if (!ALLOWED_RESOLUTIONS.has(resolution)) return undefined
 
     const controller = new AbortController()
-    const query = `from=${encodeURIComponent(chartDate)}&to=${encodeURIComponent(chartDate)}&resolution=1`
+    const query = `from=${encodeURIComponent(chartFrom)}&to=${encodeURIComponent(chartDate)}&resolution=${resolution}`
 
     fetchChart(symbol, query, { token: accessToken, signal: controller.signal })
       .then((data) => setChartState({ key: chartKey, data, error: '' }))
@@ -113,7 +134,16 @@ export default function StockDetailPage() {
       })
 
     return () => controller.abort()
-  }, [symbol, validSymbol, chartDate, chartKey, accessToken, access?.technical_allowed])
+  }, [
+    symbol,
+    validSymbol,
+    chartDate,
+    chartFrom,
+    chartKey,
+    resolution,
+    accessToken,
+    access?.technical_allowed,
+  ])
 
   if (!validSymbol) {
     return (
@@ -137,6 +167,7 @@ export default function StockDetailPage() {
   const chart = chartState.key === chartKey ? chartState.data : null
   const chartError = chartState.key === chartKey ? chartState.error : ''
   const bars = Array.isArray(chart?.bars) ? chart.bars : []
+  const chartLoading = access?.technical_allowed && !chart && !chartError
 
   const accessLoading = ready && user && !fetchedAccess && !accessError
 
@@ -192,7 +223,7 @@ export default function StockDetailPage() {
             <header className="detail-card-header">
               <div>
                 <span className="detail-eyebrow">Price / Volume</span>
-                <h2>Biểu đồ trong phiên</h2>
+                <h2>Biểu đồ kỹ thuật</h2>
               </div>
               {chart ? (
                 <div className="chart-source">
@@ -221,10 +252,17 @@ export default function StockDetailPage() {
               </div>
             ) : chartError ? (
               <div className="detail-state is-error">{chartError}</div>
-            ) : !chart ? (
-              <div className="detail-state">Đang tải biểu đồ giá/khối lượng…</div>
+            ) : chartLoading ? (
+              <div className="detail-state">Đang tải biểu đồ kỹ thuật…</div>
             ) : (
-              <PriceVolumeChart bars={bars} />
+              <Suspense fallback={<div className="detail-state">Đang tải chart engine…</div>}>
+                <TradingChart
+                  bars={bars}
+                  resolution={resolution}
+                  onResolutionChange={setResolution}
+                  loading={chartLoading}
+                />
+              </Suspense>
             )}
           </section>
         </div>
