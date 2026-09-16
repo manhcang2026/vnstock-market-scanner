@@ -9,6 +9,7 @@ const TradingChart = lazy(() => import('../components/stock/TradingChart'))
 const SYMBOL_RE = /^[A-Z0-9]{2,12}$/
 const ALLOWED_RESOLUTIONS = new Set([5, 15, 30, 60, 1440])
 
+// CCC_LAZY_HISTORY_V2
 const LOOKBACK_DAYS = {
   5: 7,
   15: 30,
@@ -17,11 +18,82 @@ const LOOKBACK_DAYS = {
   1440: 730,
 }
 
+const HISTORY_FLOOR = '2026-01-05'
+
+const HISTORY_EXPAND_DAYS = {
+  5: 30,
+  15: 60,
+  30: 90,
+  60: 120,
+  1440: 365,
+}
+
 function subtractDays(dateText, days) {
   const [year, month, day] = dateText.split('-').map(Number)
   const date = new Date(Date.UTC(year, month - 1, day))
   date.setUTCDate(date.getUTCDate() - days)
   return date.toISOString().slice(0, 10)
+}
+
+function daysBetween(fromDate, toDate) {
+  const from = new Date(`${fromDate}T00:00:00Z`)
+  const to = new Date(`${toDate}T00:00:00Z`)
+  return Math.max(0, Math.ceil((to - from) / 86_400_000))
+}
+
+const CHART_CACHE_TTL_MS = 30_000
+const CHART_CACHE_MAX = 100
+const chartResponseCache = new Map()
+const chartRequestCache = new Map()
+
+function getCachedChart(key) {
+  const item = chartResponseCache.get(key)
+  if (!item) return null
+  if (Date.now() - item.savedAt > CHART_CACHE_TTL_MS) {
+    chartResponseCache.delete(key)
+    return null
+  }
+  return item.data
+}
+
+function putCachedChart(key, data) {
+  if (chartResponseCache.size >= CHART_CACHE_MAX) {
+    const firstKey = chartResponseCache.keys().next().value
+    if (firstKey) chartResponseCache.delete(firstKey)
+  }
+  chartResponseCache.set(key, { data, savedAt: Date.now() })
+}
+
+function chartRequestFor(
+  symbol,
+  chartDate,
+  resolution,
+  lookbackDays = LOOKBACK_DAYS[resolution] ?? 30,
+) {
+  const chartFrom = subtractDays(chartDate, lookbackDays)
+  const key = `${symbol}:${chartFrom}:${chartDate}:${resolution}`
+  const query = `from=${encodeURIComponent(chartFrom)}&to=${encodeURIComponent(chartDate)}&resolution=${resolution}`
+  return { key, query, chartFrom }
+}
+
+function loadChartCached({ key, symbol, query, token }) {
+  const cached = getCachedChart(key)
+  if (cached) return Promise.resolve(cached)
+
+  const inFlight = chartRequestCache.get(key)
+  if (inFlight) return inFlight
+
+  const request = fetchChart(symbol, query, { token })
+    .then((data) => {
+      putCachedChart(key, data)
+      return data
+    })
+    .finally(() => {
+      chartRequestCache.delete(key)
+    })
+
+  chartRequestCache.set(key, request)
+  return request
 }
 
 function normalizeSymbol(value) {
@@ -55,7 +127,14 @@ export default function StockDetailPage() {
   const [resolution, setResolution] = useState(5)
   const [quoteState, setQuoteState] = useState({ symbol: '', data: null, error: '' })
   const [accessState, setAccessState] = useState({ symbol: '', data: null, error: '' })
-  const [chartState, setChartState] = useState({ key: '', data: null, error: '' })
+  const [chartState, setChartState] = useState({
+    key: '',
+    symbol: '',
+    resolution: null,
+    data: null,
+    error: '',
+  })
+  const [historyDepth, setHistoryDepth] = useState({})
 
   useEffect(() => {
     if (!validSymbol) return undefined
@@ -111,35 +190,86 @@ export default function StockDetailPage() {
   }, [ready, user, accessToken, fetchedAccess])
 
   const chartDate = quote?.trading_date || ''
-  const lookbackDays = LOOKBACK_DAYS[resolution] ?? 30
-  const chartFrom = chartDate ? subtractDays(chartDate, lookbackDays) : ''
-  const chartKey = `${symbol}:${chartFrom}:${chartDate}:${resolution}`
+  const historyDepthKey = `${symbol}:${resolution}`
+  const lookbackDays = historyDepth[historyDepthKey] ?? LOOKBACK_DAYS[resolution] ?? 30
+  const maxLookbackDays = chartDate ? daysBetween(HISTORY_FLOOR, chartDate) : lookbackDays
+  const effectiveLookbackDays = Math.min(lookbackDays, maxLookbackDays || lookbackDays)
+  const chartRequest = chartDate
+    ? chartRequestFor(symbol, chartDate, resolution, effectiveLookbackDays)
+    : { key: '', query: '', chartFrom: '' }
+  const chartKey = chartRequest.key
 
   useEffect(() => {
     if (!validSymbol || !chartDate || !accessToken || !access?.technical_allowed) return undefined
     if (!ALLOWED_RESOLUTIONS.has(resolution)) return undefined
 
-    const controller = new AbortController()
-    const query = `from=${encodeURIComponent(chartFrom)}&to=${encodeURIComponent(chartDate)}&resolution=${resolution}`
-
-    fetchChart(symbol, query, { token: accessToken, signal: controller.signal })
-      .then((data) => setChartState({ key: chartKey, data, error: '' }))
+    let active = true
+    loadChartCached({
+      key: chartKey,
+      symbol,
+      query: chartRequest.query,
+      token: accessToken,
+    })
+      .then((data) => {
+        if (active) {
+          setChartState({
+            key: chartKey,
+            symbol,
+            resolution,
+            data,
+            error: '',
+          })
+        }
+      })
       .catch((error) => {
-        if (abortError(error)) return
-        setChartState({
+        if (!active) return
+        setChartState((current) => ({
           key: chartKey,
-          data: null,
+          symbol,
+          resolution,
+          data: current.symbol === symbol && current.resolution === resolution
+            ? current.data
+            : null,
           error: error?.message || 'Không tải được biểu đồ.',
-        })
+        }))
       })
 
-    return () => controller.abort()
+    return () => {
+      active = false
+    }
   }, [
     symbol,
     validSymbol,
     chartDate,
-    chartFrom,
     chartKey,
+    chartRequest.query,
+    resolution,
+    accessToken,
+    access?.technical_allowed,
+  ])
+
+  useEffect(() => {
+    if (!validSymbol || !chartDate || !accessToken || !access?.technical_allowed) return undefined
+
+    const timer = window.setTimeout(() => {
+      for (const nextResolution of ALLOWED_RESOLUTIONS) {
+        if (nextResolution === resolution) continue
+        const next = chartRequestFor(symbol, chartDate, nextResolution)
+        if (getCachedChart(next.key)) continue
+        loadChartCached({
+          key: next.key,
+          symbol,
+          query: next.query,
+          token: accessToken,
+        }).catch(() => {})
+      }
+    }, 120)
+
+    return () => window.clearTimeout(timer)
+  }, [
+    symbol,
+    validSymbol,
+    chartDate,
     resolution,
     accessToken,
     access?.technical_allowed,
@@ -164,10 +294,45 @@ export default function StockDetailPage() {
       ? 'is-negative'
       : ''
 
-  const chart = chartState.key === chartKey ? chartState.data : null
-  const chartError = chartState.key === chartKey ? chartState.error : ''
+  const exactChart = chartState.key === chartKey ? chartState.data : null
+  const reusableChart = (
+    chartState.symbol === symbol
+    && chartState.resolution === resolution
+  ) ? chartState.data : null
+  const chart = exactChart || reusableChart
+  const chartError = chartState.key === chartKey && !chartState.data
+    ? chartState.error
+    : ''
   const bars = Array.isArray(chart?.bars) ? chart.bars : []
   const chartLoading = access?.technical_allowed && !chart && !chartError
+  const loadingOlderHistory = Boolean(
+    chart
+    && chartState.symbol === symbol
+    && chartState.resolution === resolution
+    && chartState.key !== chartKey,
+  )
+
+  const earliestLoadedDate = bars[0]?.trading_date || ''
+  const hasMoreHistory = Boolean(
+    earliestLoadedDate
+    && earliestLoadedDate > HISTORY_FLOOR
+    && effectiveLookbackDays < maxLookbackDays,
+  )
+
+  function loadOlderHistory() {
+    if (!chartDate || loadingOlderHistory || !hasMoreHistory) return
+
+    const step = HISTORY_EXPAND_DAYS[resolution] ?? 90
+    setHistoryDepth((current) => {
+      const currentDepth = current[historyDepthKey] ?? LOOKBACK_DAYS[resolution] ?? 30
+      const nextDepth = Math.min(maxLookbackDays, currentDepth + step)
+      if (nextDepth <= currentDepth) return current
+      return {
+        ...current,
+        [historyDepthKey]: nextDepth,
+      }
+    })
+  }
 
   const accessLoading = ready && user && !fetchedAccess && !accessError
 
@@ -257,10 +422,14 @@ export default function StockDetailPage() {
             ) : (
               <Suspense fallback={<div className="detail-state">Đang tải chart engine…</div>}>
                 <TradingChart
+                  key={`${symbol}:${resolution}`}
                   bars={bars}
                   resolution={resolution}
                   onResolutionChange={setResolution}
                   loading={chartLoading}
+                  loadingOlder={loadingOlderHistory}
+                  hasMoreHistory={hasMoreHistory}
+                  onNeedOlderHistory={loadOlderHistory}
                 />
               </Suspense>
             )}

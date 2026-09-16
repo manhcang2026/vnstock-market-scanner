@@ -39,6 +39,73 @@ function compactVolume(value) {
   return String(n)
 }
 
+// CCC_CHART_TOOLS_V2
+// CCC_FLOATING_CANDLE_INSPECTOR_V2
+function sma(values, period) {
+  const out = Array(values.length).fill(null)
+  if (period <= 0 || values.length < period) return out
+
+  let sum = 0
+  for (let i = 0; i < values.length; i += 1) {
+    sum += Number(values[i])
+    if (i >= period) sum -= Number(values[i - period])
+    if (i >= period - 1) out[i] = sum / period
+  }
+  return out
+}
+
+function bollinger(values, period = 20, multiplier = 2) {
+  const middle = sma(values, period)
+  return values.map((_, index) => {
+    if (index < period - 1 || middle[index] === null) return null
+    const start = index - period + 1
+    const mean = middle[index]
+    let squared = 0
+    for (let i = start; i <= index; i += 1) {
+      const delta = Number(values[i]) - mean
+      squared += delta * delta
+    }
+    const deviation = Math.sqrt(squared / period)
+    return {
+      middle: mean,
+      upper: mean + multiplier * deviation,
+      lower: mean - multiplier * deviation,
+    }
+  })
+}
+
+function bollingerLineData(bars, values, key) {
+  return bars.flatMap((bar, index) => {
+    const point = values[index]
+    const value = point?.[key]
+    if (value === null || value === undefined || Number.isNaN(value)) return []
+    return [{ time: toTimestamp(bar), value }]
+  })
+}
+
+function formatBarTime(bar, resolution) {
+  if (!bar) return '—'
+  const [year, month, day] = String(bar.trading_date || '').split('-')
+  if (!year || !month || !day) return '—'
+  if (resolution >= 1440) return `${day}/${month}/${year}`
+  return `${day}/${month}/${year} ${bar.minute || ''}`.trim()
+}
+
+function signedNumber(value) {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return '—'
+  return `${n > 0 ? '+' : ''}${priceFormat(n)}`
+}
+
+function signedPercent(value) {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return '—'
+  return `${n > 0 ? '+' : ''}${new Intl.NumberFormat('vi-VN', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(n)}%`
+}
+
 function ema(values, period) {
   if (!values.length) return []
   const alpha = 2 / (period + 1)
@@ -95,26 +162,61 @@ function lineData(bars, values, startAt = 0) {
   })
 }
 
+// CCC_LAZY_HISTORY_V2
 export default function TradingChart({
   bars = [],
   resolution = 5,
   onResolutionChange,
   loading = false,
+  loadingOlder = false,
+  hasMoreHistory = false,
+  onNeedOlderHistory,
 }) {
   const chartRef = useRef(null)
   const wrapRef = useRef(null)
-  const [showEma, setShowEma] = useState(true)
+  const viewportRef = useRef({ resolution: null, range: null })
+  const olderRequestRef = useRef(false)
+  const loadOlderCallbackRef = useRef(onNeedOlderHistory)
+  const historyStatusRef = useRef({ hasMoreHistory, loadingOlder })
+  const [maVisibility, setMaVisibility] = useState(() => {
+    const defaults = { 10: true, 25: true, 99: true, 200: true }
+    try {
+      const saved = window.localStorage.getItem('ccc-chart-ma-visibility')
+      return saved ? { ...defaults, ...JSON.parse(saved) } : defaults
+    } catch {
+      return defaults
+    }
+  })
+  const [showMaMenu, setShowMaMenu] = useState(false)
+  const [showBollinger, setShowBollinger] = useState(() => {
+    try {
+      return window.localStorage.getItem('ccc-chart-bollinger') !== '0'
+    } catch {
+      return true
+    }
+  })
   const [showRsi, setShowRsi] = useState(true)
   const [showMacd, setShowMacd] = useState(true)
   const [cursor, setCursor] = useState(null)
+  const [pinned, setPinned] = useState(null)
+
+  useEffect(() => {
+    loadOlderCallbackRef.current = onNeedOlderHistory
+  }, [onNeedOlderHistory])
+
+  useEffect(() => {
+    historyStatusRef.current = { hasMoreHistory, loadingOlder }
+    if (!loadingOlder) olderRequestRef.current = false
+  }, [hasMoreHistory, loadingOlder])
 
   const computed = useMemo(() => {
     const closes = bars.map((bar) => Number(bar.close))
     return {
-      ema7: ema(closes, 7),
-      ema25: ema(closes, 25),
-      ema99: ema(closes, 99),
-      ema200: ema(closes, 200),
+      ma10: sma(closes, 10),
+      ma25: sma(closes, 25),
+      ma99: sma(closes, 99),
+      ma200: sma(closes, 200),
+      bollinger20: bollinger(closes, 20, 2),
       rsi14: rsi(closes, 14),
       macd: macd(closes),
     }
@@ -229,28 +331,49 @@ export default function TradingChart({
     }))
     candleSeries.setData(candleData)
 
-    const emaSeries = []
-    if (showEma) {
-      const configs = [
-        [computed.ema7, '#f2c94c', 7],
-        [computed.ema25, '#db5ac5', 25],
-        [computed.ema99, '#9b7bd4', 99],
-        [computed.ema200, '#67cc75', 200],
+    const maConfigs = [
+      [10, computed.ma10, '#f2c94c'],
+      [25, computed.ma25, '#db5ac5'],
+      [99, computed.ma99, '#9b7bd4'],
+      [200, computed.ma200, '#67cc75'],
+    ]
+
+    maConfigs.forEach(([period, values, color]) => {
+      if (!maVisibility[period]) return
+      const series = chart.addSeries(
+        LineSeries,
+        {
+          color,
+          lineWidth: 1.5,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          crosshairMarkerVisible: false,
+        },
+        0,
+      )
+      series.setData(lineData(bars, values, period - 1))
+    })
+
+    if (showBollinger) {
+      const bbConfigs = [
+        ['upper', '#4aa3ff', 1],
+        ['middle', '#7f8ea8', 1],
+        ['lower', '#4aa3ff', 1],
       ]
-      configs.forEach(([values, color, startAt]) => {
+      bbConfigs.forEach(([key, color, lineWidth]) => {
         const series = chart.addSeries(
           LineSeries,
           {
             color,
-            lineWidth: 1.5,
+            lineWidth,
+            lineStyle: key === 'middle' ? 2 : 0,
             priceLineVisible: false,
             lastValueVisible: false,
             crosshairMarkerVisible: false,
           },
           0,
         )
-        series.setData(lineData(bars, values, Math.min(startAt - 1, bars.length - 1)))
-        emaSeries.push(series)
+        series.setData(bollingerLineData(bars, computed.bollinger20, key))
       })
     }
 
@@ -343,27 +466,115 @@ export default function TradingChart({
     if (showRsi) panes[2]?.setStretchFactor(1.15)
     if (showMacd) panes[showRsi ? 3 : 2]?.setStretchFactor(1.15)
 
-    chart.subscribeCrosshairMove((param) => {
-      if (!param?.time) {
-        setCursor(null)
-        return
-      }
+    const barByTime = new Map(
+      bars.map((bar) => [toTimestamp(bar), bar]),
+    )
+
+    const readPoint = (param) => {
+      if (!param?.time) return null
       const candle = param.seriesData.get(candleSeries)
       const volume = param.seriesData.get(volumeSeries)
-      if (!candle) {
-        setCursor(null)
-        return
-      }
-      setCursor({
+      const sourceBar = barByTime.get(Number(param.time))
+      if (!candle || !sourceBar) return null
+      return {
+        trading_date: sourceBar.trading_date,
+        minute: sourceBar.minute,
         open: candle.open,
         high: candle.high,
         low: candle.low,
         close: candle.close,
-        volume: volume?.value,
-      })
-    })
+        volume: volume?.value ?? sourceBar.volume,
+      }
+    }
 
-    chart.timeScale().fitContent()
+    const handleCrosshairMove = (param) => {
+      setCursor(readPoint(param))
+    }
+
+    const handleClick = (param) => {
+      const point = readPoint(param)
+      if (!point) {
+        setPinned(null)
+        return
+      }
+
+      const chartWidth = chartRef.current?.clientWidth || 0
+      const chartHeight = chartRef.current?.clientHeight || 0
+      const x = Number(param?.point?.x)
+      const y = Number(param?.point?.y)
+      const gap = 16
+      const estimatedHeight = 230
+
+      let inspectorStyle
+      if (
+        Number.isFinite(x)
+        && Number.isFinite(y)
+        && chartWidth > 0
+        && chartHeight > 0
+      ) {
+        const top = Math.max(
+          8,
+          Math.min(
+            y - 18,
+            Math.max(8, chartHeight - estimatedHeight - 8),
+          ),
+        )
+
+        inspectorStyle = x < chartWidth / 2
+          ? {
+              left: `${Math.min(x + gap, chartWidth - 8)}px`,
+              right: 'auto',
+              top: `${top}px`,
+              transform: 'none',
+            }
+          : {
+              left: `${Math.max(x - gap, 8)}px`,
+              right: 'auto',
+              top: `${top}px`,
+              transform: 'translateX(-100%)',
+            }
+      }
+
+      setPinned({
+        ...point,
+        inspectorStyle,
+      })
+    }
+
+    chart.subscribeCrosshairMove(handleCrosshairMove)
+    chart.subscribeClick(handleClick)
+
+    const timeScale = chart.timeScale()
+
+    const handleVisibleTimeRangeChange = (range) => {
+      if (!range) return
+      viewportRef.current = {
+        resolution,
+        range,
+      }
+    }
+
+    const handleVisibleLogicalRangeChange = (range) => {
+      if (!range || range.from > 12) return
+      const status = historyStatusRef.current
+      if (!status.hasMoreHistory || status.loadingOlder || olderRequestRef.current) return
+      olderRequestRef.current = true
+      loadOlderCallbackRef.current?.()
+    }
+
+    timeScale.subscribeVisibleTimeRangeChange(handleVisibleTimeRangeChange)
+    timeScale.subscribeVisibleLogicalRangeChange(handleVisibleLogicalRangeChange)
+
+    const previousViewport = viewportRef.current
+    if (
+      previousViewport.resolution === resolution
+      && previousViewport.range
+    ) {
+      timeScale.setVisibleRange(previousViewport.range)
+    } else {
+      viewportRef.current = { resolution, range: null }
+      timeScale.fitContent()
+    }
 
     const observer = new ResizeObserver(([entry]) => {
       if (!entry) return
@@ -376,9 +587,37 @@ export default function TradingChart({
 
     return () => {
       observer.disconnect()
+      timeScale.unsubscribeVisibleTimeRangeChange(handleVisibleTimeRangeChange)
+      timeScale.unsubscribeVisibleLogicalRangeChange(handleVisibleLogicalRangeChange)
+      chart.unsubscribeCrosshairMove(handleCrosshairMove)
+      chart.unsubscribeClick(handleClick)
       chart.remove()
     }
-  }, [bars, computed, showEma, showRsi, showMacd, resolution])
+  }, [bars, computed, maVisibility, showBollinger, showRsi, showMacd, resolution])
+
+  function toggleMa(period) {
+    setMaVisibility((current) => {
+      const next = { ...current, [period]: !current[period] }
+      try {
+        window.localStorage.setItem('ccc-chart-ma-visibility', JSON.stringify(next))
+      } catch {
+        // Local preference persistence is best-effort.
+      }
+      return next
+    })
+  }
+
+  function toggleBollinger() {
+    setShowBollinger((current) => {
+      const next = !current
+      try {
+        window.localStorage.setItem('ccc-chart-bollinger', next ? '1' : '0')
+      } catch {
+        // Local preference persistence is best-effort.
+      }
+      return next
+    })
+  }
 
   async function toggleFullscreen() {
     const element = wrapRef.current
@@ -391,8 +630,13 @@ export default function TradingChart({
   }
 
   const latest = bars[bars.length - 1]
-  const display = cursor || (latest
+  const activePinned = pinned && bars.some(
+    (bar) => bar.trading_date === pinned.trading_date && bar.minute === pinned.minute,
+  ) ? pinned : null
+  const display = activePinned || cursor || (latest
     ? {
+        trading_date: latest.trading_date,
+        minute: latest.minute,
         open: latest.open,
         high: latest.high,
         low: latest.low,
@@ -400,6 +644,22 @@ export default function TradingChart({
         volume: latest.volume,
       }
     : null)
+
+  const latestIndex = bars.length - 1
+  const latestBb = latestIndex >= 0 ? computed.bollinger20[latestIndex] : null
+  const pinnedChange = activePinned
+    ? Number(activePinned.close) - Number(activePinned.open)
+    : null
+  const pinnedPercent = activePinned && Number(activePinned.open) !== 0
+    ? (pinnedChange / Number(activePinned.open)) * 100
+    : null
+  const pinnedDirection = pinnedChange > 0
+    ? 'is-positive'
+    : pinnedChange < 0
+      ? 'is-negative'
+      : ''
+
+  const inspectorStyle = activePinned?.inspectorStyle
 
   return (
     <div className="trading-terminal" ref={wrapRef}>
@@ -411,7 +671,10 @@ export default function TradingChart({
               key={item.resolution}
               type="button"
               className={resolution === item.resolution ? 'is-active' : ''}
-              onClick={() => onResolutionChange?.(item.resolution)}
+              onClick={() => {
+                setPinned(null)
+                onResolutionChange?.(item.resolution)
+              }}
               disabled={loading}
             >
               {item.label}
@@ -420,8 +683,39 @@ export default function TradingChart({
         </div>
 
         <div className="indicator-group">
-          <button type="button" className={showEma ? 'is-active' : ''} onClick={() => setShowEma((v) => !v)}>
-            EMA
+          <div className="ma-control">
+            <button
+              type="button"
+              className={Object.values(maVisibility).some(Boolean) ? 'is-active' : ''}
+              onClick={() => setShowMaMenu((value) => !value)}
+              aria-expanded={showMaMenu}
+            >
+              MA ▾
+            </button>
+            {showMaMenu ? (
+              <div className="ma-menu">
+                {[10, 25, 99, 200].map((period) => (
+                  <button
+                    key={period}
+                    type="button"
+                    className={maVisibility[period] ? 'is-enabled' : ''}
+                    onClick={() => toggleMa(period)}
+                  >
+                    <span className={`ma-swatch ma${period}`} />
+                    <span>MA{period}</span>
+                    <b>{maVisibility[period] ? '✓' : ''}</b>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+          <button
+            type="button"
+            className={showBollinger ? 'is-active' : ''}
+            onClick={toggleBollinger}
+            title="Bollinger Bands (20, 2)"
+          >
+            BB
           </button>
           <button type="button" className={showRsi ? 'is-active' : ''} onClick={() => setShowRsi((v) => !v)}>
             RSI
@@ -432,6 +726,7 @@ export default function TradingChart({
           <button type="button" className="fullscreen-button" onClick={toggleFullscreen} title="Toàn màn hình">
             ⛶
           </button>
+
         </div>
       </div>
 
@@ -448,18 +743,58 @@ export default function TradingChart({
           <span>Chưa có dữ liệu OHLC</span>
         )}
         {loading ? <em>Đang đổi khung…</em> : null}
+        {!loading && loadingOlder ? <em>Đang tải thêm lịch sử…</em> : null}
       </div>
 
-      {showEma ? (
+      {(Object.values(maVisibility).some(Boolean) || showBollinger) ? (
         <div className="indicator-legend">
-          <span className="ema7">EMA(7)</span>
-          <span className="ema25">EMA(25)</span>
-          <span className="ema99">EMA(99)</span>
-          <span className="ema200">EMA(200)</span>
+          {maVisibility[10] ? (
+            <span className="ma10">MA(10) {priceFormat(computed.ma10[latestIndex])}</span>
+          ) : null}
+          {maVisibility[25] ? (
+            <span className="ma25">MA(25) {priceFormat(computed.ma25[latestIndex])}</span>
+          ) : null}
+          {maVisibility[99] ? (
+            <span className="ma99">MA(99) {priceFormat(computed.ma99[latestIndex])}</span>
+          ) : null}
+          {maVisibility[200] ? (
+            <span className="ma200">MA(200) {priceFormat(computed.ma200[latestIndex])}</span>
+          ) : null}
+          {showBollinger ? (
+            <span className="bb20">
+              BB(20,2) {latestBb
+                ? `${priceFormat(latestBb.lower)} / ${priceFormat(latestBb.middle)} / ${priceFormat(latestBb.upper)}`
+                : '—'}
+            </span>
+          ) : null}
         </div>
       ) : null}
 
-      <div className="terminal-chart" ref={chartRef} />
+      <div className="terminal-chart-wrap">
+        <div className="terminal-chart" ref={chartRef} />
+        {activePinned ? (
+          <aside
+            className="candle-inspector"
+            aria-label="Thông số nến đã chọn"
+            style={inspectorStyle}
+          >
+            <div className="inspector-title">
+              <strong>{formatBarTime(activePinned, resolution)}</strong>
+              <span>OHLCV</span>
+            </div>
+            <dl>
+              <div><dt>Mở</dt><dd>{priceFormat(activePinned.open)}</dd></div>
+              <div><dt>Cao</dt><dd>{priceFormat(activePinned.high)}</dd></div>
+              <div><dt>Thấp</dt><dd>{priceFormat(activePinned.low)}</dd></div>
+              <div><dt>Đóng</dt><dd>{priceFormat(activePinned.close)}</dd></div>
+              <div><dt>Thay đổi</dt><dd className={pinnedDirection}>{signedNumber(pinnedChange)}</dd></div>
+              <div><dt>% thay đổi</dt><dd className={pinnedDirection}>{signedPercent(pinnedPercent)}</dd></div>
+              <div><dt>Khối lượng</dt><dd>{compactVolume(activePinned.volume)}</dd></div>
+            </dl>
+          </aside>
+        ) : null}
+      </div>
+
 
       <div className="terminal-attribution">
         <a href="https://www.tradingview.com/" target="_blank" rel="noreferrer">
