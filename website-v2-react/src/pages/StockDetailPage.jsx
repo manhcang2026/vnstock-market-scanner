@@ -118,6 +118,22 @@ function abortError(error) {
   return error?.name === 'AbortError'
 }
 
+// CCC_LIVE_WS_REACT_V1
+function liveWebSocketUrl() {
+  const configured = import.meta.env.VITE_CCC_WS_URL
+  if (configured) return configured
+
+  if (
+    window.location.hostname === 'localhost'
+    || window.location.hostname === '127.0.0.1'
+  ) {
+    return 'wss://chuyenchochung.com/api/v2/live'
+  }
+
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  return `${protocol}//${window.location.host}/api/v2/live`
+}
+
 export default function StockDetailPage() {
   const params = useParams()
   const symbol = normalizeSymbol(params.symbol)
@@ -135,6 +151,12 @@ export default function StockDetailPage() {
     error: '',
   })
   const [historyDepth, setHistoryDepth] = useState({})
+  const [liveState, setLiveState] = useState({
+    symbol: '',
+    resolution: null,
+    candle: null,
+    connected: false,
+  })
 
   useEffect(() => {
     if (!validSymbol) return undefined
@@ -188,6 +210,121 @@ export default function StockDetailPage() {
     }
     return fetchedAccess
   }, [ready, user, accessToken, fetchedAccess])
+
+  useEffect(() => {
+    if (
+      !validSymbol
+      || !ready
+      || !accessToken
+      || !access?.technical_allowed
+      || !ALLOWED_RESOLUTIONS.has(resolution)
+    ) {
+      return undefined
+    }
+
+    let socket
+    let reconnectTimer
+    let closedByEffect = false
+
+    const connect = () => {
+      socket = new WebSocket(liveWebSocketUrl())
+
+      socket.onopen = () => {
+        if (closedByEffect) return
+
+        socket.send(JSON.stringify({
+          type: 'subscribe',
+          symbol,
+          resolution,
+          token: accessToken,
+        }))
+
+        setLiveState({
+          symbol,
+          resolution,
+          candle: null,
+          connected: true,
+        })
+      }
+
+      socket.onmessage = (event) => {
+        if (closedByEffect) return
+
+        let snapshot
+        try {
+          snapshot = JSON.parse(event.data)
+        } catch {
+          return
+        }
+
+        if (
+          snapshot?.type !== 'snapshot'
+          || snapshot?.symbol !== symbol
+          || Number(snapshot?.resolution) !== resolution
+        ) {
+          return
+        }
+
+        if (snapshot.quote) {
+          setQuoteState({
+            symbol,
+            data: snapshot.quote,
+            error: '',
+          })
+        }
+
+        setLiveState({
+          symbol,
+          resolution,
+          candle: snapshot.candle || null,
+          connected: true,
+        })
+      }
+
+      socket.onclose = (event) => {
+        if (closedByEffect) return
+
+        setLiveState((current) => (
+          current.symbol === symbol && current.resolution === resolution
+            ? { ...current, connected: false }
+            : current
+        ))
+
+        if (event.code === 4401 || event.code === 4403) return
+        reconnectTimer = window.setTimeout(connect, 2000)
+      }
+
+      socket.onerror = () => {
+        // onclose handles reconnects; keep console noise out of the product UI.
+      }
+    }
+
+    connect()
+
+    return () => {
+      closedByEffect = true
+      window.clearTimeout(reconnectTimer)
+      socket?.close(1000, 'route change')
+    }
+  }, [
+    symbol,
+    validSymbol,
+    ready,
+    accessToken,
+    access?.technical_allowed,
+    resolution,
+  ])
+
+  const liveCandle = (
+    liveState.symbol === symbol
+    && liveState.resolution === resolution
+  ) ? liveState.candle : null
+
+  const liveConnected = Boolean(
+    liveState.connected
+    && liveState.symbol === symbol
+    && liveState.resolution === resolution
+  )
 
   const chartDate = quote?.trading_date || ''
   const historyDepthKey = `${symbol}:${resolution}`
@@ -430,6 +567,8 @@ export default function StockDetailPage() {
                   loadingOlder={loadingOlderHistory}
                   hasMoreHistory={hasMoreHistory}
                   onNeedOlderHistory={loadOlderHistory}
+                  liveCandle={liveCandle}
+                  liveConnected={liveConnected}
                 />
               </Suspense>
             )}

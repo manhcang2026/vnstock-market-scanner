@@ -162,6 +162,28 @@ function lineData(bars, values, startAt = 0) {
   })
 }
 
+function mergeLiveCandle(bars, liveCandle) {
+  if (!liveCandle?.trading_date || !liveCandle?.minute) return bars
+
+  const next = [...bars]
+  const liveTime = toTimestamp(liveCandle)
+
+  for (let index = next.length - 1; index >= 0; index -= 1) {
+    const currentTime = toTimestamp(next[index])
+    if (currentTime === liveTime) {
+      next[index] = { ...next[index], ...liveCandle }
+      return next
+    }
+    if (currentTime < liveTime) break
+  }
+
+  if (!next.length || toTimestamp(next[next.length - 1]) < liveTime) {
+    next.push(liveCandle)
+  }
+
+  return next
+}
+
 // CCC_LAZY_HISTORY_V2
 export default function TradingChart({
   bars = [],
@@ -171,6 +193,8 @@ export default function TradingChart({
   loadingOlder = false,
   hasMoreHistory = false,
   onNeedOlderHistory,
+  liveCandle = null,
+  liveConnected = false,
 }) {
   const chartRef = useRef(null)
   const wrapRef = useRef(null)
@@ -178,6 +202,9 @@ export default function TradingChart({
   const olderRequestRef = useRef(false)
   const loadOlderCallbackRef = useRef(onNeedOlderHistory)
   const historyStatusRef = useRef({ hasMoreHistory, loadingOlder })
+  const liveSeriesRef = useRef(null)
+  const barLookupRef = useRef(new Map())
+  const lastSeriesTimeRef = useRef(null)
   const [maVisibility, setMaVisibility] = useState(() => {
     const defaults = { 10: true, 25: true, 99: true, 200: true }
     try {
@@ -221,6 +248,21 @@ export default function TradingChart({
       macd: macd(closes),
     }
   }, [bars])
+
+  const liveComputed = useMemo(() => {
+    const liveBars = mergeLiveCandle(bars, liveCandle)
+    const closes = liveBars.map((bar) => Number(bar.close))
+    return {
+      bars: liveBars,
+      ma10: sma(closes, 10),
+      ma25: sma(closes, 25),
+      ma99: sma(closes, 99),
+      ma200: sma(closes, 200),
+      bollinger20: bollinger(closes, 20, 2),
+      rsi14: rsi(closes, 14),
+      macd: macd(closes),
+    }
+  }, [bars, liveCandle])
 
   useEffect(() => {
     const container = chartRef.current
@@ -330,6 +372,9 @@ export default function TradingChart({
       close: Number(bar.close),
     }))
     candleSeries.setData(candleData)
+    lastSeriesTimeRef.current = candleData.length
+      ? candleData[candleData.length - 1].time
+      : null
 
     const maConfigs = [
       [10, computed.ma10, '#f2c94c'],
@@ -337,6 +382,8 @@ export default function TradingChart({
       [99, computed.ma99, '#9b7bd4'],
       [200, computed.ma200, '#67cc75'],
     ]
+
+    const maSeries = {}
 
     maConfigs.forEach(([period, values, color]) => {
       if (!maVisibility[period]) return
@@ -352,7 +399,10 @@ export default function TradingChart({
         0,
       )
       series.setData(lineData(bars, values, period - 1))
+      maSeries[period] = series
     })
+
+    const bbSeries = {}
 
     if (showBollinger) {
       const bbConfigs = [
@@ -374,6 +424,7 @@ export default function TradingChart({
           0,
         )
         series.setData(bollingerLineData(bars, computed.bollinger20, key))
+        bbSeries[key] = series
       })
     }
 
@@ -396,8 +447,15 @@ export default function TradingChart({
       })),
     )
 
+    let rsiSeries = null
+    const macdSeries = {
+      histogram: null,
+      dif: null,
+      dea: null,
+    }
+
     if (showRsi) {
-      const rsiSeries = chart.addSeries(
+      rsiSeries = chart.addSeries(
         LineSeries,
         {
           color: '#f2c94c',
@@ -421,6 +479,7 @@ export default function TradingChart({
         },
         paneIndex,
       )
+      macdSeries.histogram = macdHist
       macdHist.setData(
         bars.flatMap((bar, index) => {
           if (index < 25) return []
@@ -444,6 +503,7 @@ export default function TradingChart({
         },
         paneIndex,
       )
+      macdSeries.dif = dif
       dif.setData(lineData(bars, computed.macd.line, 25))
 
       const dea = chart.addSeries(
@@ -457,7 +517,17 @@ export default function TradingChart({
         },
         paneIndex,
       )
+      macdSeries.dea = dea
       dea.setData(lineData(bars, computed.macd.signal, 25))
+    }
+
+    liveSeriesRef.current = {
+      candle: candleSeries,
+      volume: volumeSeries,
+      ma: maSeries,
+      bb: bbSeries,
+      rsi: rsiSeries,
+      macd: macdSeries,
     }
 
     const panes = chart.panes()
@@ -466,7 +536,7 @@ export default function TradingChart({
     if (showRsi) panes[2]?.setStretchFactor(1.15)
     if (showMacd) panes[showRsi ? 3 : 2]?.setStretchFactor(1.15)
 
-    const barByTime = new Map(
+    barLookupRef.current = new Map(
       bars.map((bar) => [toTimestamp(bar), bar]),
     )
 
@@ -474,7 +544,7 @@ export default function TradingChart({
       if (!param?.time) return null
       const candle = param.seriesData.get(candleSeries)
       const volume = param.seriesData.get(volumeSeries)
-      const sourceBar = barByTime.get(Number(param.time))
+      const sourceBar = barLookupRef.current.get(Number(param.time))
       if (!candle || !sourceBar) return null
       return {
         trading_date: sourceBar.trading_date,
@@ -586,6 +656,8 @@ export default function TradingChart({
     observer.observe(container)
 
     return () => {
+      liveSeriesRef.current = null
+      lastSeriesTimeRef.current = null
       observer.disconnect()
       timeScale.unsubscribeVisibleTimeRangeChange(handleVisibleTimeRangeChange)
       timeScale.unsubscribeVisibleLogicalRangeChange(handleVisibleLogicalRangeChange)
@@ -594,6 +666,81 @@ export default function TradingChart({
       chart.remove()
     }
   }, [bars, computed, maVisibility, showBollinger, showRsi, showMacd, resolution])
+
+  useEffect(() => {
+    const refs = liveSeriesRef.current
+    const liveBars = liveComputed.bars
+    const index = liveBars.length - 1
+    const bar = liveBars[index]
+
+    if (!refs || !liveCandle || !bar || index < 0) return
+
+    const time = toTimestamp(bar)
+    const lastSeriesTime = lastSeriesTimeRef.current
+
+    if (lastSeriesTime !== null && time < lastSeriesTime) {
+      return
+    }
+
+    lastSeriesTimeRef.current = time
+    barLookupRef.current.set(time, bar)
+
+    refs.candle?.update({
+      time,
+      open: Number(bar.open),
+      high: Number(bar.high),
+      low: Number(bar.low),
+      close: Number(bar.close),
+    })
+
+    refs.volume?.update({
+      time,
+      value: Number(bar.volume || 0),
+      color: Number(bar.close) >= Number(bar.open)
+        ? 'rgba(32, 180, 134, .58)'
+        : 'rgba(239, 77, 100, .58)',
+    })
+
+    const maValues = {
+      10: liveComputed.ma10[index],
+      25: liveComputed.ma25[index],
+      99: liveComputed.ma99[index],
+      200: liveComputed.ma200[index],
+    }
+
+    Object.entries(maValues).forEach(([period, value]) => {
+      if (value === null || value === undefined || Number.isNaN(value)) return
+      refs.ma?.[period]?.update({ time, value })
+    })
+
+    const bb = liveComputed.bollinger20[index]
+    if (bb) {
+      refs.bb?.upper?.update({ time, value: bb.upper })
+      refs.bb?.middle?.update({ time, value: bb.middle })
+      refs.bb?.lower?.update({ time, value: bb.lower })
+    }
+
+    const rsiValue = liveComputed.rsi14[index]
+    if (rsiValue !== null && rsiValue !== undefined && !Number.isNaN(rsiValue)) {
+      refs.rsi?.update({ time, value: rsiValue })
+    }
+
+    if (index >= 25) {
+      const histogram = liveComputed.macd.histogram[index]
+      const dif = liveComputed.macd.line[index]
+      const dea = liveComputed.macd.signal[index]
+
+      refs.macd?.histogram?.update({
+        time,
+        value: histogram,
+        color: histogram >= 0
+          ? 'rgba(32, 180, 134, .72)'
+          : 'rgba(239, 77, 100, .72)',
+      })
+      refs.macd?.dif?.update({ time, value: dif })
+      refs.macd?.dea?.update({ time, value: dea })
+    }
+  }, [liveCandle, liveComputed])
 
   function toggleMa(period) {
     setMaVisibility((current) => {
@@ -629,8 +776,9 @@ export default function TradingChart({
     await element.requestFullscreen?.()
   }
 
-  const latest = bars[bars.length - 1]
-  const activePinned = pinned && bars.some(
+  const liveBars = liveComputed.bars
+  const latest = liveBars[liveBars.length - 1]
+  const activePinned = pinned && liveBars.some(
     (bar) => bar.trading_date === pinned.trading_date && bar.minute === pinned.minute,
   ) ? pinned : null
   const display = activePinned || cursor || (latest
@@ -645,8 +793,8 @@ export default function TradingChart({
       }
     : null)
 
-  const latestIndex = bars.length - 1
-  const latestBb = latestIndex >= 0 ? computed.bollinger20[latestIndex] : null
+  const latestIndex = liveBars.length - 1
+  const latestBb = latestIndex >= 0 ? liveComputed.bollinger20[latestIndex] : null
   const pinnedChange = activePinned
     ? Number(activePinned.close) - Number(activePinned.open)
     : null
@@ -744,21 +892,22 @@ export default function TradingChart({
         )}
         {loading ? <em>Đang đổi khung…</em> : null}
         {!loading && loadingOlder ? <em>Đang tải thêm lịch sử…</em> : null}
+        {liveConnected ? <em title="WebSocket cập nhật mỗi ~3 giây">● LIVE 3s</em> : null}
       </div>
 
       {(Object.values(maVisibility).some(Boolean) || showBollinger) ? (
         <div className="indicator-legend">
           {maVisibility[10] ? (
-            <span className="ma10">MA(10) {priceFormat(computed.ma10[latestIndex])}</span>
+            <span className="ma10">MA(10) {priceFormat(liveComputed.ma10[latestIndex])}</span>
           ) : null}
           {maVisibility[25] ? (
-            <span className="ma25">MA(25) {priceFormat(computed.ma25[latestIndex])}</span>
+            <span className="ma25">MA(25) {priceFormat(liveComputed.ma25[latestIndex])}</span>
           ) : null}
           {maVisibility[99] ? (
-            <span className="ma99">MA(99) {priceFormat(computed.ma99[latestIndex])}</span>
+            <span className="ma99">MA(99) {priceFormat(liveComputed.ma99[latestIndex])}</span>
           ) : null}
           {maVisibility[200] ? (
-            <span className="ma200">MA(200) {priceFormat(computed.ma200[latestIndex])}</span>
+            <span className="ma200">MA(200) {priceFormat(liveComputed.ma200[latestIndex])}</span>
           ) : null}
           {showBollinger ? (
             <span className="bb20">
