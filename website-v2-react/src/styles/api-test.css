@@ -1,0 +1,137 @@
+.api-test-summary {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(140px, .7fr) auto;
+  gap: 10px;
+  align-items: stretch;
+}
+
+.api-test-summary > div,
+.api-test-summary > button {
+  min-height: 78px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.api-test-summary small,
+.api-test-summary strong,
+.api-test-summary span {
+  display: block;
+}
+
+.api-test-summary small {
+  color: var(--muted);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+
+.api-test-summary strong {
+  margin-top: 7px;
+  font-size: 15px;
+}
+
+.api-test-summary span {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.api-test-summary > button {
+  min-width: 150px;
+  color: var(--text);
+  font-weight: 800;
+}
+
+.api-test-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.api-test-card {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.api-test-card > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 66px;
+  padding: 11px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.api-test-card header small,
+.api-test-card header strong {
+  display: block;
+}
+
+.api-test-card header small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.api-test-card header strong {
+  margin-top: 4px;
+  font-size: 14px;
+}
+
+.api-test-state {
+  padding: 4px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.api-test-card.is-ok .api-test-state {
+  color: var(--positive);
+}
+
+.api-test-card.is-error .api-test-state {
+  color: var(--negative);
+}
+
+.api-test-card pre {
+  min-height: 280px;
+  max-height: 440px;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+@media (max-width: 1050px) {
+  .api-test-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .api-test-card pre {
+    min-height: 160px;
+  }
+}
+
+@media (max-width: 700px) {
+  .api-test-summary {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .api-test-summary > button {
+    grid-column: 1 / -1;
+    min-height: 46px;
+  }
+}
