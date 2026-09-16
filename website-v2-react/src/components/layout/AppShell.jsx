@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { useAuth } from '../../auth/AuthContext'
 
 const navItems = [
   { to: '/', label: 'Tổng quan', short: 'Tổng quan' },
@@ -15,6 +16,7 @@ function navClass({ isActive }) {
 export default function AppShell() {
   const [theme, setTheme] = useState(() => localStorage.getItem('ccc-theme') || 'dark')
   const navigate = useNavigate()
+  const { user, ready } = useAuth()
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -56,6 +58,15 @@ export default function AppShell() {
             <strong>V2 DEV</strong>
             <span>React</span>
           </div>
+          <button
+            type="button"
+            className="account-button"
+            onClick={() => navigate('/dang-nhap')}
+            title={user?.email || 'Tài khoản'}
+          >
+            <span>{ready && user ? '●' : '○'}</span>
+            <strong>{!ready ? '...' : user ? 'Tài khoản' : 'Đăng nhập'}</strong>
+          </button>
           <button
             type="button"
             className="icon-button"
