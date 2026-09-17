@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
-import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../auth/AuthContext'
 import { findUniqueStockByName } from '../../lib/stockSearch'
+import StockDetailShell from './StockDetailShell'
 
 const navItems = [
   { to: '/', label: 'Tổng quan', short: 'Tổng quan' },
@@ -20,7 +21,9 @@ export default function AppShell() {
   const [theme, setTheme] = useState(() => localStorage.getItem('ccc-theme') || 'dark')
   const [searchBusy, setSearchBusy] = useState(false)
   const navigate = useNavigate()
+  const location = useLocation()
   const { user, ready } = useAuth()
+  const isStockDetail = /^\/co-phieu\/[^/]+\/?$/.test(location.pathname)
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -57,6 +60,21 @@ export default function AppShell() {
     }
 
     navigate(`/danh-sach?q=${encodeURIComponent(tickerQuery)}`)
+  }
+
+  if (isStockDetail) {
+    return (
+      <StockDetailShell
+        theme={theme}
+        onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+        onSearch={onSearch}
+        searchBusy={searchBusy}
+        user={user}
+        ready={ready}
+      >
+        <Outlet />
+      </StockDetailShell>
+    )
   }
 
   return (

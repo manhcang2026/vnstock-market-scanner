@@ -7,7 +7,7 @@
 .trading-terminal:fullscreen {
   width: 100vw;
   height: 100vh;
-  overflow: auto;
+  overflow: hidden;
   background: #0f1726;
 }
 
@@ -70,7 +70,19 @@
 }
 
 .fullscreen-button {
-  font-size: 16px !important;
+  min-width: 62px !important;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  font-size: 10px !important;
+  letter-spacing: .04em;
+}
+
+.trading-terminal:fullscreen .fullscreen-button {
+  border-color: rgba(255, 255, 255, .22);
+  background: rgba(255, 255, 255, .08);
+  color: var(--text);
 }
 
 .terminal-readout {
@@ -135,7 +147,7 @@
   padding: 5px 10px 7px;
   border-top: 1px solid rgba(89, 105, 132, .16);
   color: var(--muted);
-  font-size: 9px;
+  font-size: 10px;
   text-align: right;
 }
 
@@ -147,14 +159,16 @@
 
 @media (max-width: 720px) {
   .terminal-toolbar {
-    align-items: flex-start;
-    flex-direction: column;
+    align-items: center;
+    flex-wrap: wrap;
+    padding: 5px 6px;
   }
 
   .timeframe-group,
   .indicator-group {
-    width: 100%;
+    flex: 1 1 auto;
     overflow-x: auto;
+    scrollbar-width: none;
   }
 
   .indicator-group {
@@ -162,13 +176,14 @@
   }
 
   .toolbar-caption {
-    position: sticky;
-    left: 0;
-    background: #121c2d;
+    display: none;
   }
 
   .terminal-toolbar button {
     flex: 0 0 auto;
+    min-width: 38px;
+    height: 38px;
+    padding-inline: 7px;
   }
 
   .terminal-readout {
@@ -277,7 +292,7 @@
 
 .inspector-title span {
   color: var(--accent);
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
 }
@@ -311,7 +326,6 @@
 @media (max-width: 720px) {
   .indicator-group {
     overflow: visible;
-    flex-wrap: wrap;
   }
 
   .ma-menu {
@@ -325,5 +339,55 @@
     width: 185px;
     padding: 8px 9px;
     font-size: 10px;
+  }
+}
+
+@media (max-width: 460px) {
+  .terminal-toolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .timeframe-group {
+    justify-content: flex-start;
+  }
+
+  .indicator-group {
+    max-width: 122px;
+    justify-content: flex-start;
+    overflow-x: auto;
+  }
+
+  .terminal-toolbar button {
+    min-width: 36px;
+    height: 36px;
+    padding-inline: 6px;
+  }
+
+  .terminal-readout {
+    padding-inline: 8px;
+  }
+}
+
+@media (orientation: landscape) and (max-height: 500px) {
+  .trading-terminal:fullscreen .terminal-toolbar {
+    display: flex;
+    min-height: 40px;
+    flex-wrap: nowrap;
+  }
+
+  .trading-terminal:fullscreen .timeframe-group,
+  .trading-terminal:fullscreen .indicator-group {
+    width: auto;
+    max-width: none;
+    flex: 0 1 auto;
+  }
+
+  .trading-terminal:fullscreen .indicator-group {
+    margin-left: auto;
+  }
+
+  .trading-terminal:fullscreen .indicator-legend {
+    display: none;
   }
 }

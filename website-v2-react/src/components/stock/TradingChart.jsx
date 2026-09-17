@@ -184,6 +184,13 @@ function mergeLiveCandle(bars, liveCandle) {
   return next
 }
 
+function chartHeightFor(container, fullscreenElement) {
+  if (fullscreenElement) {
+    return Math.max(260, window.innerHeight - 150)
+  }
+  return container.clientWidth < 640 ? 520 : 620
+}
+
 // CCC_LAZY_HISTORY_V2
 export default function TradingChart({
   bars = [],
@@ -202,7 +209,9 @@ export default function TradingChart({
   const olderRequestRef = useRef(false)
   const loadOlderCallbackRef = useRef(onNeedOlderHistory)
   const historyStatusRef = useRef({ hasMoreHistory, loadingOlder })
+  const chartInstanceRef = useRef(null)
   const liveSeriesRef = useRef(null)
+  const dataModelRef = useRef(null)
   const barLookupRef = useRef(new Map())
   const lastSeriesTimeRef = useRef(null)
   const [maVisibility, setMaVisibility] = useState(() => {
@@ -224,6 +233,7 @@ export default function TradingChart({
   })
   const [showRsi, setShowRsi] = useState(true)
   const [showMacd, setShowMacd] = useState(true)
+  const [isFullscreen, setIsFullscreen] = useState(false)
   const [cursor, setCursor] = useState(null)
   const [pinned, setPinned] = useState(null)
 
@@ -265,14 +275,18 @@ export default function TradingChart({
   }, [bars, liveCandle])
 
   useEffect(() => {
+    dataModelRef.current = { bars: liveComputed.bars, computed: liveComputed }
+  }, [liveComputed])
+
+  useEffect(() => {
     const container = chartRef.current
-    if (!container || !bars.length) return undefined
+    if (!container) return undefined
 
     container.innerHTML = ''
 
     const chart = createChart(container, {
       width: container.clientWidth,
-      height: container.clientWidth < 640 ? 520 : 620,
+      height: chartHeightFor(container, document.fullscreenElement === wrapRef.current),
       layout: {
         background: { type: ColorType.Solid, color: '#0f1726' },
         textColor: '#8fa0b8',
@@ -364,29 +378,16 @@ export default function TradingChart({
       0,
     )
 
-    const candleData = bars.map((bar) => ({
-      time: toTimestamp(bar),
-      open: Number(bar.open),
-      high: Number(bar.high),
-      low: Number(bar.low),
-      close: Number(bar.close),
-    }))
-    candleSeries.setData(candleData)
-    lastSeriesTimeRef.current = candleData.length
-      ? candleData[candleData.length - 1].time
-      : null
-
     const maConfigs = [
-      [10, computed.ma10, '#f2c94c'],
-      [25, computed.ma25, '#db5ac5'],
-      [99, computed.ma99, '#9b7bd4'],
-      [200, computed.ma200, '#67cc75'],
+      [10, '#f2c94c'],
+      [25, '#db5ac5'],
+      [99, '#9b7bd4'],
+      [200, '#67cc75'],
     ]
 
     const maSeries = {}
 
-    maConfigs.forEach(([period, values, color]) => {
-      if (!maVisibility[period]) return
+    maConfigs.forEach(([period, color]) => {
       const series = chart.addSeries(
         LineSeries,
         {
@@ -398,35 +399,30 @@ export default function TradingChart({
         },
         0,
       )
-      series.setData(lineData(bars, values, period - 1))
       maSeries[period] = series
     })
 
     const bbSeries = {}
-
-    if (showBollinger) {
-      const bbConfigs = [
-        ['upper', '#4aa3ff', 1],
-        ['middle', '#7f8ea8', 1],
-        ['lower', '#4aa3ff', 1],
-      ]
-      bbConfigs.forEach(([key, color, lineWidth]) => {
-        const series = chart.addSeries(
-          LineSeries,
-          {
-            color,
-            lineWidth,
-            lineStyle: key === 'middle' ? 2 : 0,
-            priceLineVisible: false,
-            lastValueVisible: false,
-            crosshairMarkerVisible: false,
-          },
-          0,
-        )
-        series.setData(bollingerLineData(bars, computed.bollinger20, key))
-        bbSeries[key] = series
-      })
-    }
+    const bbConfigs = [
+      ['upper', '#4aa3ff', 1],
+      ['middle', '#7f8ea8', 1],
+      ['lower', '#4aa3ff', 1],
+    ]
+    bbConfigs.forEach(([key, color, lineWidth]) => {
+      const series = chart.addSeries(
+        LineSeries,
+        {
+          color,
+          lineWidth,
+          lineStyle: key === 'middle' ? 2 : 0,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          crosshairMarkerVisible: false,
+        },
+        0,
+      )
+      bbSeries[key] = series
+    })
 
     const volumeSeries = chart.addSeries(
       HistogramSeries,
@@ -437,90 +433,14 @@ export default function TradingChart({
       },
       1,
     )
-    volumeSeries.setData(
-      bars.map((bar) => ({
-        time: toTimestamp(bar),
-        value: Number(bar.volume || 0),
-        color: Number(bar.close) >= Number(bar.open)
-          ? 'rgba(32, 180, 134, .58)'
-          : 'rgba(239, 77, 100, .58)',
-      })),
-    )
-
-    let rsiSeries = null
+    const rsiSeries = null
     const macdSeries = {
       histogram: null,
       dif: null,
       dea: null,
     }
 
-    if (showRsi) {
-      rsiSeries = chart.addSeries(
-        LineSeries,
-        {
-          color: '#f2c94c',
-          lineWidth: 1.4,
-          priceLineVisible: false,
-          lastValueVisible: true,
-          crosshairMarkerVisible: false,
-        },
-        2,
-      )
-      rsiSeries.setData(lineData(bars, computed.rsi14, 14))
-    }
-
-    if (showMacd) {
-      const paneIndex = showRsi ? 3 : 2
-      const macdHist = chart.addSeries(
-        HistogramSeries,
-        {
-          priceLineVisible: false,
-          lastValueVisible: false,
-        },
-        paneIndex,
-      )
-      macdSeries.histogram = macdHist
-      macdHist.setData(
-        bars.flatMap((bar, index) => {
-          if (index < 25) return []
-          const value = computed.macd.histogram[index]
-          return [{
-            time: toTimestamp(bar),
-            value,
-            color: value >= 0 ? 'rgba(32, 180, 134, .72)' : 'rgba(239, 77, 100, .72)',
-          }]
-        }),
-      )
-
-      const dif = chart.addSeries(
-        LineSeries,
-        {
-          color: '#f2c94c',
-          lineWidth: 1.25,
-          priceLineVisible: false,
-          lastValueVisible: false,
-          crosshairMarkerVisible: false,
-        },
-        paneIndex,
-      )
-      macdSeries.dif = dif
-      dif.setData(lineData(bars, computed.macd.line, 25))
-
-      const dea = chart.addSeries(
-        LineSeries,
-        {
-          color: '#db5ac5',
-          lineWidth: 1.25,
-          priceLineVisible: false,
-          lastValueVisible: false,
-          crosshairMarkerVisible: false,
-        },
-        paneIndex,
-      )
-      macdSeries.dea = dea
-      dea.setData(lineData(bars, computed.macd.signal, 25))
-    }
-
+    chartInstanceRef.current = chart
     liveSeriesRef.current = {
       candle: candleSeries,
       volume: volumeSeries,
@@ -533,12 +453,6 @@ export default function TradingChart({
     const panes = chart.panes()
     panes[0]?.setStretchFactor(5)
     panes[1]?.setStretchFactor(1.25)
-    if (showRsi) panes[2]?.setStretchFactor(1.15)
-    if (showMacd) panes[showRsi ? 3 : 2]?.setStretchFactor(1.15)
-
-    barLookupRef.current = new Map(
-      bars.map((bar) => [toTimestamp(bar), bar]),
-    )
 
     const readPoint = (param) => {
       if (!param?.time) return null
@@ -635,37 +549,194 @@ export default function TradingChart({
     timeScale.subscribeVisibleTimeRangeChange(handleVisibleTimeRangeChange)
     timeScale.subscribeVisibleLogicalRangeChange(handleVisibleLogicalRangeChange)
 
-    const previousViewport = viewportRef.current
-    if (
-      previousViewport.resolution === resolution
-      && previousViewport.range
-    ) {
-      timeScale.setVisibleRange(previousViewport.range)
-    } else {
-      viewportRef.current = { resolution, range: null }
-      timeScale.fitContent()
-    }
-
     const observer = new ResizeObserver(([entry]) => {
       if (!entry) return
       chart.applyOptions({
         width: entry.contentRect.width,
-        height: entry.contentRect.width < 640 ? 520 : 620,
+        height: chartHeightFor(container, document.fullscreenElement === wrapRef.current),
       })
     })
     observer.observe(container)
 
+    const handleFullscreenChange = () => {
+      setIsFullscreen(document.fullscreenElement === wrapRef.current)
+      chart.applyOptions({
+        width: container.clientWidth,
+        height: chartHeightFor(container, document.fullscreenElement === wrapRef.current),
+      })
+    }
+    document.addEventListener('fullscreenchange', handleFullscreenChange)
+
     return () => {
+      chartInstanceRef.current = null
       liveSeriesRef.current = null
       lastSeriesTimeRef.current = null
       observer.disconnect()
+      document.removeEventListener('fullscreenchange', handleFullscreenChange)
       timeScale.unsubscribeVisibleTimeRangeChange(handleVisibleTimeRangeChange)
       timeScale.unsubscribeVisibleLogicalRangeChange(handleVisibleLogicalRangeChange)
       chart.unsubscribeCrosshairMove(handleCrosshairMove)
       chart.unsubscribeClick(handleClick)
       chart.remove()
     }
-  }, [bars, computed, maVisibility, showBollinger, showRsi, showMacd, resolution])
+  }, [resolution])
+
+  useEffect(() => {
+    const chart = chartInstanceRef.current
+    const refs = liveSeriesRef.current
+    if (!chart || !refs) return
+
+    const timeScale = chart.timeScale()
+    const previousRange = timeScale.getVisibleRange()
+    const candleData = bars.map((bar) => ({
+      time: toTimestamp(bar),
+      open: Number(bar.open),
+      high: Number(bar.high),
+      low: Number(bar.low),
+      close: Number(bar.close),
+    }))
+
+    refs.candle.setData(candleData)
+    refs.volume.setData(
+      bars.map((bar) => ({
+        time: toTimestamp(bar),
+        value: Number(bar.volume || 0),
+        color: Number(bar.close) >= Number(bar.open)
+          ? 'rgba(32, 180, 134, .58)'
+          : 'rgba(239, 77, 100, .58)',
+      })),
+    )
+    refs.ma[10].setData(lineData(bars, computed.ma10, 9))
+    refs.ma[25].setData(lineData(bars, computed.ma25, 24))
+    refs.ma[99].setData(lineData(bars, computed.ma99, 98))
+    refs.ma[200].setData(lineData(bars, computed.ma200, 199))
+    refs.bb.upper.setData(bollingerLineData(bars, computed.bollinger20, 'upper'))
+    refs.bb.middle.setData(bollingerLineData(bars, computed.bollinger20, 'middle'))
+    refs.bb.lower.setData(bollingerLineData(bars, computed.bollinger20, 'lower'))
+    refs.rsi?.setData(lineData(bars, computed.rsi14, 14))
+    refs.macd.histogram?.setData(
+      bars.flatMap((bar, index) => {
+        if (index < 25) return []
+        const value = computed.macd.histogram[index]
+        return [{
+          time: toTimestamp(bar),
+          value,
+          color: value >= 0 ? 'rgba(32, 180, 134, .72)' : 'rgba(239, 77, 100, .72)',
+        }]
+      }),
+    )
+    refs.macd.dif?.setData(lineData(bars, computed.macd.line, 25))
+    refs.macd.dea?.setData(lineData(bars, computed.macd.signal, 25))
+
+    barLookupRef.current = new Map(bars.map((bar) => [toTimestamp(bar), bar]))
+    lastSeriesTimeRef.current = candleData.length
+      ? candleData[candleData.length - 1].time
+      : null
+
+    if (previousRange) {
+      timeScale.setVisibleRange(previousRange)
+    } else {
+      const savedViewport = viewportRef.current
+      if (savedViewport.resolution === resolution && savedViewport.range) {
+        timeScale.setVisibleRange(savedViewport.range)
+      } else if (candleData.length) {
+        viewportRef.current = { resolution, range: null }
+        timeScale.fitContent()
+      }
+    }
+  }, [bars, computed, resolution])
+
+  useEffect(() => {
+    const refs = liveSeriesRef.current
+    if (!refs) return
+    Object.entries(maVisibility).forEach(([period, visible]) => {
+      refs.ma?.[period]?.applyOptions({ visible })
+    })
+    Object.values(refs.bb || {}).forEach((series) => {
+      series.applyOptions({ visible: showBollinger })
+    })
+  }, [maVisibility, showBollinger])
+
+  useEffect(() => {
+    const chart = chartInstanceRef.current
+    const refs = liveSeriesRef.current
+    const model = dataModelRef.current
+    if (!chart || !refs || !model) return
+
+    const previousLogicalRange = chart.timeScale().getVisibleLogicalRange()
+    if (refs.rsi) chart.removeSeries(refs.rsi)
+    Object.values(refs.macd || {}).forEach((series) => {
+      if (series) chart.removeSeries(series)
+    })
+    refs.rsi = null
+    refs.macd = { histogram: null, dif: null, dea: null }
+
+    if (showRsi) {
+      refs.rsi = chart.addSeries(
+        LineSeries,
+        {
+          color: '#f2c94c',
+          lineWidth: 1.4,
+          priceLineVisible: false,
+          lastValueVisible: true,
+          crosshairMarkerVisible: false,
+        },
+        2,
+      )
+      refs.rsi.setData(lineData(model.bars, model.computed.rsi14, 14))
+    }
+
+    if (showMacd) {
+      const paneIndex = showRsi ? 3 : 2
+      refs.macd.histogram = chart.addSeries(
+        HistogramSeries,
+        { priceLineVisible: false, lastValueVisible: false },
+        paneIndex,
+      )
+      refs.macd.histogram.setData(
+        model.bars.flatMap((bar, index) => {
+          if (index < 25) return []
+          const value = model.computed.macd.histogram[index]
+          return [{
+            time: toTimestamp(bar),
+            value,
+            color: value >= 0 ? 'rgba(32, 180, 134, .72)' : 'rgba(239, 77, 100, .72)',
+          }]
+        }),
+      )
+      refs.macd.dif = chart.addSeries(
+        LineSeries,
+        {
+          color: '#f2c94c',
+          lineWidth: 1.25,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          crosshairMarkerVisible: false,
+        },
+        paneIndex,
+      )
+      refs.macd.dif.setData(lineData(model.bars, model.computed.macd.line, 25))
+      refs.macd.dea = chart.addSeries(
+        LineSeries,
+        {
+          color: '#db5ac5',
+          lineWidth: 1.25,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          crosshairMarkerVisible: false,
+        },
+        paneIndex,
+      )
+      refs.macd.dea.setData(lineData(model.bars, model.computed.macd.signal, 25))
+    }
+
+    const panes = chart.panes()
+    panes[0]?.setStretchFactor(5)
+    panes[1]?.setStretchFactor(1.25)
+    if (showRsi) panes[2]?.setStretchFactor(1.15)
+    if (showMacd) panes[showRsi ? 3 : 2]?.setStretchFactor(1.15)
+    if (previousLogicalRange) chart.timeScale().setVisibleLogicalRange(previousLogicalRange)
+  }, [showRsi, showMacd, resolution])
 
   useEffect(() => {
     const refs = liveSeriesRef.current
@@ -871,8 +942,29 @@ export default function TradingChart({
           <button type="button" className={showMacd ? 'is-active' : ''} onClick={() => setShowMacd((v) => !v)}>
             MACD
           </button>
-          <button type="button" className="fullscreen-button" onClick={toggleFullscreen} title="Toàn màn hình">
-            ⛶
+          <button
+            type="button"
+            className="fullscreen-button"
+            onClick={toggleFullscreen}
+            title={isFullscreen ? 'Thoát toàn màn hình' : 'Toàn màn hình'}
+            aria-label={isFullscreen ? 'Thoát toàn màn hình' : 'Mở biểu đồ toàn màn hình'}
+          >
+            <svg
+              viewBox="0 0 24 24"
+              width="16"
+              height="16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              aria-hidden="true"
+            >
+              {isFullscreen ? (
+                <path d="M9 4v5H4m16 0h-5V4M4 15h5v5m6 0v-5h5" />
+              ) : (
+                <path d="M9 4H4v5m16 0V4h-5M4 15v5h5m6 0h5v-5" />
+              )}
+            </svg>
+            <span>{isFullscreen ? 'Thoát' : 'FULL'}</span>
           </button>
 
         </div>

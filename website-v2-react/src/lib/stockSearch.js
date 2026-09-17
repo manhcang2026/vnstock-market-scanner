@@ -70,3 +70,11 @@ export async function findUniqueStockByName(query) {
 
   return best[0].row
 }
+
+export async function findStockMetadataBySymbol(symbol) {
+  const normalizedSymbol = normalizeSearchText(symbol)
+  if (!normalizedSymbol) return null
+
+  const rows = await loadStockMetadata()
+  return rows.find((row) => normalizeSearchText(row.symbol) === normalizedSymbol) || null
+}

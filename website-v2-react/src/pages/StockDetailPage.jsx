@@ -2,6 +2,8 @@ import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
 import { fetchChart, fetchQuote, fetchTechnicalAccess } from '../lib/cccApi'
+import { findStockMetadataBySymbol } from '../lib/stockSearch'
+import StockDetailV3View from '../components/stock/StockDetailV3View'
 import '../styles/stock-detail.css'
 
 const TradingChart = lazy(() => import('../components/stock/TradingChart'))
@@ -141,6 +143,7 @@ export default function StockDetailPage() {
   const { user, accessToken, ready } = useAuth()
 
   const [resolution, setResolution] = useState(5)
+  const [metadataState, setMetadataState] = useState({ symbol: '', data: null })
   const [quoteState, setQuoteState] = useState({ symbol: '', data: null, error: '' })
   const [accessState, setAccessState] = useState({ symbol: '', data: null, error: '' })
   const [chartState, setChartState] = useState({
@@ -157,6 +160,23 @@ export default function StockDetailPage() {
     candle: null,
     connected: false,
   })
+
+  useEffect(() => {
+    if (!validSymbol) return undefined
+
+    let active = true
+    findStockMetadataBySymbol(symbol)
+      .then((data) => {
+        if (active) setMetadataState({ symbol, data })
+      })
+      .catch(() => {
+        if (active) setMetadataState({ symbol, data: null })
+      })
+
+    return () => {
+      active = false
+    }
+  }, [symbol, validSymbol])
 
   useEffect(() => {
     if (!validSymbol) return undefined
@@ -196,6 +216,8 @@ export default function StockDetailPage() {
 
   const quote = quoteState.symbol === symbol ? quoteState.data : null
   const quoteError = quoteState.symbol === symbol ? quoteState.error : ''
+  const metadata = metadataState.symbol === symbol ? metadataState.data : null
+  const metadataLoading = metadataState.symbol !== symbol
   const fetchedAccess = accessState.symbol === symbol ? accessState.data : null
   const accessError = accessState.symbol === symbol ? accessState.error : ''
 
@@ -473,187 +495,71 @@ export default function StockDetailPage() {
 
   const accessLoading = ready && user && !fetchedAccess && !accessError
 
+  let chartContent
+  if (!ready) {
+    chartContent = <div className="detail-state">Đang kiểm tra phiên đăng nhập…</div>
+  } else if (!user) {
+    chartContent = (
+      <div className="technical-lock">
+        <strong>Đăng nhập để mở vùng kỹ thuật</strong>
+        <p>Giá thị trường vẫn công khai. Biểu đồ kỹ thuật được kiểm tra quyền ở server.</p>
+        <Link to="/dang-nhap">Đăng nhập</Link>
+      </div>
+    )
+  } else if (accessLoading) {
+    chartContent = <div className="detail-state">Đang kiểm tra technical entitlement…</div>
+  } else if (accessError) {
+    chartContent = <div className="detail-state is-error">{accessError}</div>
+  } else if (access && !access.technical_allowed) {
+    chartContent = (
+      <div className="technical-lock">
+        <strong>CCC Technical Intelligence ngoài phạm vi hiện tại</strong>
+        <p>Public quote vẫn hiển thị. Backend không trả technical payload cho mã ngoài entitlement.</p>
+        <span>{access.reason || 'OUTSIDE_ENTITLEMENT'}</span>
+      </div>
+    )
+  } else if (chartError) {
+    chartContent = <div className="detail-state is-error">{chartError}</div>
+  } else if (chartLoading) {
+    chartContent = <div className="detail-state">Đang tải biểu đồ kỹ thuật…</div>
+  } else {
+    chartContent = (
+      <Suspense fallback={<div className="detail-state">Đang tải chart engine…</div>}>
+        <TradingChart
+          key={`${symbol}:${resolution}`}
+          bars={bars}
+          resolution={resolution}
+          onResolutionChange={setResolution}
+          loading={chartLoading}
+          loadingOlder={loadingOlderHistory}
+          hasMoreHistory={hasMoreHistory}
+          onNeedOlderHistory={loadOlderHistory}
+          liveCandle={liveCandle}
+          liveConnected={liveConnected}
+        />
+      </Suspense>
+    )
+  }
+
   return (
-    <div className="page stock-detail-page">
-      <section className="stock-identity">
-        <div className="stock-identity-main">
-          <div className="stock-symbol-row">
-            <strong>{symbol}</strong>
-            {quote?.exchange ? <span>{quote.exchange}</span> : null}
-            {quote?.trading_session ? <span>Phiên {quote.trading_session}</span> : null}
-          </div>
-          <p>
-            Public Market Quote · nguồn {quote?.source || 'SSI'} · phiên {quote?.trading_date || '—'}
-          </p>
-        </div>
-        <Link className="back-to-scanner" to="/danh-sach">← Bộ quét</Link>
-      </section>
-
-      {quoteError ? (
-        <section className="stock-error-panel">
-          <strong>Không tải được Public Market Quote</strong>
-          <p>{quoteError}</p>
-        </section>
-      ) : (
-        <section className="quote-strip" aria-busy={quoteLoading}>
-          <article className="quote-primary">
-            <small>Giá hiện tại</small>
-            <strong className={changeClass}>{quoteLoading ? '…' : formatNumber(quote?.last_price)}</strong>
-            <span className={changeClass}>{quoteLoading ? 'Đang tải' : formatPercent(quote?.ratio_change)}</span>
-          </article>
-          <article>
-            <small>Khối lượng lũy kế</small>
-            <strong>{quoteLoading ? '…' : formatNumber(quote?.total_volume)}</strong>
-            <span>{quote?.event_time || '—'}</span>
-          </article>
-          <article>
-            <small>Tham chiếu</small>
-            <strong>{quoteLoading ? '…' : formatNumber(quote?.ref_price)}</strong>
-            <span>SSI_STREAM</span>
-          </article>
-          <article>
-            <small>Trong phiên</small>
-            <strong>{quoteLoading ? '…' : `${formatNumber(quote?.low)} – ${formatNumber(quote?.high)}`}</strong>
-            <span>O {formatNumber(quote?.open)} · C {formatNumber(quote?.close)}</span>
-          </article>
-        </section>
-      )}
-
-      <section className="stock-detail-grid">
-        <div className="stock-main-column">
-          <section className="detail-card">
-            <header className="detail-card-header">
-              <div>
-                <span className="detail-eyebrow">Price / Volume</span>
-                <h2>Biểu đồ kỹ thuật</h2>
-              </div>
-              {chart ? (
-                <div className="chart-source">
-                  {chart.count} bars · {Object.keys(chart.source_counts || {}).join(', ') || 'SSI'}
-                </div>
-              ) : null}
-            </header>
-
-            {!ready ? (
-              <div className="detail-state">Đang kiểm tra phiên đăng nhập…</div>
-            ) : !user ? (
-              <div className="technical-lock">
-                <strong>Đăng nhập để mở vùng kỹ thuật</strong>
-                <p>Giá thị trường vẫn công khai. Biểu đồ kỹ thuật được kiểm tra quyền ở server.</p>
-                <Link to="/dang-nhap">Đăng nhập</Link>
-              </div>
-            ) : accessLoading ? (
-              <div className="detail-state">Đang kiểm tra technical entitlement…</div>
-            ) : accessError ? (
-              <div className="detail-state is-error">{accessError}</div>
-            ) : access && !access.technical_allowed ? (
-              <div className="technical-lock">
-                <strong>CCC Technical Intelligence ngoài phạm vi hiện tại</strong>
-                <p>Public quote vẫn hiển thị. Backend không trả technical payload cho mã ngoài entitlement.</p>
-                <span>{access.reason || 'OUTSIDE_ENTITLEMENT'}</span>
-              </div>
-            ) : chartError ? (
-              <div className="detail-state is-error">{chartError}</div>
-            ) : chartLoading ? (
-              <div className="detail-state">Đang tải biểu đồ kỹ thuật…</div>
-            ) : (
-              <Suspense fallback={<div className="detail-state">Đang tải chart engine…</div>}>
-                <TradingChart
-                  key={`${symbol}:${resolution}`}
-                  bars={bars}
-                  resolution={resolution}
-                  onResolutionChange={setResolution}
-                  loading={chartLoading}
-                  loadingOlder={loadingOlderHistory}
-                  hasMoreHistory={hasMoreHistory}
-                  onNeedOlderHistory={loadOlderHistory}
-                  liveCandle={liveCandle}
-                  liveConnected={liveConnected}
-                />
-              </Suspense>
-            )}
-          </section>
-        </div>
-
-        <section className="detail-card signal-card">
-          <header className="detail-card-header">
-            <div>
-              <span className="detail-eyebrow">CCC Technical Intelligence</span>
-              <h2>Trạng thái CCC V2</h2>
-            </div>
-          </header>
-
-          {!ready ? (
-            <div className="signal-state-box is-neutral">Đang kiểm tra phiên…</div>
-          ) : !user ? (
-            <div className="signal-state-box is-locked">
-              <strong>Đăng nhập để xem</strong>
-              <span>Signal state là protected technical intelligence.</span>
-            </div>
-          ) : accessLoading ? (
-            <div className="signal-state-box is-neutral">Đang kiểm tra quyền…</div>
-          ) : access?.technical_allowed ? (
-            <>
-              <div className="signal-state-box is-pending">
-                <strong>Chờ Signal Engine V2 output</strong>
-                <span>Không dùng lại ý nghĩa 2/4 · 3/4 · 4/4 của V1.</span>
-              </div>
-              <div className="signal-heat-placeholder" aria-label="CCC heat bar đang chờ engine">
-                <span />
-                <span />
-                <span />
-                <span />
-              </div>
-              <dl className="technical-meta">
-                <div>
-                  <dt>Quyền kỹ thuật</dt>
-                  <dd>{access.reason || 'ALLOWED'}</dd>
-                </div>
-                <div>
-                  <dt>Plan</dt>
-                  <dd>{access.plan_code || '—'}</dd>
-                </div>
-                <div>
-                  <dt>VIP tạm thời</dt>
-                  <dd>{access.vip_day_active ? 'Đang hoạt động' : 'Không'}</dd>
-                </div>
-              </dl>
-            </>
-          ) : (
-            <div className="signal-state-box is-locked">
-              <strong>Ngoài phạm vi technical</strong>
-              <span>{access?.reason || 'OUTSIDE_ENTITLEMENT'}</span>
-            </div>
-          )}
-        </section>
-
-        <section className="detail-card data-trust-card">
-          <header className="detail-card-header">
-            <div>
-              <span className="detail-eyebrow">Data Trust</span>
-              <h2>Dữ liệu phiên</h2>
-            </div>
-          </header>
-          <dl className="technical-meta">
-            <div>
-              <dt>Quote source</dt>
-              <dd>{quote?.source || '—'}</dd>
-            </div>
-            <div>
-              <dt>Trading date</dt>
-              <dd>{quote?.trading_date || '—'}</dd>
-            </div>
-            <div>
-              <dt>Last event</dt>
-              <dd>{quote?.event_time || '—'}</dd>
-            </div>
-            <div>
-              <dt>Chart bars</dt>
-              <dd>{chart?.count ?? '—'}</dd>
-            </div>
-          </dl>
-        </section>
-      </section>
-    </div>
+    <StockDetailV3View
+      symbol={symbol}
+      metadata={metadata}
+      metadataLoading={metadataLoading}
+      quote={quote}
+      quoteLoading={quoteLoading}
+      quoteError={quoteError}
+      changeClass={changeClass}
+      formatNumber={formatNumber}
+      formatPercent={formatPercent}
+      chart={chart}
+      chartContent={chartContent}
+      liveConnected={liveConnected}
+      ready={ready}
+      user={user}
+      accessLoading={accessLoading}
+      accessError={accessError}
+      access={access}
+    />
   )
 }
