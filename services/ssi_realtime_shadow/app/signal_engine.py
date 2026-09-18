@@ -62,16 +62,16 @@ def _continuous_candidates(
     candidates: set[str] = {"NORMAL"}
     selling = raw["negative_flow"]["selling_pressure"]
     shock = raw["negative_flow"]["shock"]
-    if _all(state, (
+    if (selling["enabled"] and _all(state, (
         ("rvol15", ">=", selling["rvol15_min"]),
         ("rvol30", ">=", selling["rvol30_min"]),
         ("price5_pct", "<=", selling["price5_pct_max"]),
         ("price15_pct", "<=", selling["price15_pct_max"]),
         ("day_rvol", ">=", selling["day_rvol_min"]),
-    )) or _all(state, (
+    ))) or (shock["enabled"] and _all(state, (
         ("rvol15", ">=", shock["rvol15_min"]),
         ("price5_pct", "<=", shock["price5_pct_max"]),
-    )):
+    ))):
         candidates.add(str(shock["resulting_state"]))
 
     if previous in config.positive_previous_states:
@@ -83,7 +83,7 @@ def _continuous_candidates(
         ))
         if state.recent_high_retreat_pct is not None:
             weak = weak and state.recent_high_retreat_pct >= weakening["loss_from_recent_high_pct_min"]
-        if weak:
+        if weakening["enabled"] and weak:
             candidates.add("MOMENTUM_WEAKENING")
 
         maintained = raw["positive_flow"]["momentum_maintained"]
@@ -93,18 +93,18 @@ def _continuous_candidates(
         ))
         if state.recent_high_retreat_pct is not None:
             keep = keep and state.recent_high_retreat_pct <= maintained["retain_recent_high_pct_max"]
-        if keep:
+        if maintained["enabled"] and keep:
             candidates.add("MOMENTUM_MAINTAINED")
 
     confirmed = raw["positive_flow"]["flow_price_confirmed"]
-    if _all(state, (
+    if confirmed["enabled"] and _all(state, (
         ("rvol30", ">=", confirmed["rvol30_min"]),
         ("price15_pct", ">=", confirmed["price15_pct_min"]),
         ("day_rvol", ">=", confirmed["day_rvol_min"]),
     )):
         candidates.add("FLOW_PRICE_CONFIRMED")
     appearing = raw["positive_flow"]["flow_appearing"]
-    if _all(state, (
+    if appearing["enabled"] and _all(state, (
         ("rvol15", ">=", appearing["rvol15_min"]),
         ("rvol30", ">=", appearing["rvol30_min"]),
         ("price5_pct", ">=", appearing["price5_pct_min"]),
@@ -126,12 +126,14 @@ def _continuous_candidates(
         value is not None for value in (state.rvol15, state.rvol30)
     ) else None
     absorbed = (
-        relevant is not None
+        absorption["enabled"]
+        and watching["enabled"]
+        and relevant is not None
         and state.price15_pct is not None
         and relevant >= absorption["rvol_min"]
         and abs(state.price15_pct) <= absorption["abs_price15_pct_max"]
     )
-    if any(values) or absorbed:
+    if watching["enabled"] and (any(values) or absorbed):
         candidates.add("WATCHING")
     return candidates
 
@@ -150,6 +152,8 @@ def _auction_candidates(state: TechnicalState, config: SignalConfig) -> set[str]
         price = state.atc_price_impact_pct
         volume_share = state.atc_volume_share_pct
         prefix = "closing"
+    if not section["enabled"]:
+        return candidates
     thresholds = section["thresholds"]
     behavior = section["behavior"]
     watch_volume = rvol is not None and rvol >= thresholds[f"{prefix}_rvol_watch_min"]
@@ -218,25 +222,39 @@ def _reason_codes(state: TechnicalState, config: SignalConfig) -> tuple[str, ...
         strong = raw["positive_flow"]["flow_appearing"][f"rvol{minutes}_min"]
         if value is not None and value >= strong:
             found.add(f"RVOL{minutes}_STRONG")
-    price_thresholds = {
-        5: (watch["abs_price5_pct_min"], raw["positive_flow"]["flow_appearing"]["price5_pct_min"]),
-        15: (watch["abs_price15_pct_min"], raw["positive_flow"]["flow_price_confirmed"]["price15_pct_min"]),
+    appearing = raw["positive_flow"]["flow_appearing"]
+    confirmed = raw["positive_flow"]["flow_price_confirmed"]
+    weakening = raw["negative_flow"]["momentum_weakening"]
+    selling = raw["negative_flow"]["selling_pressure"]
+    price_rules = {
+        5: (
+            appearing["price5_pct_min"],
+            max(appearing["price5_pct_min"], watch["abs_price5_pct_min"]),
+            weakening["price5_pct_max"],
+            selling["price5_pct_max"],
+        ),
+        15: (
+            appearing["price15_pct_min"],
+            confirmed["price15_pct_min"],
+            weakening["price15_pct_max"],
+            selling["price15_pct_max"],
+        ),
     }
-    for minutes, (regular, strong) in price_thresholds.items():
+    for minutes, (up, strong_up, down, strong_down) in price_rules.items():
         value = getattr(state, f"price{minutes}_pct")
         if value is None:
             continue
-        if value >= regular:
+        if value >= up:
             found.add(f"PRICE{minutes}_UP")
-        if value >= strong:
-            found.add(f"PRICE{minutes}_STRONG_UP")
-        if value <= -regular:
+        if value >= strong_up:
+            found.update({f"PRICE{minutes}_UP", f"PRICE{minutes}_STRONG_UP"})
+        if value <= down:
             found.add(f"PRICE{minutes}_DOWN")
-        if value <= -strong:
-            found.add(f"PRICE{minutes}_STRONG_DOWN")
+        if value <= strong_down:
+            found.update({f"PRICE{minutes}_DOWN", f"PRICE{minutes}_STRONG_DOWN"})
     relevant = [value for value in (state.rvol15, state.rvol30) if value is not None]
     absorption = watch["absorption"]
-    if relevant and state.price15_pct is not None and max(relevant) >= absorption["rvol_min"] and abs(state.price15_pct) <= absorption["abs_price15_pct_max"]:
+    if absorption["enabled"] and relevant and state.price15_pct is not None and max(relevant) >= absorption["rvol_min"] and abs(state.price15_pct) <= absorption["abs_price15_pct_max"]:
         found.add("HIGH_VOLUME_PRICE_ABSORPTION")
 
     if state.ato_rvol is not None:
@@ -277,6 +295,23 @@ def classify_signal(
     """Classify technical state without storage or clock access."""
     if previous_signal_state is not None and previous_signal_state not in config.states:
         raise ValueError("previous_signal_state is invalid")
+    if (
+        state.session_type in config.inactive_sessions
+        and not config.create_inactive_signal_from_clock_only
+    ):
+        chosen = (
+            previous_signal_state
+            if previous_signal_state is not None and config.preserve_inactive_state
+            else "NORMAL"
+        )
+        definition = config.states[chosen]
+        return SignalDecision(
+            chosen,
+            definition.level,
+            definition.direction,
+            _reason_codes(state, config),
+            definition.summary_vi,
+        )
     candidates = (
         _auction_candidates(state, config)
         if state.session_type in {"OPEN_AUCTION", "CLOSE_AUCTION"}

@@ -10,6 +10,7 @@ import pytest
 from app.market_session import VN_TZ
 from app.market_storage_schema import ensure_market_storage_schema
 from app.stock_state_build import build_stock_state_current, main
+from app.state_contract import PUBLIC_CONTRACT_KEYS, get_current_state
 from app.storage import SCHEMA
 from app.volume_baseline import BASELINE_SCHEMA, COVERAGE_PROOF, volume_market_grid
 
@@ -266,6 +267,103 @@ def test_baseline_proof_metadata_and_exact_coverage_gate_state_trust(
         assert state[1] == "DEGRADED"
 
 
+def _write_yearly_history(path: Path) -> None:
+    connection = sqlite3.connect(path)
+    connection.executescript(SCHEMA)
+    connection.commit()
+    connection.close()
+
+
+def _write_auction_history(market: Path) -> None:
+    connection = sqlite3.connect(market)
+    dates = [
+        str(row[0])
+        for row in connection.execute(
+            "SELECT DISTINCT trading_date FROM daily_bars "
+            "WHERE trading_date < ? ORDER BY trading_date DESC LIMIT 10",
+            (TRADING_DATE,),
+        )
+    ]
+    for index, trading_date in enumerate(dates):
+        timestamp = f"{trading_date}T15:01:00+07:00"
+        connection.execute(
+            """
+            INSERT INTO auction_session_history (
+                symbol,trading_date,exchange,auction_type,auction_price,
+                pre_auction_price,auction_volume,provider_session,source,
+                quality,proof_code,finalized,created_at,updated_at
+            ) VALUES ('VGI',?,'UPCOM','OPEN_AUCTION',100,NULL,400,
+                      'ATO','SSI_STREAM','PROVEN','PROVIDER_SESSION_ATO',1,?,?)
+            """,
+            (trading_date, timestamp, timestamp),
+        )
+        proven = index < 5
+        connection.execute(
+            """
+            INSERT INTO auction_session_history (
+                symbol,trading_date,exchange,auction_type,auction_price,
+                pre_auction_price,auction_volume,provider_session,source,
+                quality,proof_code,finalized,created_at,updated_at
+            ) VALUES ('VGI',?,'UPCOM','CLOSE_AUCTION',100,100,500,?,?,?,?,1,?,?)
+            """,
+            (
+                trading_date,
+                "ATC" if proven else None,
+                "SSI_STREAM" if proven else "SSI_REST",
+                "PROVEN" if proven else "INFERRED_BOUNDARY",
+                "PROVIDER_SESSION_ATC"
+                if proven
+                else "CROSS_PROVIDER_BOUNDARY_CONFIRMED_V1",
+                timestamp,
+                timestamp,
+            ),
+        )
+    connection.commit()
+    connection.close()
+
+
+def _write_current_auction_buckets(realtime: Path) -> None:
+    connection = sqlite3.connect(realtime)
+    rows = (
+        (
+            "OPEN_AUCTION", "ATO", 102.0, None, 1000, 0, 1000,
+            "2026-09-18T09:00:00+07:00", "2026-09-18T09:15:00+07:00",
+        ),
+        (
+            "CLOSE_AUCTION", "ATC", 118.0, 120.0, 1250, 1450, 2700,
+            "2026-09-18T14:30:00+07:00", "2026-09-18T14:45:00+07:00",
+        ),
+    )
+    for auction_type, session, price, pre, volume, start, end, first, last in rows:
+        connection.execute(
+            """
+            INSERT INTO auction_session_buckets (
+                symbol,trading_date,exchange,auction_type,provider_session,
+                auction_price,pre_auction_price,auction_volume,start_total_volume,
+                end_total_volume,event_count,out_of_order_events,first_event_at,
+                last_event_at,quality_status,finalized,data_source,updated_at
+            ) VALUES ('VGI',?,'UPCOM',?,?,?,?,?,?,?,1,0,?,?,'TRUSTED',1,
+                      'SSI_STREAM',?)
+            """,
+            (
+                TRADING_DATE, auction_type, session, price, pre, volume,
+                start, end, first, last, last,
+            ),
+        )
+    connection.commit()
+    connection.close()
+
+
+def _set_latest_price(realtime: Path, price: float) -> None:
+    connection = sqlite3.connect(realtime)
+    connection.execute(
+        "UPDATE latest_quotes SET last_price=?, close=?, change=?, ratio_change=?",
+        (price, price, price - 100, price - 100),
+    )
+    connection.commit()
+    connection.close()
+
+
 def test_replay_day_accepts_complete_trusted_ssi_stream(tmp_path: Path) -> None:
     realtime = tmp_path / "ssi_shadow.db"
     baseline = tmp_path / "ccc_v2_baseline.db"
@@ -312,3 +410,143 @@ def test_replay_day_rejects_unsafe_or_unreconciled_stream_rows(
     assert audit["failure_samples"][0]["reason"] == reason
     assert summary["baseline_proven_symbol_count"] == 0
     assert summary["trusted_state_count"] == 0
+
+
+@pytest.mark.parametrize(
+    ("later_price", "expected_state"),
+    ((100.0, "MOMENTUM_MAINTAINED"), (99.0, "MOMENTUM_WEAKENING")),
+)
+def test_real_materializer_wires_same_day_previous_signal_state(
+    tmp_path: Path, later_price: float, expected_state: str
+) -> None:
+    realtime = tmp_path / "ssi_shadow.db"
+    baseline = tmp_path / "ccc_v2_baseline.db"
+    market = tmp_path / "ccc_market_v2.db"
+    _write_realtime(realtime)
+    _write_baseline(baseline, proof=COVERAGE_PROOF)
+    _write_daily_history(market)
+
+    build_stock_state_current(
+        realtime_db=realtime, baseline_db=baseline, market_db=market
+    )
+    connection = sqlite3.connect(market)
+    assert connection.execute(
+        "SELECT signal_state FROM stock_state_current WHERE symbol='VGI'"
+    ).fetchone()[0] == "FLOW_PRICE_CONFIRMED"
+    connection.close()
+
+    _set_latest_price(realtime, later_price)
+    build_stock_state_current(
+        realtime_db=realtime, baseline_db=baseline, market_db=market
+    )
+    connection = sqlite3.connect(market)
+    row = connection.execute(
+        "SELECT signal_state,previous_signal_state FROM stock_state_current "
+        "WHERE symbol='VGI'"
+    ).fetchone()
+    connection.close()
+    assert row == (expected_state, "FLOW_PRICE_CONFIRMED")
+
+
+def test_real_materializer_does_not_reuse_previous_day_signal_state(
+    tmp_path: Path,
+) -> None:
+    realtime = tmp_path / "ssi_shadow.db"
+    baseline = tmp_path / "ccc_v2_baseline.db"
+    market = tmp_path / "ccc_market_v2.db"
+    _write_realtime(realtime)
+    _write_baseline(baseline, proof=COVERAGE_PROOF)
+    _write_daily_history(market)
+    build_stock_state_current(
+        realtime_db=realtime, baseline_db=baseline, market_db=market
+    )
+    connection = sqlite3.connect(market)
+    connection.execute(
+        "UPDATE stock_state_current SET trading_date='2026-09-17' WHERE symbol='VGI'"
+    )
+    connection.commit()
+    connection.close()
+    _set_latest_price(realtime, 100.0)
+
+    build_stock_state_current(
+        realtime_db=realtime, baseline_db=baseline, market_db=market
+    )
+    connection = sqlite3.connect(market)
+    row = connection.execute(
+        "SELECT trading_date,signal_state,previous_signal_state "
+        "FROM stock_state_current WHERE symbol='VGI'"
+    ).fetchone()
+    connection.close()
+    assert row == (TRADING_DATE, "WATCHING", None)
+
+
+def test_real_materializer_populates_canonical_ato_atc_and_frontend_contract(
+    tmp_path: Path,
+) -> None:
+    realtime = tmp_path / "ssi_shadow.db"
+    baseline = tmp_path / "ccc_v2_baseline.db"
+    market = tmp_path / "ccc_market_v2.db"
+    history = tmp_path / "ssi_history_2026.db"
+    _write_realtime(realtime)
+    _write_current_auction_buckets(realtime)
+    _write_baseline(baseline, proof=COVERAGE_PROOF)
+    _write_daily_history(market)
+    _write_auction_history(market)
+    _write_yearly_history(history)
+
+    summary = build_stock_state_current(
+        realtime_db=realtime,
+        baseline_db=baseline,
+        market_db=market,
+        history_db=history,
+    )
+    connection = sqlite3.connect(market)
+    connection.row_factory = sqlite3.Row
+    row = connection.execute(
+        "SELECT * FROM stock_state_current WHERE symbol='VGI'"
+    ).fetchone()
+    assert row["ato_baseline_sessions_used"] == 10
+    assert row["ato_baseline_quality"] == "PROVEN"
+    assert row["ato_avg_volume_10"] == 400
+    assert row["ato_volume"] == 1000
+    assert row["ato_rvol"] == pytest.approx(2.5)
+    assert row["atc_baseline_sessions_used"] == 10
+    assert row["atc_baseline_quality"] == "MIXED"
+    assert row["atc_avg_volume_10"] == 500
+    assert row["atc_volume"] == 1250
+    assert row["atc_rvol"] == pytest.approx(2.5)
+    assert row["atc_price_impact_pct"] == pytest.approx(-1.6666667)
+    frontend = get_current_state(connection, "VGI")
+    connection.close()
+    assert frontend is not None
+    assert tuple(frontend) == PUBLIC_CONTRACT_KEYS
+    assert frontend["ato_rvol"] == pytest.approx(2.5)
+    assert frontend["atc_rvol"] == pytest.approx(2.5)
+    assert summary["auction_history_status"] == "AVAILABLE"
+    assert summary["auction_metric_audit"][0]["status"] == "AVAILABLE"
+
+
+def test_real_materializer_does_not_turn_0915_continuous_data_into_ato(
+    tmp_path: Path,
+) -> None:
+    realtime = tmp_path / "ssi_shadow.db"
+    baseline = tmp_path / "ccc_v2_baseline.db"
+    market = tmp_path / "ccc_market_v2.db"
+    history = tmp_path / "ssi_history_2026.db"
+    _write_realtime(realtime)
+    _write_baseline(baseline, proof=COVERAGE_PROOF)
+    _write_daily_history(market)
+    _write_auction_history(market)
+    _write_yearly_history(history)
+    build_stock_state_current(
+        realtime_db=realtime,
+        baseline_db=baseline,
+        market_db=market,
+        history_db=history,
+    )
+    connection = sqlite3.connect(market)
+    row = connection.execute(
+        "SELECT ato_volume,ato_rvol FROM stock_state_current WHERE symbol='VGI'"
+    ).fetchone()
+    connection.close()
+    assert row == (None, None)

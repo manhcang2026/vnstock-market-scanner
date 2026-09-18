@@ -34,6 +34,10 @@ def test_canonical_config_loads_and_locks_versions_states_and_quality() -> None:
         lambda raw: raw["state_model"]["states"]["NORMAL"].update(direction="UP"),
         lambda raw: raw["quality"].update(required_baseline_sessions=9),
         lambda raw: raw["watching"].update(day_rvol_min="1.3"),
+        lambda raw: raw["watching"].update(enabled="yes"),
+        lambda raw: raw["state_model"]["inactive_session_behavior"].update(
+            preserve_existing_state_when_safe="yes"
+        ),
     ),
 )
 def test_malformed_config_fails_fast(mutation) -> None:

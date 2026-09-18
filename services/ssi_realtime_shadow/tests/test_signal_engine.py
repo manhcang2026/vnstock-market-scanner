@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from copy import deepcopy
 
 import pytest
+import yaml
 
-from app.signal_config import load_signal_config
+from app.signal_config import CONFIG_PATH, load_signal_config, validate_signal_config
 from app.signal_engine import TechnicalState, classify_signal
 
 
@@ -122,3 +124,74 @@ def test_ato_and_atc_quality_gates_use_their_own_exact10_coverage() -> None:
         atc_baseline_quality="INFERRED_BOUNDARY",
     )
     assert classify_signal(atc, None, CONFIG).signal_state == "SELLING_PRESSURE"
+
+
+@pytest.mark.parametrize(
+    ("session_type", "previous", "expected"),
+    (
+        ("LUNCH_BREAK", None, "NORMAL"),
+        ("LUNCH_BREAK", "FLOW_PRICE_CONFIRMED", "FLOW_PRICE_CONFIRMED"),
+        ("CLOSED", None, "NORMAL"),
+        ("POST_TRADING", "FLOW_APPEARING", "FLOW_APPEARING"),
+    ),
+)
+def test_inactive_sessions_do_not_invent_signals_and_preserve_safe_state(
+    session_type: str, previous: str | None, expected: str
+) -> None:
+    stale_strong = state(
+        session_type=session_type,
+        day_rvol=2.0,
+        rvol15=3.0,
+        rvol30=3.0,
+        price5_pct=-2.0,
+        price15_pct=-2.0,
+    )
+    assert classify_signal(stale_strong, previous, CONFIG).signal_state == expected
+
+
+def _config_with(path: tuple[str, ...], value: object):
+    raw = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8"))
+    current = raw
+    for key in path[:-1]:
+        current = current[key]
+    current[path[-1]] = value
+    return validate_signal_config(deepcopy(raw))
+
+
+def test_classifier_respects_disabled_continuous_and_auction_sections() -> None:
+    confirmed_off = _config_with(
+        ("positive_flow", "flow_price_confirmed", "enabled"), False
+    )
+    confirmed = state(day_rvol=1.4, rvol30=2.0, price15_pct=1.2)
+    assert classify_signal(confirmed, None, confirmed_off).signal_state == "WATCHING"
+
+    watching_off = _config_with(("watching", "enabled"), False)
+    assert classify_signal(state(day_rvol=1.3), None, watching_off).signal_state == "NORMAL"
+
+    auction_off = _config_with(("opening_auction", "enabled"), False)
+    ato = state(
+        session_type="OPEN_AUCTION", ato_rvol=3.0, ato_gap_pct=3.0,
+        ato_baseline_sessions_used=10, ato_baseline_quality="PROVEN",
+    )
+    assert classify_signal(ato, None, auction_off).signal_state == "NORMAL"
+
+    shock_off = _config_with(("negative_flow", "shock", "enabled"), False)
+    shock = state(rvol15=2.5, price5_pct=-1.5)
+    assert classify_signal(shock, None, shock_off).signal_state == "WATCHING"
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "base", "strong"),
+    (
+        ("price5_pct", 0.60, "PRICE5_UP", "PRICE5_STRONG_UP"),
+        ("price15_pct", 1.20, "PRICE15_UP", "PRICE15_STRONG_UP"),
+        ("price5_pct", -0.80, "PRICE5_DOWN", "PRICE5_STRONG_DOWN"),
+        ("price15_pct", -1.20, "PRICE15_DOWN", "PRICE15_STRONG_DOWN"),
+    ),
+)
+def test_strong_price_reason_always_implies_base_direction(
+    field: str, value: float, base: str, strong: str
+) -> None:
+    result = classify_signal(state(**{field: value}), None, CONFIG)
+    assert strong in result.reason_codes
+    assert base in result.reason_codes

@@ -12,11 +12,14 @@ from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any, Iterable
 
+from .auction import AuctionSessionBucket
+from .auction_history import read_atc_exact10, read_ato_exact10
 from .daily_ma import calculate_moving_averages_from_db
 from .market_session import VN_TZ, classify_market_session, normalize_exchange
 from .market_storage_schema import ensure_market_storage_schema
 from .price_momentum import MinutePrice, calculate_price_momentum
 from .realtime_volume import RealtimeVolumeEngine, VolumeEvent
+from .signal_auction import AuctionSignalMetrics, build_auction_signal_metrics
 from .stock_state_current import (
     LatestQuote,
     project_stock_state,
@@ -48,6 +51,122 @@ def _require_table(connection: sqlite3.Connection, table: str) -> None:
     ).fetchone()
     if row is None:
         raise StockStateBuildError(f"Required source table is missing: {table}")
+
+
+def _table_exists(connection: sqlite3.Connection, table: str) -> bool:
+    return connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+    ).fetchone() is not None
+
+
+def _load_auction_buckets(
+    connection: sqlite3.Connection, *, symbol: str, trading_date: str
+) -> dict[str, AuctionSessionBucket]:
+    if not _table_exists(connection, "auction_session_buckets"):
+        return {}
+    rows = connection.execute(
+        """
+        SELECT symbol, trading_date, exchange, auction_type,
+               provider_session, auction_price, pre_auction_price,
+               auction_volume, start_total_volume, end_total_volume,
+               event_count, out_of_order_events, first_event_at,
+               last_event_at, quality_status, finalized, data_source, updated_at
+        FROM auction_session_buckets
+        WHERE symbol=? AND trading_date=?
+        ORDER BY auction_type
+        """,
+        (symbol, trading_date),
+    ).fetchall()
+    return {
+        str(row["auction_type"]): AuctionSessionBucket(
+            symbol=str(row["symbol"]),
+            trading_date=str(row["trading_date"]),
+            exchange=str(row["exchange"]),
+            auction_type=str(row["auction_type"]),
+            provider_session=str(row["provider_session"]),
+            auction_price=_finite_float(row["auction_price"]),
+            pre_auction_price=_finite_float(row["pre_auction_price"]),
+            auction_volume=int(row["auction_volume"]),
+            start_total_volume=int(row["start_total_volume"]),
+            end_total_volume=int(row["end_total_volume"]),
+            event_count=int(row["event_count"]),
+            out_of_order_events=int(row["out_of_order_events"]),
+            first_event_at=row["first_event_at"],
+            last_event_at=row["last_event_at"],
+            quality_status=str(row["quality_status"]),
+            finalized=bool(row["finalized"]),
+            data_source=str(row["data_source"]),
+            updated_at=str(row["updated_at"]),
+        )
+        for row in rows
+    }
+
+
+def _previous_signal_state(
+    connection: sqlite3.Connection, *, symbol: str, trading_date: str
+) -> str | None:
+    row = connection.execute(
+        "SELECT trading_date, signal_state FROM stock_state_current WHERE symbol=?",
+        (symbol,),
+    ).fetchone()
+    if row is None or str(row["trading_date"]) != trading_date:
+        return None
+    return str(row["signal_state"])
+
+
+def _auction_metrics(
+    *,
+    source: sqlite3.Connection,
+    target: sqlite3.Connection,
+    history: sqlite3.Connection | None,
+    quote: LatestQuote,
+) -> tuple[AuctionSignalMetrics, str | None]:
+    error: str | None = None
+    try:
+        buckets = _load_auction_buckets(
+            source, symbol=quote.symbol, trading_date=quote.trading_date
+        )
+    except (sqlite3.Error, TypeError, ValueError) as exc:
+        buckets = {}
+        error = f"AUCTION_BUCKET_UNAVAILABLE:{type(exc).__name__}"
+    ato_history = None
+    atc_history = None
+    if history is not None:
+        try:
+            ato_history = read_ato_exact10(
+                target,
+                history,
+                target,
+                symbol=quote.symbol,
+                as_of_date=quote.trading_date,
+            )
+            atc_history = read_atc_exact10(
+                target,
+                history,
+                target,
+                symbol=quote.symbol,
+                as_of_date=quote.trading_date,
+            )
+        except (sqlite3.Error, TypeError, ValueError) as exc:
+            history_error = f"AUCTION_HISTORY_UNAVAILABLE:{type(exc).__name__}"
+            error = f"{error};{history_error}" if error else history_error
+    else:
+        history_error = "AUCTION_HISTORY_UNAVAILABLE"
+        error = f"{error};{history_error}" if error else history_error
+    try:
+        metrics = build_auction_signal_metrics(
+            ato_history=ato_history,
+            atc_history=atc_history,
+            ato_bucket=buckets.get("OPEN_AUCTION"),
+            atc_bucket=buckets.get("CLOSE_AUCTION"),
+            ref_price=quote.ref_price,
+            total_day_volume=quote.total_volume,
+        )
+    except (TypeError, ValueError) as exc:
+        metrics = AuctionSignalMetrics()
+        metric_error = f"AUCTION_METRIC_UNAVAILABLE:{type(exc).__name__}"
+        error = f"{error};{metric_error}" if error else metric_error
+    return metrics, error
 
 
 def determine_latest_trading_date(connection: sqlite3.Connection) -> str:
@@ -243,6 +362,12 @@ def _sample(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
         "symbol", "exchange", "trading_date", "last_price", "day_rvol",
         "rvol15", "rvol30", "ma10", "ma200", "price5_pct", "price15_pct",
         "baseline_sessions_used", "quality_status", "metrics_trusted",
+        "ato_volume", "ato_avg_volume_10", "ato_rvol",
+        "ato_baseline_sessions_used", "ato_baseline_quality",
+        "atc_volume", "atc_avg_volume_10", "atc_rvol",
+        "atc_baseline_sessions_used", "atc_baseline_quality",
+        "atc_price_impact_pct", "signal_state", "signal_level",
+        "signal_direction", "reason_codes_json",
     )
     return [
         {field: by_symbol[symbol][field] for field in fields}
@@ -325,14 +450,33 @@ def _audit_replay_day(
 
 
 def build_stock_state_current(
-    *, realtime_db: Path, baseline_db: Path, market_db: Path
+    *,
+    realtime_db: Path,
+    baseline_db: Path,
+    market_db: Path,
+    history_db: Path | None = None,
 ) -> dict[str, Any]:
     """Materialize the latest stored SSI day into a local V2 current-state DB."""
     resolved = [Path(item).resolve() for item in (realtime_db, baseline_db, market_db)]
     if resolved[2] in resolved[:2]:
         raise StockStateBuildError("market DB must be separate from read-only source DBs")
+    resolved_history = Path(history_db).resolve() if history_db is not None else None
+    if resolved_history is not None and resolved_history == resolved[2]:
+        raise StockStateBuildError("history DB must be separate from the market DB")
 
     source = _open_readonly(resolved[0])
+    history: sqlite3.Connection | None = None
+    history_status = "NOT_CONFIGURED"
+    if resolved_history is not None:
+        try:
+            history = _open_readonly(resolved_history)
+            _require_table(history, "minute_bars")
+            history_status = "AVAILABLE"
+        except (FileNotFoundError, StockStateBuildError, sqlite3.Error) as exc:
+            if history is not None:
+                history.close()
+                history = None
+            history_status = f"UNAVAILABLE:{type(exc).__name__}"
     target: sqlite3.Connection | None = None
     try:
         latest_date = determine_latest_trading_date(source)
@@ -373,6 +517,7 @@ def build_stock_state_current(
         )
 
         projections: list[dict[str, Any]] = []
+        auction_audit: list[dict[str, Any]] = []
         baseline_proven_symbols: set[str] = set()
         for symbol, quote in sorted(quotes.items()):
             try:
@@ -402,6 +547,25 @@ def build_stock_state_current(
                 )
                 if baseline_proven:
                     baseline_proven_symbols.add(symbol)
+                previous_state = _previous_signal_state(
+                    target, symbol=symbol, trading_date=latest_date
+                )
+                auction, auction_error = _auction_metrics(
+                    source=source,
+                    target=target,
+                    history=history,
+                    quote=quote,
+                )
+                auction_audit.append(
+                    {
+                        "symbol": symbol,
+                        "status": auction_error or "AVAILABLE",
+                        "ato_sessions_used": auction.ato_baseline_sessions_used,
+                        "ato_baseline_quality": auction.ato_baseline_quality,
+                        "atc_sessions_used": auction.atc_baseline_sessions_used,
+                        "atc_baseline_quality": auction.atc_baseline_quality,
+                    }
+                )
                 projections.append(
                     project_stock_state(
                         quote=quote,
@@ -410,6 +574,8 @@ def build_stock_state_current(
                         moving_averages=moving_averages,
                         price_momentum=momentum,
                         baseline_coverage_proven=baseline_proven,
+                        auction=auction,
+                        previous_signal_state=previous_state,
                     )
                 )
             except (TypeError, ValueError) as exc:
@@ -460,10 +626,14 @@ def build_stock_state_current(
             ) == len(projections),
             "baseline_proven_symbol_count": len(baseline_proven_symbols),
             "replay_day_audit": replay_audit,
+            "auction_history_status": history_status,
+            "auction_metric_audit": auction_audit,
             "sample": _sample(projections),
         }
     finally:
         source.close()
+        if history is not None:
+            history.close()
         if target is not None:
             target.close()
 
@@ -487,6 +657,11 @@ def _parser() -> argparse.ArgumentParser:
         default=_path_from_env("VOLUME_BASELINE_PATH", "ccc_v2_baseline.db"),
     )
     parser.add_argument(
+        "--history-db",
+        type=Path,
+        default=_path_from_env("SSI_HISTORY_PATH", "ssi_history_2026.db"),
+    )
+    parser.add_argument(
         "--market-db",
         type=Path,
         default=_path_from_env("MARKET_V2_DATABASE_PATH", "ccc_market_v2.db"),
@@ -500,6 +675,7 @@ def main(argv: list[str] | None = None) -> int:
         realtime_db=args.realtime_db,
         baseline_db=args.baseline_db,
         market_db=args.market_db,
+        history_db=args.history_db,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
     return 0

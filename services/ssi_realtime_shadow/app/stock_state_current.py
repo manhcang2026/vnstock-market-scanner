@@ -285,24 +285,27 @@ def upsert_stock_state_current(
         raise ValueError(f"stock-state projection is missing columns: {sorted(missing)}")
     projected = dict(values)
     existing = connection.execute(
-        "SELECT signal_state, previous_signal_state, state_changed_at, signal_at "
+        "SELECT trading_date, signal_state, previous_signal_state, "
+        "state_changed_at, signal_at "
         "FROM stock_state_current WHERE symbol = ?",
         (projected["symbol"],),
     ).fetchone()
+    if existing is not None and existing[0] != projected["trading_date"]:
+        existing = None
     event_at = projected["event_at"]
     current = projected["signal_state"]
     if existing is None:
         projected["previous_signal_state"] = None
         projected["state_changed_at"] = event_at if current != "NORMAL" else None
         projected["signal_at"] = event_at if current != "NORMAL" else None
-    elif existing[0] != current:
-        projected["previous_signal_state"] = existing[0]
+    elif existing[1] != current:
+        projected["previous_signal_state"] = existing[1]
         projected["state_changed_at"] = event_at
         projected["signal_at"] = event_at if current != "NORMAL" else None
     else:
-        projected["previous_signal_state"] = existing[1]
-        projected["state_changed_at"] = existing[2]
-        projected["signal_at"] = existing[3]
+        projected["previous_signal_state"] = existing[2]
+        projected["state_changed_at"] = existing[3]
+        projected["signal_at"] = existing[4]
     assignments = ", ".join(
         f"{column}=excluded.{column}" for column in _STATE_COLUMNS if column != "symbol"
     )

@@ -67,6 +67,9 @@ class SignalConfig:
     states: Mapping[str, StateDefinition]
     evaluation_priority: tuple[str, ...]
     positive_previous_states: frozenset[str]
+    inactive_sessions: frozenset[str]
+    preserve_inactive_state: bool
+    create_inactive_signal_from_clock_only: bool
     reason_code_order: tuple[str, ...]
     raw: Mapping[str, Any]
 
@@ -142,6 +145,28 @@ def _validate_thresholds(raw: Mapping[str, Any]) -> None:
             _number(section, key, dotted)
 
 
+def _validate_enabled_flags(raw: Mapping[str, Any]) -> None:
+    paths = (
+        ("watching",),
+        ("watching", "absorption"),
+        ("positive_flow", "flow_appearing"),
+        ("positive_flow", "flow_price_confirmed"),
+        ("positive_flow", "momentum_maintained"),
+        ("negative_flow", "momentum_weakening"),
+        ("negative_flow", "selling_pressure"),
+        ("negative_flow", "shock"),
+        ("opening_auction",),
+        ("closing_auction",),
+    )
+    for path in paths:
+        current: Any = raw
+        for part in path:
+            current = _mapping(current, ".".join(path)).get(part)
+        section = _mapping(current, ".".join(path))
+        if not isinstance(section.get("enabled"), bool):
+            raise SignalConfigError(f"{'.'.join(path)}.enabled must be boolean")
+
+
 def validate_signal_config(raw: Mapping[str, Any]) -> SignalConfig:
     if raw.get("config_version") != EXPECTED_CONFIG_VERSION:
         raise SignalConfigError("unexpected config_version")
@@ -182,6 +207,17 @@ def validate_signal_config(raw: Mapping[str, Any]) -> SignalConfig:
     positive = frozenset(state_model.get("positive_previous_states") or ())
     if not positive or not positive <= set(EXPECTED_STATES):
         raise SignalConfigError("positive_previous_states is invalid")
+    inactive = frozenset(state_model.get("inactive_sessions") or ())
+    if not inactive or not all(isinstance(item, str) and item for item in inactive):
+        raise SignalConfigError("inactive_sessions is invalid")
+    inactive_behavior = _mapping(
+        state_model.get("inactive_session_behavior"),
+        "state_model.inactive_session_behavior",
+    )
+    create_from_clock = inactive_behavior.get("create_new_signal_from_clock_only")
+    preserve_inactive = inactive_behavior.get("preserve_existing_state_when_safe")
+    if not isinstance(create_from_clock, bool) or not isinstance(preserve_inactive, bool):
+        raise SignalConfigError("inactive session behavior values must be boolean")
 
     quality = _mapping(raw.get("quality"), "quality")
     if quality.get("required_baseline_sessions") != exact:
@@ -214,6 +250,7 @@ def validate_signal_config(raw: Mapping[str, Any]) -> SignalConfig:
     if len(reason_order) != len(set(reason_order)) or not reason_order:
         raise SignalConfigError("reason code order must be non-empty and unique")
     _validate_thresholds(raw)
+    _validate_enabled_flags(raw)
     return SignalConfig(
         config_version=str(raw["config_version"]),
         engine_version=str(raw["engine_version"]),
@@ -222,6 +259,9 @@ def validate_signal_config(raw: Mapping[str, Any]) -> SignalConfig:
         states=MappingProxyType(states),
         evaluation_priority=priority,
         positive_previous_states=positive,
+        inactive_sessions=inactive,
+        preserve_inactive_state=preserve_inactive,
+        create_inactive_signal_from_clock_only=create_from_clock,
         reason_code_order=reason_order,
         raw=MappingProxyType(dict(raw)),
     )
