@@ -202,9 +202,9 @@ def test_offline_builder_integrates_exact_ma_price_volume_and_is_idempotent(
     assert row["price15_pct"] == pytest.approx(20)
     assert row["metrics_trusted"] == 0
     assert row["quality_status"] == "DEGRADED"
-    assert row["signal_state"] == "NORMAL"
-    assert row["signal_level"] == 0
-    assert row["signal_at"] is None
+    assert row["signal_state"] == "WATCHING"
+    assert row["signal_level"] == 1
+    assert row["signal_at"] == row["event_at"]
     assert row["previous_signal_state"] is None
     assert connection.execute("SELECT COUNT(*) FROM signal_events").fetchone()[0] == 0
     connection.close()

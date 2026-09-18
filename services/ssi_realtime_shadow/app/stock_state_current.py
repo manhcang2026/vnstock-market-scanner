@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import json
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
@@ -13,12 +14,16 @@ from .market_session import MarketSession, normalize_exchange
 from .market_storage_schema import canonical_timestamp
 from .price_momentum import PriceMomentum
 from .realtime_volume import VolumeSnapshot
+from .signal_auction import AuctionSignalMetrics
+from .signal_config import SignalConfig, load_signal_config
+from .signal_engine import TechnicalState, classify_signal
 
 
-ENGINE_VERSION = "2.0.0"
-CONFIG_VERSION = "beta-01-neutral"
+_DEFAULT_CONFIG = load_signal_config()
+ENGINE_VERSION = _DEFAULT_CONFIG.engine_version
+CONFIG_VERSION = _DEFAULT_CONFIG.config_version
 BASELINE_TARGET_SESSIONS = 10
-SIGNAL_SUMMARY_VI = "BETA-01: Signal Engine chưa đánh giá dòng dữ liệu này."
+SIGNAL_SUMMARY_VI = _DEFAULT_CONFIG.states["NORMAL"].summary_vi
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,8 +62,13 @@ _STATE_COLUMNS = (
     "avg_opening_volume", "opening_rvol", "baseline_sessions_used",
     "baseline_target_sessions", "baseline_coverage_pct",
     "price5_pct", "price15_pct", "breakout_state", "trigger_price", "trigger_at",
-    "signal_state", "signal_level", "signal_summary_vi", "signal_at",
+    "signal_state", "signal_level", "signal_direction", "reason_codes_json",
+    "signal_summary_vi", "signal_at",
     "previous_signal_state", "state_changed_at", "engine_version", "config_version",
+    "ato_volume", "ato_avg_volume_10", "ato_rvol",
+    "ato_baseline_sessions_used", "ato_baseline_quality",
+    "atc_volume", "atc_avg_volume_10", "atc_rvol",
+    "atc_baseline_sessions_used", "atc_baseline_quality", "atc_price_impact_pct",
     "feed_status", "quality_status", "metrics_trusted", "event_at", "updated_at",
 )
 
@@ -102,6 +112,11 @@ def project_stock_state(
     moving_averages: MAResult,
     price_momentum: PriceMomentum,
     baseline_coverage_proven: bool = False,
+    auction: AuctionSignalMetrics | None = None,
+    previous_signal_state: str | None = None,
+    signal_config: SignalConfig | None = None,
+    recent_high_retreat_pct: float | None = None,
+    feed_status: str = "EXPECTED_IDLE",
 ) -> dict[str, Any]:
     """Combine existing engines into one conservative current-state row."""
     symbol = str(quote.symbol or "").strip().upper()
@@ -133,6 +148,50 @@ def project_stock_state(
     quality_status = (
         "TRUSTED" if trusted else "UNAVAILABLE" if volume is None or baseline_used == 0 else "DEGRADED"
     )
+
+    config = signal_config or _DEFAULT_CONFIG
+    auction = auction or AuctionSignalMetrics()
+    signal_metrics_trusted = trusted
+    if session.session_type.value == "OPEN_AUCTION":
+        signal_metrics_trusted = bool(
+            auction.ato_rvol is not None
+            and auction.ato_baseline_sessions_used == config.exact_previous_sessions
+            and auction.ato_baseline_quality == "PROVEN"
+        )
+    elif session.session_type.value == "CLOSE_AUCTION":
+        signal_metrics_trusted = bool(
+            auction.atc_rvol is not None
+            and auction.atc_baseline_sessions_used == config.exact_previous_sessions
+            and auction.atc_baseline_quality in {"PROVEN", "MIXED", "INFERRED_BOUNDARY"}
+        )
+    if signal_metrics_trusted:
+        quality_status = "TRUSTED"
+    technical = TechnicalState(
+        session_type=session.session_type.value,
+        last_price=price,
+        day_rvol=volume.day_rvol if volume else None,
+        rvol15=volume.rvol_15 if volume else None,
+        rvol30=volume.rvol_30 if volume else None,
+        price5_pct=price_momentum.price5_pct,
+        price15_pct=price_momentum.price15_pct,
+        ma10=moving_averages.ma10,
+        ma200=moving_averages.ma200,
+        distance_ma10_pct=_distance(price, moving_averages.ma10),
+        distance_ma200_pct=_distance(price, moving_averages.ma200),
+        recent_high_retreat_pct=recent_high_retreat_pct,
+        ato_rvol=auction.ato_rvol,
+        ato_gap_pct=auction.ato_gap_pct,
+        ato_baseline_sessions_used=auction.ato_baseline_sessions_used,
+        ato_baseline_quality=auction.ato_baseline_quality,
+        atc_rvol=auction.atc_rvol,
+        atc_volume_share_pct=auction.atc_volume_share_pct,
+        atc_price_impact_pct=auction.atc_price_impact_pct,
+        atc_baseline_sessions_used=auction.atc_baseline_sessions_used,
+        atc_baseline_quality=auction.atc_baseline_quality,
+        baseline_sessions_used=baseline_used,
+        metrics_trusted=signal_metrics_trusted,
+    )
+    decision = classify_signal(technical, previous_signal_state, config)
 
     values: dict[str, Any] = {
         "symbol": symbol,
@@ -185,17 +244,32 @@ def project_stock_state(
         "breakout_state": None,
         "trigger_price": None,
         "trigger_at": None,
-        "signal_state": "NORMAL",
-        "signal_level": 0,
-        "signal_summary_vi": SIGNAL_SUMMARY_VI,
+        "signal_state": decision.signal_state,
+        "signal_level": decision.signal_level,
+        "signal_direction": decision.signal_direction,
+        "reason_codes_json": json.dumps(
+            list(decision.reason_codes), ensure_ascii=False, separators=(",", ":")
+        ),
+        "signal_summary_vi": decision.signal_summary_vi,
         "signal_at": None,
-        "previous_signal_state": None,
+        "previous_signal_state": previous_signal_state,
         "state_changed_at": None,
-        "engine_version": ENGINE_VERSION,
-        "config_version": CONFIG_VERSION,
-        "feed_status": "EXPECTED_IDLE",
+        "engine_version": config.engine_version,
+        "config_version": config.config_version,
+        "ato_volume": auction.ato_volume,
+        "ato_avg_volume_10": auction.ato_avg_volume_10,
+        "ato_rvol": auction.ato_rvol,
+        "ato_baseline_sessions_used": auction.ato_baseline_sessions_used,
+        "ato_baseline_quality": auction.ato_baseline_quality,
+        "atc_volume": auction.atc_volume,
+        "atc_avg_volume_10": auction.atc_avg_volume_10,
+        "atc_rvol": auction.atc_rvol,
+        "atc_baseline_sessions_used": auction.atc_baseline_sessions_used,
+        "atc_baseline_quality": auction.atc_baseline_quality,
+        "atc_price_impact_pct": auction.atc_price_impact_pct,
+        "feed_status": feed_status,
         "quality_status": quality_status,
-        "metrics_trusted": int(trusted),
+        "metrics_trusted": int(signal_metrics_trusted),
         "event_at": canonical_timestamp(quote.event_at),
         "updated_at": canonical_timestamp(quote.updated_at),
     }
@@ -209,6 +283,26 @@ def upsert_stock_state_current(
     missing = set(_STATE_COLUMNS) - values.keys()
     if missing:
         raise ValueError(f"stock-state projection is missing columns: {sorted(missing)}")
+    projected = dict(values)
+    existing = connection.execute(
+        "SELECT signal_state, previous_signal_state, state_changed_at, signal_at "
+        "FROM stock_state_current WHERE symbol = ?",
+        (projected["symbol"],),
+    ).fetchone()
+    event_at = projected["event_at"]
+    current = projected["signal_state"]
+    if existing is None:
+        projected["previous_signal_state"] = None
+        projected["state_changed_at"] = event_at if current != "NORMAL" else None
+        projected["signal_at"] = event_at if current != "NORMAL" else None
+    elif existing[0] != current:
+        projected["previous_signal_state"] = existing[0]
+        projected["state_changed_at"] = event_at
+        projected["signal_at"] = event_at if current != "NORMAL" else None
+    else:
+        projected["previous_signal_state"] = existing[1]
+        projected["state_changed_at"] = existing[2]
+        projected["signal_at"] = existing[3]
     assignments = ", ".join(
         f"{column}=excluded.{column}" for column in _STATE_COLUMNS if column != "symbol"
     )
@@ -218,5 +312,5 @@ def upsert_stock_state_current(
         VALUES ({', '.join('?' for _ in _STATE_COLUMNS)})
         ON CONFLICT(symbol) DO UPDATE SET {assignments}
         """,
-        tuple(values[column] for column in _STATE_COLUMNS),
+        tuple(projected[column] for column in _STATE_COLUMNS),
     )

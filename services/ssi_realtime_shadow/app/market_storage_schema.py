@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 
 
 MARKET_DATA_CONTRACT_VERSION = 2
-STORAGE_SCHEMA_VERSION = 2
+STORAGE_SCHEMA_VERSION = 3
 ARCHIVE_STORAGE_SCHEMA_VERSION = 1
 VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 
@@ -138,6 +138,12 @@ _MARKET_V1_STATEMENTS = (
             )
         ),
         signal_level INTEGER NOT NULL CHECK (signal_level BETWEEN 0 AND 4),
+        signal_direction TEXT NOT NULL DEFAULT 'NEUTRAL' CHECK (
+            signal_direction IN ('NEUTRAL', 'BULLISH', 'BEARISH')
+        ),
+        reason_codes_json TEXT NOT NULL DEFAULT '[]' CHECK (
+            json_valid(reason_codes_json) AND json_type(reason_codes_json) = 'array'
+        ),
         signal_summary_vi TEXT NOT NULL,
         signal_at TEXT,
         previous_signal_state TEXT CHECK (
@@ -149,10 +155,45 @@ _MARKET_V1_STATEMENTS = (
         state_changed_at TEXT,
         engine_version TEXT NOT NULL CHECK (
             engine_version GLOB '[0-9]*.[0-9]*.[0-9]*'
-            AND engine_version NOT GLOB '*[^0-9.]*'
-            AND length(engine_version) - length(replace(engine_version, '.', '')) = 2
+            AND (
+                (engine_version NOT GLOB '*[^0-9.]*'
+                 AND length(engine_version)-length(replace(engine_version,'.',''))=2)
+                OR
+                (instr(engine_version, '-') > 0
+                 AND substr(engine_version, 1, instr(engine_version, '-')-1)
+                     NOT GLOB '*[^0-9.]*'
+                 AND length(substr(engine_version,1,instr(engine_version,'-')-1))
+                     - length(replace(substr(engine_version,1,instr(engine_version,'-')-1),'.',''))=2
+                 AND substr(engine_version, instr(engine_version, '-')+1) <> ''
+                 AND substr(engine_version, instr(engine_version, '-')+1)
+                     NOT GLOB '*[^0-9A-Za-z.-]*')
+            )
         ),
         config_version TEXT NOT NULL CHECK (length(trim(config_version)) > 0),
+
+        ato_volume INTEGER CHECK (ato_volume IS NULL OR ato_volume >= 0),
+        ato_avg_volume_10 REAL CHECK (
+            ato_avg_volume_10 IS NULL OR ato_avg_volume_10 >= 0
+        ),
+        ato_rvol REAL CHECK (ato_rvol IS NULL OR ato_rvol >= 0),
+        ato_baseline_sessions_used INTEGER NOT NULL DEFAULT 0 CHECK (
+            ato_baseline_sessions_used BETWEEN 0 AND 10
+        ),
+        ato_baseline_quality TEXT NOT NULL DEFAULT 'UNAVAILABLE' CHECK (
+            ato_baseline_quality IN ('PROVEN','MIXED','INFERRED_BOUNDARY','UNAVAILABLE')
+        ),
+        atc_volume INTEGER CHECK (atc_volume IS NULL OR atc_volume >= 0),
+        atc_avg_volume_10 REAL CHECK (
+            atc_avg_volume_10 IS NULL OR atc_avg_volume_10 >= 0
+        ),
+        atc_rvol REAL CHECK (atc_rvol IS NULL OR atc_rvol >= 0),
+        atc_baseline_sessions_used INTEGER NOT NULL DEFAULT 0 CHECK (
+            atc_baseline_sessions_used BETWEEN 0 AND 10
+        ),
+        atc_baseline_quality TEXT NOT NULL DEFAULT 'UNAVAILABLE' CHECK (
+            atc_baseline_quality IN ('PROVEN','MIXED','INFERRED_BOUNDARY','UNAVAILABLE')
+        ),
+        atc_price_impact_pct REAL,
 
         feed_status TEXT NOT NULL CHECK (
             feed_status IN ('LIVE', 'STALE', 'DISCONNECTED', 'EXPECTED_IDLE')
@@ -225,8 +266,19 @@ _MARKET_V1_STATEMENTS = (
         ),
         engine_version TEXT NOT NULL CHECK (
             engine_version GLOB '[0-9]*.[0-9]*.[0-9]*'
-            AND engine_version NOT GLOB '*[^0-9.]*'
-            AND length(engine_version) - length(replace(engine_version, '.', '')) = 2
+            AND (
+                (engine_version NOT GLOB '*[^0-9.]*'
+                 AND length(engine_version)-length(replace(engine_version,'.',''))=2)
+                OR
+                (instr(engine_version, '-') > 0
+                 AND substr(engine_version, 1, instr(engine_version, '-')-1)
+                     NOT GLOB '*[^0-9.]*'
+                 AND length(substr(engine_version,1,instr(engine_version,'-')-1))
+                     - length(replace(substr(engine_version,1,instr(engine_version,'-')-1),'.',''))=2
+                 AND substr(engine_version, instr(engine_version, '-')+1) <> ''
+                 AND substr(engine_version, instr(engine_version, '-')+1)
+                     NOT GLOB '*[^0-9A-Za-z.-]*')
+            )
         ),
         config_version TEXT NOT NULL CHECK (length(trim(config_version)) > 0),
         quality_status TEXT NOT NULL CHECK (
@@ -303,8 +355,19 @@ _MARKET_V1_STATEMENTS = (
         internal_reason_code TEXT,
         engine_version TEXT NOT NULL CHECK (
             engine_version GLOB '[0-9]*.[0-9]*.[0-9]*'
-            AND engine_version NOT GLOB '*[^0-9.]*'
-            AND length(engine_version) - length(replace(engine_version, '.', '')) = 2
+            AND (
+                (engine_version NOT GLOB '*[^0-9.]*'
+                 AND length(engine_version)-length(replace(engine_version,'.',''))=2)
+                OR
+                (instr(engine_version, '-') > 0
+                 AND substr(engine_version, 1, instr(engine_version, '-')-1)
+                     NOT GLOB '*[^0-9.]*'
+                 AND length(substr(engine_version,1,instr(engine_version,'-')-1))
+                     - length(replace(substr(engine_version,1,instr(engine_version,'-')-1),'.',''))=2
+                 AND substr(engine_version, instr(engine_version, '-')+1) <> ''
+                 AND substr(engine_version, instr(engine_version, '-')+1)
+                     NOT GLOB '*[^0-9A-Za-z.-]*')
+            )
         ),
         config_version TEXT NOT NULL CHECK (length(trim(config_version)) > 0),
         created_at TEXT NOT NULL,
@@ -429,6 +492,58 @@ _MARKET_V2_STATEMENTS = (
         ON auction_session_history(trading_date, auction_type, exchange, symbol)
     """,
 )
+
+
+def _apply_market_v3(connection: sqlite3.Connection) -> None:
+    """Add SIGNAL-01 fields and prerelease validation while preserving rows."""
+    def table_exists(name: str) -> bool:
+        return connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
+        ).fetchone() is not None
+
+    def copy_common(source: str, target: str) -> None:
+        source_columns = [
+            str(row[1]) for row in connection.execute(f"PRAGMA table_info({source})")
+        ]
+        target_columns = {
+            str(row[1]) for row in connection.execute(f"PRAGMA table_info({target})")
+        }
+        names = ", ".join(name for name in source_columns if name in target_columns)
+        connection.execute(f"INSERT INTO {target} ({names}) SELECT {names} FROM {source}")
+
+    columns = {
+        str(row[1]) for row in connection.execute("PRAGMA table_info(stock_state_current)")
+    }
+    if "signal_direction" not in columns:
+        old_name = "stock_state_current_v2_migration"
+        connection.execute(f"ALTER TABLE stock_state_current RENAME TO {old_name}")
+        connection.execute(_MARKET_V1_STATEMENTS[2])
+        copy_common(old_name, "stock_state_current")
+        connection.execute(
+            "UPDATE stock_state_current SET signal_direction = CASE "
+            "WHEN signal_state IN ('FLOW_APPEARING','FLOW_PRICE_CONFIRMED','MOMENTUM_MAINTAINED') THEN 'BULLISH' "
+            "WHEN signal_state='SELLING_PRESSURE' THEN 'BEARISH' ELSE 'NEUTRAL' END"
+        )
+        connection.execute(f"DROP TABLE {old_name}")
+        for statement in _MARKET_V1_STATEMENTS[3:6]:
+            connection.execute(statement)
+
+    if table_exists("signal_events"):
+        has_features = table_exists("signal_event_features")
+        if has_features:
+            connection.execute(
+                "ALTER TABLE signal_event_features RENAME TO signal_event_features_v2_migration"
+            )
+        connection.execute("ALTER TABLE signal_events RENAME TO signal_events_v2_migration")
+        connection.execute(_MARKET_V1_STATEMENTS[6])
+        copy_common("signal_events_v2_migration", "signal_events")
+        if has_features:
+            connection.execute(_MARKET_V1_STATEMENTS[11])
+            copy_common("signal_event_features_v2_migration", "signal_event_features")
+            connection.execute("DROP TABLE signal_event_features_v2_migration")
+        connection.execute("DROP TABLE signal_events_v2_migration")
+        for statement in _MARKET_V1_STATEMENTS[7:11]:
+            connection.execute(statement)
 
 
 _ARCHIVE_V1_STATEMENTS = (
@@ -562,6 +677,8 @@ def ensure_market_storage_schema(
         if current_schema is None or current_schema < 2:
             for statement in _MARKET_V2_STATEMENTS:
                 connection.execute(statement)
+        if current_schema is not None and current_schema < 3:
+            _apply_market_v3(connection)
 
         _advance_version(
             connection,

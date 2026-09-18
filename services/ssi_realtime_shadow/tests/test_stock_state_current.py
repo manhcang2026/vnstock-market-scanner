@@ -145,6 +145,16 @@ def test_null_moving_averages_and_dependents_remain_null() -> None:
     assert projected["above_ma200"] is None
 
 
+def test_ready_moving_averages_and_distances_are_preserved() -> None:
+    projected = _project(_volume(), ma_ready=True)
+    assert projected["ma10"] == 100
+    assert projected["ma200"] == 90
+    assert projected["distance_ma10_pct"] == pytest.approx(10.0)
+    assert projected["distance_ma200_pct"] == pytest.approx(22.222222)
+    assert projected["above_ma10"] == 1
+    assert projected["above_ma200"] == 1
+
+
 def test_full_but_unproven_legacy_baseline_remains_degraded() -> None:
     assert _project(_volume())["metrics_trusted"] == 0
     assert _project(
@@ -152,7 +162,7 @@ def test_full_but_unproven_legacy_baseline_remains_degraded() -> None:
     )["metrics_trusted"] == 1
 
 
-def test_upsert_keeps_one_row_and_neutral_signal_creates_no_events() -> None:
+def test_upsert_keeps_one_row_and_watching_signal_creates_no_events() -> None:
     connection = sqlite3.connect(":memory:")
     ensure_market_storage_schema(connection, applied_at=AT)
     first = _project(_volume())
@@ -167,5 +177,10 @@ def test_upsert_keeps_one_row_and_neutral_signal_creates_no_events() -> None:
         "FROM stock_state_current WHERE symbol='HPG'"
     ).fetchone()
     assert connection.execute("SELECT COUNT(*) FROM stock_state_current").fetchone()[0] == 1
-    assert row == (111, "NORMAL", 0, SIGNAL_SUMMARY_VI)
+    assert row == (
+        111,
+        "WATCHING",
+        1,
+        "Khối lượng đang tăng, tín hiệu giá chưa xác nhận.",
+    )
     assert connection.execute("SELECT COUNT(*) FROM signal_events").fetchone()[0] == 0
