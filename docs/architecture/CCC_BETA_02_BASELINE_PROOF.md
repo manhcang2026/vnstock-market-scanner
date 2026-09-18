@@ -11,9 +11,11 @@ the rule **missing is not zero**.
 
 `daily_bars` from `SSI_DAILY_OHLC` with `quality_status=TRUSTED` is the daily
 authority. A symbol/session is proven only when all stored intraday rows are
-canonical `SSI_REST` rows, trusted, non-partial, gap-free, use the same
-canonical exchange, fall on the exchange volume grid, and their represented
-volume sum exactly equals the official daily volume.
+canonical `SSI_REST` or EOD-finalized `SSI_STREAM` rows, trusted, non-partial,
+gap-free, use the same canonical exchange, fall on the exchange volume grid,
+and their represented volume sum exactly equals the official daily volume.
+STREAM history additionally requires the yearly database's WRITE-mode EOD
+journal to mark that symbol `TRUSTED`; source identity alone is insufficient.
 
 A trusted daily volume of zero with no intraday rows is a proven real-zero
 session. A mismatch or unsafe row excludes the entire session; the builder
@@ -28,7 +30,8 @@ dates and canonical SSI one-minute dates (`SSI_REST` or `SSI_STREAM`). This
 keeps a real SSI-observed market date in the window even when DailyOhlc
 ingestion is globally missing. Its proof then fails as `DAILY_MISSING`; the
 builder records fewer used sessions and never reaches back to an older
-replacement date. Historical baseline proof itself remains REST-only.
+replacement date. Historical proof accepts REST plus journal-confirmed settled
+STREAM from the canonical yearly history database. Raw hot STREAM is rejected.
 
 ## Durable proof and trust propagation
 
@@ -60,7 +63,7 @@ historical baseline exists.
 ```powershell
 cd services/ssi_realtime_shadow
 python -m app.volume_baseline_build `
-  --history-db data/ssi_shadow.db `
+  --history-db data/ssi_history_2026.db `
   --daily-db data/ccc_market_v2.db `
   --output-db data/ccc_v2_baseline.db `
   --lookback 10 `

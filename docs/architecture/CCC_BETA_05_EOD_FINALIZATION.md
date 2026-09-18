@@ -41,6 +41,21 @@ Accepted yearly minute rows are the settled representation:
 Finalization is represented by `daily_finalize_runs`; provider identity is never
 changed to a synthetic `SSI_STREAM_FINAL` source.
 
+## Historical baseline consumption
+
+The normal historical baseline builder reads the canonical yearly history DB,
+never the hot `ssi_shadow.db`. Both `SSI_REST` and settled `SSI_STREAM` are valid
+SSI history, but a STREAM session additionally requires a WRITE-mode EOD journal
+entry whose per-symbol result is `TRUSTED`. This explicit marker prevents a raw
+hot stream database from becoming baseline evidence merely because its rows use
+the same provider source identity.
+
+The marker does not replace row-level proof. Every minute must still be TRUSTED,
+non-partial, gap-free, in the valid exchange grid, and reconcile exactly to the
+official SSI DailyOhlc volume. Replay continues to accept safe SSI REST/STREAM
+rows without requiring the EOD marker because replay may intentionally inspect
+the selected current hot day.
+
 ## Idempotency and conflicts
 
 Minute identity is `(trading_date, minute, symbol)`.

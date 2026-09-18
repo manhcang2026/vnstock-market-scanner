@@ -272,7 +272,7 @@ def test_calendar_keeps_intraday_observed_date_when_daily_is_globally_missing(
     assert summary.samples[0]["failures"][0]["reason"] == "DAILY_MISSING"
 
 
-def test_historical_baseline_still_rejects_ssi_stream(tmp_path: Path) -> None:
+def test_historical_baseline_rejects_raw_stream_without_eod_journal(tmp_path: Path) -> None:
     history = tmp_path / "history.db"
     daily = tmp_path / "daily.db"
     output = tmp_path / "baseline.db"

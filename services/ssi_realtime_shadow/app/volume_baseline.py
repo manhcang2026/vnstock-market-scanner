@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
@@ -13,6 +14,7 @@ COVERAGE_PROOF = "SSI_DAILY_VOLUME_RECONCILED_V1"
 TRUSTED_DAILY_SOURCE = "SSI_DAILY_OHLC"
 TRUSTED_INTRADAY_SOURCE = "SSI_REST"
 TRUSTED_REPLAY_SOURCES = frozenset({"SSI_REST", "SSI_STREAM"})
+TRUSTED_HISTORICAL_SOURCES = TRUSTED_REPLAY_SOURCES
 SAMPLE_SYMBOLS = ("HPG", "SHS", "VGI")
 
 BASELINE_SCHEMA = """
@@ -335,6 +337,7 @@ def _prove_volume_session(
     symbol: str,
     trading_date: str,
     allowed_intraday_sources: frozenset[str],
+    require_finalized_stream: bool = False,
 ) -> SessionProof:
     daily_row = daily.execute(
         """
@@ -361,12 +364,21 @@ def _prove_volume_session(
         """,
         (symbol, trading_date),
     ).fetchall()
+    if (
+        require_finalized_stream
+        and any(str(row["data_source"] or "") == "SSI_STREAM" for row in rows)
+        and not _has_finalized_stream_evidence(history, symbol, trading_date)
+    ):
+        return SessionProof(
+            symbol, trading_date, exchange, daily_volume, 0, "UNFINALIZED_STREAM"
+        )
     valid_minutes = {point.minute for point in volume_market_grid(exchange)}
     bars: list[RawVolumeBar] = []
     unsafe = False
     mismatch = False
     represented = 0
     for row in rows:
+        data_source = str(row["data_source"] or "")
         raw_exchange = str(row["exchange"] or "")
         try:
             row_exchange = normalize_exchange(raw_exchange)
@@ -378,7 +390,7 @@ def _prove_volume_session(
         if row_exchange != exchange:
             mismatch = True
         if (
-            str(row["data_source"] or "") not in allowed_intraday_sources
+            data_source not in allowed_intraday_sources
             or str(row["quality_status"] or "").upper() != "TRUSTED"
             or bool(row["is_partial"])
             or bool(row["has_gap"])
@@ -388,7 +400,15 @@ def _prove_volume_session(
             unsafe = True
             continue
         represented += volume
-        bars.append(RawVolumeBar(trading_date, minute, row_exchange, volume))
+        bars.append(
+            RawVolumeBar(
+                trading_date,
+                minute,
+                row_exchange,
+                volume,
+                data_source=data_source,
+            )
+        )
     if mismatch:
         return SessionProof(symbol, trading_date, exchange, daily_volume, represented, "EXCHANGE_MISMATCH")
     if unsafe:
@@ -399,6 +419,50 @@ def _prove_volume_session(
     return SessionProof(symbol, trading_date, exchange, daily_volume, represented, reason, tuple(bars))
 
 
+def _has_finalized_stream_evidence(
+    history: sqlite3.Connection,
+    symbol: str,
+    trading_date: str,
+) -> bool:
+    """Require the yearly-history EOD journal before baseline trusts STREAM rows.
+
+    Hot ``ssi_shadow.db`` rows also identify as ``SSI_STREAM``.  The journal and
+    per-symbol TRUSTED result make the canonical yearly storage boundary explicit
+    without inventing a synthetic provider source.
+    """
+    if not _table_exists(history, "daily_finalize_runs"):
+        return False
+    columns = {
+        str(row[1])
+        for row in history.execute("PRAGMA table_info(daily_finalize_runs)")
+    }
+    if not {"mode", "details_json"} <= columns:
+        return False
+    row = history.execute(
+        """
+        SELECT mode, details_json FROM daily_finalize_runs
+        WHERE trading_date=?
+        """,
+        (trading_date,),
+    ).fetchone()
+    if row is None or str(row["mode"] or "").upper() != "WRITE":
+        return False
+    try:
+        details = json.loads(str(row["details_json"] or ""))
+    except (TypeError, ValueError):
+        return False
+    if not isinstance(details, list):
+        return False
+    canonical_symbol = str(symbol or "").strip().upper()
+    return any(
+        isinstance(item, dict)
+        and str(item.get("symbol") or "").strip().upper() == canonical_symbol
+        and str(item.get("status") or "").upper() == "TRUSTED"
+        and not item.get("reasons")
+        for item in details
+    )
+
+
 def prove_volume_session(
     history: sqlite3.Connection,
     daily: sqlite3.Connection,
@@ -406,13 +470,14 @@ def prove_volume_session(
     symbol: str,
     trading_date: str,
 ) -> SessionProof:
-    """Prove a historical baseline session using SSI REST bars only."""
+    """Prove canonical yearly REST or EOD-finalized STREAM history."""
     return _prove_volume_session(
         history,
         daily,
         symbol=symbol,
         trading_date=trading_date,
-        allowed_intraday_sources=frozenset({TRUSTED_INTRADAY_SOURCE}),
+        allowed_intraday_sources=TRUSTED_HISTORICAL_SOURCES,
+        require_finalized_stream=True,
     )
 
 
@@ -570,7 +635,11 @@ def build_volume_baseline(
             sessions_unproven=len(flattened) - len(proven),
             daily_missing_count=sum(proof.reason == "DAILY_MISSING" for proof in flattened),
             volume_mismatch_count=sum(proof.reason == "VOLUME_MISMATCH" for proof in flattened),
-            unsafe_intraday_count=sum(proof.reason in {"UNSAFE_INTRADAY", "DAILY_UNSAFE"} for proof in flattened),
+            unsafe_intraday_count=sum(
+                proof.reason
+                in {"UNSAFE_INTRADAY", "DAILY_UNSAFE", "UNFINALIZED_STREAM"}
+                for proof in flattened
+            ),
             exchange_mismatch_count=sum(proof.reason == "EXCHANGE_MISMATCH" for proof in flattened),
             baseline_rows=baseline_row_count,
             coverage_proof=COVERAGE_PROOF,

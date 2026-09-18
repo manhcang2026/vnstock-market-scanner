@@ -559,7 +559,7 @@ def test_finalized_day_is_accepted_by_candidate_and_replay_readers(tmp_path: Pat
         history, market, symbol="FPT", trading_date=DAY
     )
     assert replay.proven
-    assert not prove_volume_session(
+    assert prove_volume_session(
         history, market, symbol="FPT", trading_date=DAY
     ).proven
 
