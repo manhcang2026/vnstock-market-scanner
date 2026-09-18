@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 
 
 MARKET_DATA_CONTRACT_VERSION = 2
-STORAGE_SCHEMA_VERSION = 1
+STORAGE_SCHEMA_VERSION = 2
 ARCHIVE_STORAGE_SCHEMA_VERSION = 1
 VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 
@@ -370,6 +370,67 @@ _MARKET_V1_STATEMENTS = (
 )
 
 
+_MARKET_V2_STATEMENTS = (
+    """
+    CREATE TABLE IF NOT EXISTS auction_session_history (
+        symbol TEXT NOT NULL,
+        trading_date TEXT NOT NULL,
+        exchange TEXT NOT NULL CHECK (exchange IN ('HOSE', 'HNX', 'UPCOM')),
+        auction_type TEXT NOT NULL CHECK (
+            auction_type IN ('OPEN_AUCTION', 'CLOSE_AUCTION')
+        ),
+        auction_price REAL NOT NULL CHECK (auction_price > 0),
+        pre_auction_price REAL CHECK (
+            pre_auction_price IS NULL OR pre_auction_price > 0
+        ),
+        auction_volume INTEGER NOT NULL CHECK (auction_volume >= 0),
+        provider_session TEXT,
+        source TEXT NOT NULL CHECK (source IN ('SSI_REST', 'SSI_STREAM')),
+        quality TEXT NOT NULL CHECK (
+            quality IN ('PROVEN', 'INFERRED_BOUNDARY')
+        ),
+        proof_code TEXT,
+        finalized INTEGER NOT NULL CHECK (finalized = 1),
+        previous_source TEXT CHECK (
+            previous_source IS NULL OR previous_source IN ('SSI_REST', 'SSI_STREAM')
+        ),
+        previous_quality TEXT CHECK (
+            previous_quality IS NULL
+            OR previous_quality IN ('PROVEN', 'INFERRED_BOUNDARY')
+        ),
+        previous_proof_code TEXT,
+        superseded_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (symbol, trading_date, auction_type),
+        CHECK (symbol = UPPER(symbol) AND length(symbol) BETWEEN 2 AND 12),
+        CHECK (
+            (quality = 'INFERRED_BOUNDARY'
+             AND source = 'SSI_REST'
+             AND proof_code = 'CROSS_PROVIDER_BOUNDARY_CONFIRMED_V1')
+            OR
+            (quality = 'PROVEN' AND source = 'SSI_STREAM')
+        ),
+        CHECK (
+            (previous_quality IS NULL
+             AND previous_source IS NULL
+             AND previous_proof_code IS NULL
+             AND superseded_at IS NULL)
+            OR
+            (quality = 'PROVEN'
+             AND previous_quality = 'INFERRED_BOUNDARY'
+             AND previous_source = 'SSI_REST'
+             AND superseded_at IS NOT NULL)
+        )
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_auction_history_date_type
+        ON auction_session_history(trading_date, auction_type, exchange, symbol)
+    """,
+)
+
+
 _ARCHIVE_V1_STATEMENTS = (
     """
     CREATE TABLE IF NOT EXISTS bars_5m_archive (
@@ -462,7 +523,7 @@ def ensure_market_storage_schema(
     *,
     applied_at: str | datetime | None = None,
 ) -> None:
-    """Apply the additive V1 storage schema to an explicit SQLite connection.
+    """Apply the additive versioned storage schema to an explicit SQLite connection.
 
     The caller must invoke this outside an active transaction. Existing compatible
     tables and rows are left untouched. A database newer than this module is
@@ -497,6 +558,9 @@ def ensure_market_storage_schema(
 
         if current_schema is None or current_schema < 1:
             for statement in _MARKET_V1_STATEMENTS:
+                connection.execute(statement)
+        if current_schema is None or current_schema < 2:
+            for statement in _MARKET_V2_STATEMENTS:
                 connection.execute(statement)
 
         _advance_version(

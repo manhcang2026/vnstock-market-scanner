@@ -28,6 +28,7 @@ MARKET_TABLES = {
     "market_index_current",
     "universe_cache",
     "trading_calendar",
+    "auction_session_history",
     "engine_meta",
 }
 MARKET_INDEXES = {
@@ -41,6 +42,7 @@ MARKET_INDEXES = {
     "idx_signal_events_idempotency",
     "idx_universe_cache_active_exchange",
     "idx_trading_calendar_exchange_day",
+    "idx_auction_history_date_type",
 }
 
 
