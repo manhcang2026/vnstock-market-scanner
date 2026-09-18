@@ -30,7 +30,7 @@ from .stock_state_current import (
     upsert_stock_state_current,
 )
 from .storage import SQLiteStore
-from .volume_baseline import COVERAGE_PROOF
+from .volume_baseline import COVERAGE_PROOF, load_candidate_market_sessions
 
 
 LOG = logging.getLogger(__name__)
@@ -204,6 +204,8 @@ class LiveStateRuntime:
         self._auction_cache: dict[
             tuple[str, str], tuple[Exact10Result | None, Exact10Result | None]
         ] = {}
+        self._candidate_dates_trading_date: str | None = None
+        self._candidate_dates: tuple[str, ...] = ()
         self._previous_state: dict[tuple[str, str], str | None] = {}
         self._last_projection: dict[str, tuple[str, str, str]] = {}
         self._minute_prices: dict[str, dict[str, MinutePrice]] = {}
@@ -336,6 +338,8 @@ class LiveStateRuntime:
         self._active_date = trading_date
         self._ma_cache.clear()
         self._auction_cache.clear()
+        self._candidate_dates_trading_date = None
+        self._candidate_dates = ()
         self._previous_state.clear()
         self._last_projection.clear()
         self._hydrate_price_cache(trading_date)
@@ -360,6 +364,16 @@ class LiveStateRuntime:
         result: tuple[Exact10Result | None, Exact10Result | None] = (None, None)
         if self._history is not None:
             try:
+                if self._candidate_dates_trading_date != trading_date:
+                    self._candidate_dates = tuple(
+                        load_candidate_market_sessions(
+                            self._history,
+                            self._market,
+                            as_of_date=trading_date,
+                            lookback=EXPECTED_LOOKBACK,
+                        )
+                    )
+                    self._candidate_dates_trading_date = trading_date
                 result = (
                     read_ato_exact10(
                         self._market,
@@ -367,6 +381,7 @@ class LiveStateRuntime:
                         self._market,
                         symbol=symbol,
                         as_of_date=trading_date,
+                        candidate_dates=self._candidate_dates,
                     ),
                     read_atc_exact10(
                         self._market,
@@ -374,6 +389,7 @@ class LiveStateRuntime:
                         self._market,
                         symbol=symbol,
                         as_of_date=trading_date,
+                        candidate_dates=self._candidate_dates,
                     ),
                 )
             except (sqlite3.Error, TypeError, ValueError) as exc:

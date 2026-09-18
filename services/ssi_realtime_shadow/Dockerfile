@@ -26,6 +26,7 @@ RUN sed -i 's/print(self.headers)/# print(self.headers)/' \
       /usr/local/lib/python3.11/site-packages/ssi_fc_data/signalr/transports/_transport.py
 
 COPY app/ ./app/
+COPY config/ ./config/
 RUN mkdir -p /app/data
 
 CMD ["python", "-m", "app.main"]

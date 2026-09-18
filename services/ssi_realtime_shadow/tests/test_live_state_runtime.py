@@ -477,6 +477,79 @@ def test_ma_and_exact10_history_are_cached_while_current_bucket_stays_live(
     store.close()
 
 
+def test_candidate_sessions_are_shared_per_date_and_reloaded_on_rollover(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    baseline = tmp_path / "baseline.db"
+    market = tmp_path / "market.db"
+    history_path = tmp_path / "history.db"
+    _baseline(baseline)
+    _market(market)
+    history = SQLiteStore(history_path)
+    history.close()
+    store = SQLiteStore(tmp_path / "hot.db")
+
+    loader_calls = 0
+    candidate_tuples: list[tuple[str, ...]] = []
+    real_loader = live_module.load_candidate_market_sessions
+    real_ato = live_module.read_ato_exact10
+    real_atc = live_module.read_atc_exact10
+
+    def counted_loader(*args, **kwargs):
+        nonlocal loader_calls
+        loader_calls += 1
+        return real_loader(*args, **kwargs)
+
+    def capture_ato(*args, **kwargs):
+        candidate_tuples.append(kwargs["candidate_dates"])
+        return real_ato(*args, **kwargs)
+
+    def capture_atc(*args, **kwargs):
+        candidate_tuples.append(kwargs["candidate_dates"])
+        return real_atc(*args, **kwargs)
+
+    monkeypatch.setattr(
+        live_module, "load_candidate_market_sessions", counted_loader
+    )
+    monkeypatch.setattr(live_module, "read_ato_exact10", capture_ato)
+    monkeypatch.setattr(live_module, "read_atc_exact10", capture_atc)
+
+    runtime = LiveStateRuntime(
+        volume_engine=RealtimeVolumeEngine(baseline),
+        hot_store=store,
+        market_db_path=market,
+        history_db_path=history_path,
+        active_at=_at("08:50"),
+        hydrate_volume=False,
+    )
+    symbols = ("SHS", "AAA", "BBB")
+    for symbol in symbols:
+        runtime._auction_history(symbol, DAY)
+
+    assert loader_calls == 1
+    assert len(candidate_tuples) == 2 * len(symbols)
+    assert all(isinstance(item, tuple) for item in candidate_tuples)
+    assert all(item is candidate_tuples[0] for item in candidate_tuples)
+
+    runtime._ma_cache[(DAY, "SHS")] = None  # type: ignore[assignment]
+    runtime._previous_state[(DAY, "SHS")] = "WATCHING"
+    next_day = "2026-09-22"
+    runtime._roll_date(next_day)
+    assert runtime._ma_cache == {}
+    assert runtime._auction_cache == {}
+    assert runtime._previous_state == {}
+
+    candidate_tuples.clear()
+    for symbol in symbols:
+        runtime._auction_history(symbol, next_day)
+
+    assert loader_calls == 2
+    assert len(candidate_tuples) == 2 * len(symbols)
+    assert all(item is candidate_tuples[0] for item in candidate_tuples)
+    runtime.close()
+    store.close()
+
+
 def test_new_trading_date_invalidates_ma_and_resets_previous_state(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
