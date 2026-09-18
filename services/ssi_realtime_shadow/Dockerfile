@@ -18,6 +18,7 @@ RUN set -eux; \
     rm -rf /tmp/ssi_vendor
 
 COPY app/ ./app/
+COPY config/ ./config/
 RUN mkdir -p /app/data
 
 CMD ["python", "-m", "app.main"]

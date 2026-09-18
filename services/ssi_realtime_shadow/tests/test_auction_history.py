@@ -4,6 +4,7 @@ import sqlite3
 from dataclasses import replace
 
 import pytest
+import app.auction_history as auction_module
 
 from app.auction_history import (
     CLOSE_AUCTION,
@@ -19,6 +20,7 @@ from app.auction_history import (
     approved_inferred_row,
     bootstrap_auction_history,
     read_atc_exact10,
+    read_ato_exact10,
     store_auction_history_row,
 )
 from app.market_storage_schema import ensure_market_storage_schema
@@ -183,6 +185,74 @@ def test_exact_10_all_inferred(market_db: sqlite3.Connection) -> None:
     assert result.baseline_usable
 
 
+def test_exact10_without_supplied_candidates_preserves_loader_behavior(
+    market_db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    history, daily = _evidence(DATES)
+    calls = 0
+    real_loader = auction_module.load_candidate_market_sessions
+
+    def counted_loader(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return real_loader(*args, **kwargs)
+
+    monkeypatch.setattr(
+        auction_module, "load_candidate_market_sessions", counted_loader
+    )
+    atc = read_atc_exact10(
+        market_db, history, daily, symbol="FPT", as_of_date="2026-09-18"
+    )
+    ato = read_ato_exact10(
+        market_db, history, daily, symbol="FPT", as_of_date="2026-09-18"
+    )
+
+    assert calls == 2
+    assert atc.candidate_dates == DATES
+    assert ato.candidate_dates == DATES
+
+
+def test_supplied_candidate_dates_avoid_recomputation(
+    market_db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    history, daily = _evidence(DATES)
+    candidate_dates = tuple(
+        auction_module.load_candidate_market_sessions(
+            history, daily, as_of_date="2026-09-18", lookback=10
+        )
+    )
+    calls = 0
+
+    def unexpected_loader(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return []
+
+    monkeypatch.setattr(
+        auction_module, "load_candidate_market_sessions", unexpected_loader
+    )
+    ato = read_ato_exact10(
+        market_db,
+        history,
+        daily,
+        symbol="FPT",
+        as_of_date="2026-09-18",
+        candidate_dates=candidate_dates,
+    )
+    atc = read_atc_exact10(
+        market_db,
+        history,
+        daily,
+        symbol="FPT",
+        as_of_date="2026-09-18",
+        candidate_dates=candidate_dates,
+    )
+
+    assert calls == 0
+    assert ato.candidate_dates == candidate_dates
+    assert atc.candidate_dates == candidate_dates
+
+
 def test_exact_10_mixed_proven_and_inferred(market_db: sqlite3.Connection) -> None:
     _insert_many(market_db, DATES, INFERRED_BOUNDARY)
     for trading_date in DATES[-5:]:
@@ -228,11 +298,17 @@ def test_no_11th_substitution(market_db: sqlite3.Connection) -> None:
     )
     history, daily = _evidence(dates)
     result = read_atc_exact10(
-        market_db, history, daily, symbol="FPT", as_of_date="2026-09-18"
+        market_db,
+        history,
+        daily,
+        symbol="FPT",
+        as_of_date="2026-09-18",
+        candidate_dates=DATES,
     )
     assert result.candidate_dates == DATES
     assert "2026-09-03" not in result.candidate_dates
     assert result.sessions_used == 9
+    assert result.baseline_usable is False
 
 
 def test_old_inferred_history_is_retained_outside_active_window(

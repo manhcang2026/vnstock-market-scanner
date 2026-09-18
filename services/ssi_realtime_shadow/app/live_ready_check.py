@@ -15,7 +15,7 @@ from .market_storage_schema import STORAGE_SCHEMA_VERSION
 from .settings import ROOT
 from .signal_config import load_signal_config
 from .realtime_volume import load_volume_baseline
-from .volume_baseline import COVERAGE_PROOF
+from .volume_baseline import COVERAGE_PROOF, load_candidate_market_sessions
 
 
 def _readonly(path: Path) -> sqlite3.Connection:
@@ -244,15 +244,28 @@ def inspect_live_readiness(
         if "auction_session_history" not in tables:
             warnings.append("AUCTION_HISTORY_TABLE_MISSING")
         else:
+            try:
+                candidate_dates = tuple(
+                    load_candidate_market_sessions(
+                        history,
+                        market,
+                        as_of_date=target_trading_date,
+                        lookback=10,
+                    )
+                )
+            except (sqlite3.Error, TypeError, ValueError):
+                candidate_dates = ()
             for symbol in symbols:
                 try:
                     ato = read_ato_exact10(
                         market, history, market,
                         symbol=symbol, as_of_date=target_trading_date,
+                        candidate_dates=candidate_dates,
                     )
                     atc = read_atc_exact10(
                         market, history, market,
                         symbol=symbol, as_of_date=target_trading_date,
+                        candidate_dates=candidate_dates,
                     )
                     result["auction_ato_exact10_symbols"] += int(
                         ato.baseline_usable and ato.sessions_used == 10

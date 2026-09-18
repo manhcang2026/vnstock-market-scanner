@@ -6,7 +6,7 @@ import sqlite3
 from dataclasses import asdict, dataclass, field
 from datetime import date
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Mapping, Sequence
 
 from .market_session import normalize_exchange
 from .market_storage_schema import canonical_timestamp
@@ -340,17 +340,22 @@ def read_auction_exact10(
     symbol: str,
     as_of_date: str,
     auction_type: str,
+    candidate_dates: Sequence[str] | None = None,
 ) -> Exact10Result:
     canonical_symbol = str(symbol or "").strip().upper()
     canonical_type = str(auction_type or "").strip().upper()
     if canonical_type not in {OPEN_AUCTION, CLOSE_AUCTION}:
         raise ValueError("unsupported auction_type")
-    candidate_dates = tuple(
-        load_candidate_market_sessions(
-            history_connection,
-            daily_connection,
-            as_of_date=as_of_date,
-            lookback=10,
+    candidate_dates = (
+        tuple(candidate_dates)
+        if candidate_dates is not None
+        else tuple(
+            load_candidate_market_sessions(
+                history_connection,
+                daily_connection,
+                as_of_date=as_of_date,
+                lookback=10,
+            )
         )
     )
     if not candidate_dates:
@@ -409,6 +414,7 @@ def read_atc_exact10(
     *,
     symbol: str,
     as_of_date: str,
+    candidate_dates: Sequence[str] | None = None,
 ) -> Exact10Result:
     return read_auction_exact10(
         auction_connection,
@@ -417,6 +423,7 @@ def read_atc_exact10(
         symbol=symbol,
         as_of_date=as_of_date,
         auction_type=CLOSE_AUCTION,
+        candidate_dates=candidate_dates,
     )
 
 
@@ -427,6 +434,7 @@ def read_ato_exact10(
     *,
     symbol: str,
     as_of_date: str,
+    candidate_dates: Sequence[str] | None = None,
 ) -> Exact10Result:
     """Read opening-auction coverage without inventing historical ATO rows."""
     return read_auction_exact10(
@@ -436,4 +444,5 @@ def read_ato_exact10(
         symbol=symbol,
         as_of_date=as_of_date,
         auction_type=OPEN_AUCTION,
+        candidate_dates=candidate_dates,
     )
