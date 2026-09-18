@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .auction import AuctionSessionBucket
+
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS minute_bars (
@@ -110,6 +112,8 @@ class LatestQuoteState:
     event_time: str | None
     total_volume: int | None
     exchange: str | None
+    last_price: float | None
+    trading_session: str | None
     updated_at: str
 
 
@@ -202,7 +206,8 @@ class SQLiteStore:
         with self._lock:
             row = self._conn.execute(
                 """
-                SELECT trading_date, event_time, total_volume, exchange, updated_at
+                SELECT trading_date, event_time, total_volume, exchange,
+                       last_price, trading_session, updated_at
                 FROM latest_quotes
                 WHERE symbol = ?
                 """,
@@ -215,7 +220,63 @@ class SQLiteStore:
                 event_time=row["event_time"],
                 total_volume=int(total_volume) if total_volume is not None else None,
                 exchange=row["exchange"],
+                last_price=(
+                    float(row["last_price"])
+                    if row["last_price"] is not None
+                    else None
+                ),
+                trading_session=row["trading_session"],
                 updated_at=row["updated_at"],
+            )
+
+    def get_auction_buckets(
+        self, symbol: str, trading_date: str
+    ) -> tuple[AuctionSessionBucket, ...]:
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT symbol, trading_date, exchange, auction_type,
+                       provider_session, auction_price, pre_auction_price,
+                       auction_volume, start_total_volume, end_total_volume,
+                       event_count, out_of_order_events, first_event_at,
+                       last_event_at, quality_status, finalized, data_source,
+                       updated_at
+                FROM auction_session_buckets
+                WHERE symbol=? AND trading_date=?
+                ORDER BY auction_type
+                """,
+                (str(symbol or "").strip().upper(), trading_date),
+            ).fetchall()
+            return tuple(
+                AuctionSessionBucket(
+                    symbol=str(row["symbol"]),
+                    trading_date=str(row["trading_date"]),
+                    exchange=str(row["exchange"]),
+                    auction_type=str(row["auction_type"]),
+                    provider_session=str(row["provider_session"]),
+                    auction_price=(
+                        float(row["auction_price"])
+                        if row["auction_price"] is not None
+                        else None
+                    ),
+                    pre_auction_price=(
+                        float(row["pre_auction_price"])
+                        if row["pre_auction_price"] is not None
+                        else None
+                    ),
+                    auction_volume=int(row["auction_volume"]),
+                    start_total_volume=int(row["start_total_volume"]),
+                    end_total_volume=int(row["end_total_volume"]),
+                    event_count=int(row["event_count"]),
+                    out_of_order_events=int(row["out_of_order_events"]),
+                    first_event_at=row["first_event_at"],
+                    last_event_at=row["last_event_at"],
+                    quality_status=str(row["quality_status"]),
+                    finalized=bool(row["finalized"]),
+                    data_source=str(row["data_source"]),
+                    updated_at=str(row["updated_at"]),
+                )
+                for row in rows
             )
 
     def upsert_minute_bar(

@@ -125,6 +125,107 @@ def test_regression_is_zero_delta_and_never_lowers_high_watermark() -> None:
     assert bucket.finalized
 
 
+def test_hydration_before_atc_uses_persisted_lo_watermark_and_price() -> None:
+    accumulator = AuctionSessionAccumulator()
+    accumulator.hydrate(
+        symbol="FPT",
+        trading_date=TRADING_DATE,
+        exchange="HOSE",
+        high_watermark=6_980_600,
+        last_continuous_price=73_900,
+        last_structural_event_at=datetime.fromisoformat(
+            f"{TRADING_DATE}T14:29:00+07:00"
+        ),
+    )
+    result = accumulator.on_event(
+        _event("ATC", 15_500_700, minute="14:45", price=71_700)
+    )
+    bucket = accumulator.get_bucket("FPT", TRADING_DATE, CLOSE_AUCTION)
+
+    assert result.delta == 8_520_100
+    assert bucket.auction_volume == 8_520_100
+    assert bucket.start_total_volume == 6_980_600
+    assert bucket.pre_auction_price == 73_900
+
+
+def test_hydration_during_atc_preserves_bucket_and_appends_only_new_delta() -> None:
+    before_restart = AuctionSessionAccumulator()
+    before_restart.on_event(_event("LO", 6_980_600, minute="14:29", price=73_900))
+    before_restart.on_event(_event("ATC", 10_000_000, minute="14:30", price=72_500))
+    persisted = before_restart.get_bucket("FPT", TRADING_DATE, CLOSE_AUCTION)
+
+    resumed = AuctionSessionAccumulator()
+    resumed.hydrate(
+        symbol="FPT",
+        trading_date=TRADING_DATE,
+        exchange="HOSE",
+        high_watermark=10_000_000,
+        last_continuous_price=None,
+        last_structural_event_at=datetime.fromisoformat(
+            f"{TRADING_DATE}T14:30:00+07:00"
+        ),
+        buckets=(persisted,),
+    )
+    result = resumed.on_event(
+        _event("ATC", 15_500_700, minute="14:40", price=71_700)
+    )
+    bucket = resumed.get_bucket("FPT", TRADING_DATE, CLOSE_AUCTION)
+
+    assert result.delta == 5_500_700
+    assert bucket.auction_volume == 8_520_100
+    assert bucket.pre_auction_price == 73_900
+
+
+def test_stale_or_regressing_events_cannot_mutate_canonical_price_or_session() -> None:
+    accumulator = AuctionSessionAccumulator()
+    accumulator.on_event(_event("LO", 1_000, minute="14:29", price=103))
+    accumulator.on_event(_event("ATC", 1_200, minute="14:31", price=101))
+    stale = accumulator.on_event(_event("ATC", 1_100, minute="14:30", price=99))
+    stale_lo = accumulator.on_event(_event("LO", 900, minute="14:30", price=90))
+    before_finalize = accumulator.get_bucket("FPT", TRADING_DATE, CLOSE_AUCTION)
+
+    assert stale.delta == 0
+    assert stale.anomaly == "OUT_OF_ORDER_EVENT"
+    assert stale_lo.delta == 0
+    assert before_finalize.auction_volume == 200
+    assert before_finalize.auction_price == 101
+    assert before_finalize.pre_auction_price == 103
+    assert before_finalize.last_event_at == f"{TRADING_DATE}T14:31:00+07:00"
+    assert before_finalize.out_of_order_events == 1
+    assert not before_finalize.finalized
+
+    duplicate_transition = accumulator.on_event(
+        _event("C", 1_200, minute="14:32", price=101)
+    )
+    finalized = accumulator.get_bucket("FPT", TRADING_DATE, CLOSE_AUCTION)
+    assert duplicate_transition.delta == 0
+    assert duplicate_transition.anomaly == "DUPLICATE_TOTAL_VOLUME"
+    assert finalized.auction_volume == 200
+    assert finalized.finalized
+
+
+def test_regressing_lo_cannot_replace_valid_preclose_before_atc() -> None:
+    accumulator = AuctionSessionAccumulator()
+    accumulator.on_event(_event("LO", 1_000, minute="14:29", price=103))
+    regression = accumulator.on_event(
+        _event(
+            "LO",
+            900,
+            minute="14:30",
+            price=90,
+            quality_status="VOLUME_REGRESSION",
+            is_partial=True,
+        )
+    )
+    accumulator.on_event(_event("ATC", 1_200, minute="14:31", price=101))
+    bucket = accumulator.get_bucket("FPT", TRADING_DATE, CLOSE_AUCTION)
+
+    assert regression.delta == 0
+    assert regression.anomaly == "OUT_OF_ORDER_REGRESSION"
+    assert bucket.pre_auction_price == 103
+    assert bucket.auction_volume == 200
+
+
 def test_duplicate_total_volume_adds_zero() -> None:
     accumulator = AuctionSessionAccumulator()
     accumulator.on_event(_event("ATC", 1_000, minute="14:30"))
@@ -266,12 +367,14 @@ def test_zero_auction_history_denominator_returns_null() -> None:
     assert features.closing_auction_rvol is None
 
 
-def test_fpt_2026_09_18_negative_closing_impact_golden_fixture() -> None:
+def test_fpt_observed_boundary_shape_is_a_negative_impact_semantic_fixture() -> None:
     accumulator = AuctionSessionAccumulator()
     # The observed 09:15 boundary bar is deliberately classified LO, not ATO.
     accumulator.on_event(_event("LO", 1_376_000, minute="09:15", price=74_600))
     accumulator.on_event(_event("LO", 6_980_600, minute="14:29", price=73_900))
     accumulator.on_event(_event("LO", 6_980_600, minute="14:44", price=73_900))
+    # Synthetic ATC classification exercises semantics; raw historical
+    # TradingSession events for 2026-09-18 are not available as evidence.
     accumulator.on_event(_event("ATC", 15_500_700, minute="14:45", price=71_700))
     accumulator.on_event(_event("C", 15_500_700, minute="14:46", price=71_700))
     closing = accumulator.get_bucket("FPT", TRADING_DATE, CLOSE_AUCTION)

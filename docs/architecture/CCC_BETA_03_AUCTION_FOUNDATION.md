@@ -12,11 +12,14 @@ and carried 1,376,000 shares. The official daily open was 74,500. That bar can
 therefore include both the opening-auction result and early continuous trades;
 its full volume is not canonical ATO volume.
 
-At the close, FPT was 73,900 with cumulative volume 6,980,600 at 14:29. The
-14:45 boundary bar closed at 71,700 and final cumulative volume was 15,500,700.
-Provider-session events reconstruct 8,520,100 shares for the closing auction,
-while the closing price response was about -2.977%. Large volume therefore
-does not imply positive flow.
+At the close, FPT was about 73,900 with cumulative volume 6,980,600 at 14:29.
+The 14:45 boundary bar closed at 71,700 and final cumulative volume was
+15,500,700. The observed 14:45 boundary/cumulative delta of 8,520,100 is used
+as a golden semantic fixture, with a price response of about -2.977%. Exact
+historical ATC attribution remains pending raw SSI `TradingSession` event
+evidence; that historical event corpus is not available. The deterministic
+fixture labels a synthetic event `ATC` only to exercise the engine. Large
+volume therefore does not imply positive flow.
 
 ## Provider-session authority
 
@@ -48,6 +51,15 @@ Gaps, partial events, unsupported sources, unsupported sessions, and missing
 totals degrade settled quality. A regression is retained as an event anomaly
 and increments `out_of_order_events`, but does not by itself invalidate a
 reconstructable finalized auction.
+
+The accumulator hydrates its high-watermark, last useful LO price, structural
+event chronology, and existing auction buckets from local SQLite state on the
+first event after restart. Restarting immediately before or during ATC thus
+appends only volume above the persisted cumulative total. A regression or an
+event older than the last accepted structural event cannot replace canonical
+auction/pre-close prices, move accepted event time backward, or finalize a
+bucket. A chronologically valid duplicate-total transition such as `ATC → C`
+may finalize the bucket but contributes zero volume.
 
 ## Auction features
 

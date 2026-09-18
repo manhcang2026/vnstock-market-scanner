@@ -159,6 +159,7 @@ class _DayState:
     last_continuous_price: float | None = None
     buckets: dict[str, _MutableBucket] = field(default_factory=dict)
     failures: set[str] = field(default_factory=set)
+    last_structural_event_at: datetime | None = None
 
 
 def auction_type_for_provider_session(provider_session: str) -> str | None:
@@ -176,6 +177,100 @@ class AuctionSessionAccumulator:
     def __init__(self) -> None:
         self._states: dict[tuple[str, str], _DayState] = {}
 
+    def hydrate(
+        self,
+        *,
+        symbol: str,
+        trading_date: str,
+        exchange: str,
+        high_watermark: int | None,
+        last_continuous_price: float | None,
+        last_structural_event_at: datetime | None,
+        buckets: Iterable[AuctionSessionBucket] = (),
+    ) -> None:
+        """Restore local derived state without lowering an existing watermark."""
+        canonical_symbol = str(symbol or "").strip().upper()
+        canonical_exchange = normalize_exchange(exchange)
+        key = (canonical_symbol, trading_date)
+        state = self._states.get(key)
+        if state is None:
+            state = _DayState(canonical_symbol, trading_date, canonical_exchange)
+            self._states[key] = state
+        elif state.exchange != canonical_exchange:
+            raise ValueError("Hydrated exchange conflicts with accumulator state")
+        if high_watermark is not None:
+            state.high_watermark = max(state.high_watermark, int(high_watermark))
+        if last_continuous_price is not None and state.last_continuous_price is None:
+            state.last_continuous_price = float(last_continuous_price)
+        if last_structural_event_at is not None:
+            structural_at = last_structural_event_at
+            if structural_at.tzinfo is None:
+                structural_at = structural_at.replace(tzinfo=VN_TZ)
+            else:
+                structural_at = structural_at.astimezone(VN_TZ)
+            if (
+                state.last_structural_event_at is None
+                or structural_at > state.last_structural_event_at
+            ):
+                state.last_structural_event_at = structural_at
+        for persisted in buckets:
+            if (
+                persisted.symbol != canonical_symbol
+                or persisted.trading_date != trading_date
+                or persisted.exchange != canonical_exchange
+            ):
+                raise ValueError("Persisted auction bucket identity mismatch")
+            current = state.buckets.get(persisted.auction_type)
+            if current is not None and current.end_total_volume >= persisted.end_total_volume:
+                continue
+            data_sources = (
+                {"SSI_STREAM", "SSI_REST"}
+                if persisted.data_source == "SSI_MIXED"
+                else {persisted.data_source}
+            )
+            failures = (
+                set() if persisted.quality_status == "TRUSTED" else {"PERSISTED_DEGRADED"}
+            )
+            state.buckets[persisted.auction_type] = _MutableBucket(
+                symbol=persisted.symbol,
+                trading_date=persisted.trading_date,
+                exchange=persisted.exchange,
+                auction_type=persisted.auction_type,
+                provider_session=persisted.provider_session,
+                auction_price=persisted.auction_price,
+                pre_auction_price=persisted.pre_auction_price,
+                auction_volume=persisted.auction_volume,
+                start_total_volume=persisted.start_total_volume,
+                end_total_volume=persisted.end_total_volume,
+                event_count=persisted.event_count,
+                out_of_order_events=persisted.out_of_order_events,
+                first_event_at=persisted.first_event_at,
+                last_event_at=persisted.last_event_at,
+                failures=failures,
+                finalized=persisted.finalized,
+                data_sources=data_sources,
+            )
+            state.high_watermark = max(
+                state.high_watermark, persisted.end_total_volume
+            )
+            if persisted.last_event_at:
+                persisted_event_at = datetime.fromisoformat(persisted.last_event_at)
+                if persisted_event_at.tzinfo is None:
+                    persisted_event_at = persisted_event_at.replace(tzinfo=VN_TZ)
+                else:
+                    persisted_event_at = persisted_event_at.astimezone(VN_TZ)
+                if (
+                    state.last_structural_event_at is None
+                    or persisted_event_at > state.last_structural_event_at
+                ):
+                    state.last_structural_event_at = persisted_event_at
+            if (
+                persisted.auction_type == CLOSE_AUCTION
+                and persisted.pre_auction_price is not None
+                and state.last_continuous_price is None
+            ):
+                state.last_continuous_price = persisted.pre_auction_price
+
     def on_event(self, event: AuctionEvent) -> AuctionAccumulatorResult:
         key = (event.symbol, event.trading_date)
         state = self._states.get(key)
@@ -190,7 +285,13 @@ class AuctionSessionAccumulator:
         anomaly: str | None = None
         previous_high = state.high_watermark
         delta = 0
-        if event.total_volume is None:
+        stale_event = bool(
+            state.last_structural_event_at
+            and event.event_at < state.last_structural_event_at
+        )
+        if stale_event:
+            anomaly = "OUT_OF_ORDER_EVENT"
+        elif event.total_volume is None:
             anomaly = "MISSING_TOTAL_VOLUME"
         elif event.total_volume > state.high_watermark:
             delta = event.total_volume - state.high_watermark
@@ -200,30 +301,46 @@ class AuctionSessionAccumulator:
         else:
             anomaly = "OUT_OF_ORDER_REGRESSION"
 
-        if event.total_volume is None:
+        structural_allowed = anomaly not in {
+            "OUT_OF_ORDER_EVENT",
+            "OUT_OF_ORDER_REGRESSION",
+        }
+        if structural_allowed and event.total_volume is None:
             state.failures.add("MISSING_TOTAL_VOLUME")
-        if event.has_gap:
+        if structural_allowed and event.has_gap:
             state.failures.add("GAP")
-        if event.is_partial and anomaly != "OUT_OF_ORDER_REGRESSION":
+        if structural_allowed and event.is_partial:
             state.failures.add("PARTIAL")
-        if event.quality_status not in {"TRUSTED", "VOLUME_REGRESSION"}:
+        if structural_allowed and event.quality_status not in {
+            "TRUSTED",
+            "VOLUME_REGRESSION",
+        }:
             state.failures.add("NON_TRUSTED_QUALITY")
-        if event.data_source not in SUPPORTED_SSI_SOURCES:
+        if structural_allowed and event.data_source not in SUPPORTED_SSI_SOURCES:
             state.failures.add("UNSUPPORTED_SOURCE")
-        if event.provider_session not in SUPPORTED_PROVIDER_SESSIONS:
+        if structural_allowed and event.provider_session not in SUPPORTED_PROVIDER_SESSIONS:
             state.failures.add("UNSUPPORTED_SESSION")
             if anomaly is None:
                 anomaly = "UNSUPPORTED_SESSION"
 
+        if not structural_allowed:
+            bucket = state.buckets.get(auction_type) if auction_type else None
+            if bucket is not None:
+                bucket.event_count += 1
+                bucket.out_of_order_events += 1
+                updated_at = bucket.last_event_at or event.event_at.isoformat()
+                updated.append(bucket.snapshot(updated_at))
+            return AuctionAccumulatorResult(
+                0, state.high_watermark, anomaly, auction_type, tuple(updated)
+            )
+
+        state.last_structural_event_at = event.event_at
         if event.provider_session == "LO":
             state.last_continuous_price = event.price
 
         if auction_type is None:
             for bucket_type, bucket in state.buckets.items():
-                if not bucket.finalized and (
-                    bucket_type == OPEN_AUCTION
-                    or event.provider_session not in {"ATC"}
-                ):
+                if not bucket.finalized:
                     bucket.finalized = True
                     updated.append(bucket.snapshot(event.event_at.isoformat()))
             return AuctionAccumulatorResult(

@@ -251,6 +251,11 @@ class QuoteCollector:
                 if first_event_in_process
                 else None
             )
+            persisted_auction_buckets = (
+                self.store.get_auction_buckets(symbol, trading_date)
+                if first_event_in_process
+                else ()
+            )
             self._initialized_keys.add(key)
             previous_total = (
                 persisted.total_volume
@@ -366,6 +371,32 @@ class QuoteCollector:
             self.last_event_at = now
             if exchange is not None:
                 try:
+                    if first_event_in_process:
+                        persisted_session = str(
+                            persisted.trading_session if persisted else ""
+                        ).strip().upper()
+                        self.auction_accumulator.hydrate(
+                            symbol=symbol,
+                            trading_date=trading_date,
+                            exchange=exchange,
+                            high_watermark=(
+                                persisted.total_volume if persisted else None
+                            ),
+                            last_continuous_price=(
+                                persisted.last_price
+                                if persisted is not None
+                                and persisted_session == "LO"
+                                else None
+                            ),
+                            last_structural_event_at=(
+                                _stored_event_datetime(
+                                    trading_date, persisted.event_time
+                                )
+                                if persisted is not None
+                                else None
+                            ),
+                            buckets=persisted_auction_buckets,
+                        )
                     auction_result = self.auction_accumulator.on_event(
                         AuctionEvent(
                             symbol=symbol,

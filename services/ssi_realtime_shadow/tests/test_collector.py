@@ -625,6 +625,101 @@ def test_collector_persists_isolated_provider_session_auction_projection(
     store.close()
 
 
+def test_reopened_store_and_collector_hydrate_lo_state_before_atc(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "restart-before-atc.db"
+    store = SQLiteStore(path, commit_every_events=1)
+    first = QuoteCollector({"HPG"}, store, started_at=started_at(8, 30))
+    first.on_message(
+        market_event(Time="09:00:10", TotalVol=0, TradingSession="ATO")
+    )
+    first.on_message(
+        market_event(
+            Time="14:29:00",
+            TotalVol=6_980_600,
+            LastPrice=73_900,
+            TradingSession="LO",
+        )
+    )
+    store.close()
+
+    reopened = SQLiteStore(path, commit_every_events=1)
+    resumed = QuoteCollector(
+        {"HPG"}, reopened, started_at=started_at(14, 44)
+    )
+    resumed.on_message(
+        market_event(
+            Time="14:45:00",
+            TotalVol=15_500_700,
+            LastPrice=71_700,
+            TradingSession="ATC",
+        )
+    )
+    closing = {
+        bucket.auction_type: bucket
+        for bucket in reopened.get_auction_buckets("HPG", "2026-09-14")
+    }["CLOSE_AUCTION"]
+
+    assert closing.start_total_volume == 6_980_600
+    assert closing.auction_volume == 8_520_100
+    assert closing.pre_auction_price == 73_900
+    assert closing.auction_price == 71_700
+    reopened.close()
+
+
+def test_reopened_collector_continues_existing_atc_bucket_without_double_count(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "restart-during-atc.db"
+    store = SQLiteStore(path, commit_every_events=1)
+    first = QuoteCollector({"HPG"}, store, started_at=started_at(8, 30))
+    first.on_message(
+        market_event(Time="09:00:10", TotalVol=0, TradingSession="ATO")
+    )
+    first.on_message(
+        market_event(
+            Time="14:29:00",
+            TotalVol=6_980_600,
+            LastPrice=73_900,
+            TradingSession="LO",
+        )
+    )
+    first.on_message(
+        market_event(
+            Time="14:30:00",
+            TotalVol=10_000_000,
+            LastPrice=72_500,
+            TradingSession="ATC",
+        )
+    )
+    store.close()
+
+    reopened = SQLiteStore(path, commit_every_events=1)
+    resumed = QuoteCollector(
+        {"HPG"}, reopened, started_at=started_at(14, 39)
+    )
+    resumed.on_message(
+        market_event(
+            Time="14:40:00",
+            TotalVol=15_500_700,
+            LastPrice=71_700,
+            TradingSession="ATC",
+        )
+    )
+    closing = {
+        bucket.auction_type: bucket
+        for bucket in reopened.get_auction_buckets("HPG", "2026-09-14")
+    }["CLOSE_AUCTION"]
+
+    assert closing.start_total_volume == 6_980_600
+    assert closing.auction_volume == 8_520_100
+    assert closing.event_count == 2
+    assert closing.pre_auction_price == 73_900
+    assert closing.auction_price == 71_700
+    reopened.close()
+
+
 def test_none_volume_callback_preserves_collector_behavior(tmp_path: Path) -> None:
     store = SQLiteStore(tmp_path / "test.db", commit_every_events=1)
     collector = QuoteCollector(
