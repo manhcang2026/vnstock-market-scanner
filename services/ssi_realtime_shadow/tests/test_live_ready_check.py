@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
+
+import pytest
+import app.live_ready_check as readiness_module
 
 from app.live_ready_check import inspect_live_readiness, main
 from app.storage import SQLiteStore
@@ -54,6 +58,60 @@ def test_stale_baseline_is_blocking(tmp_path: Path) -> None:
 
     assert "BASELINE_DATE_MISMATCH" in report["blocking_errors"]
     assert report["ready_for_live_signal"] is False
+
+
+def test_many_symbols_share_one_candidate_session_lookup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = _fixture(tmp_path)
+    market = sqlite3.connect(paths["market_db"])
+    for symbol in ("AAA", "BBB"):
+        market.execute(
+            """
+            INSERT INTO daily_bars (
+                symbol,trading_date,exchange,open,high,low,close,volume,value,
+                source,quality_status,finalized_at
+            )
+            SELECT ?,trading_date,exchange,open,high,low,close,volume,value,
+                   source,quality_status,finalized_at
+            FROM daily_bars WHERE symbol='SHS'
+            """,
+            (symbol,),
+        )
+    market.commit()
+    market.close()
+
+    calls = {"loader": 0, "ato": 0, "atc": 0}
+    real_loader = readiness_module.load_candidate_market_sessions
+    real_ato = readiness_module.read_ato_exact10
+    real_atc = readiness_module.read_atc_exact10
+
+    def counted_loader(*args, **kwargs):
+        calls["loader"] += 1
+        return real_loader(*args, **kwargs)
+
+    def counted_ato(*args, **kwargs):
+        calls["ato"] += 1
+        assert isinstance(kwargs["candidate_dates"], tuple)
+        return real_ato(*args, **kwargs)
+
+    def counted_atc(*args, **kwargs):
+        calls["atc"] += 1
+        assert isinstance(kwargs["candidate_dates"], tuple)
+        return real_atc(*args, **kwargs)
+
+    monkeypatch.setattr(
+        readiness_module, "load_candidate_market_sessions", counted_loader
+    )
+    monkeypatch.setattr(readiness_module, "read_ato_exact10", counted_ato)
+    monkeypatch.setattr(readiness_module, "read_atc_exact10", counted_atc)
+
+    report = inspect_live_readiness(target_trading_date=DAY, **paths)
+
+    assert report["daily_symbols_total"] == 3
+    assert calls == {"loader": 1, "ato": 3, "atc": 3}
+    assert report["blocking_errors"] == []
+    assert "ATO_EXACT10_PARTIAL_EXPECTED:no_historical_bootstrap" in report["warnings"]
 
 
 def test_missing_market_and_history_are_reported_without_masking(
