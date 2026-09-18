@@ -1,0 +1,251 @@
+{
+  "as_of_date": "2026-09-18",
+  "audit_status": "COMPLETED_LOCAL_DATASET",
+  "blocker": null,
+  "exact_previous_10_coverage": [
+    {
+      "confirmed_inferred_count_in_exact_10": 10,
+      "exact_previous_10_dates": [
+        "2026-09-04",
+        "2026-09-07",
+        "2026-09-08",
+        "2026-09-09",
+        "2026-09-10",
+        "2026-09-11",
+        "2026-09-14",
+        "2026-09-15",
+        "2026-09-16",
+        "2026-09-17"
+      ],
+      "symbol": "FPT",
+      "temporary_baseline_usable": true
+    },
+    {
+      "confirmed_inferred_count_in_exact_10": 10,
+      "exact_previous_10_dates": [
+        "2026-09-04",
+        "2026-09-07",
+        "2026-09-08",
+        "2026-09-09",
+        "2026-09-10",
+        "2026-09-11",
+        "2026-09-14",
+        "2026-09-15",
+        "2026-09-16",
+        "2026-09-17"
+      ],
+      "symbol": "HPG",
+      "temporary_baseline_usable": true
+    },
+    {
+      "confirmed_inferred_count_in_exact_10": 10,
+      "exact_previous_10_dates": [
+        "2026-09-04",
+        "2026-09-07",
+        "2026-09-08",
+        "2026-09-09",
+        "2026-09-10",
+        "2026-09-11",
+        "2026-09-14",
+        "2026-09-15",
+        "2026-09-16",
+        "2026-09-17"
+      ],
+      "symbol": "SSI",
+      "temporary_baseline_usable": true
+    },
+    {
+      "confirmed_inferred_count_in_exact_10": 10,
+      "exact_previous_10_dates": [
+        "2026-09-04",
+        "2026-09-07",
+        "2026-09-08",
+        "2026-09-09",
+        "2026-09-10",
+        "2026-09-11",
+        "2026-09-14",
+        "2026-09-15",
+        "2026-09-16",
+        "2026-09-17"
+      ],
+      "symbol": "VIC",
+      "temporary_baseline_usable": true
+    },
+    {
+      "confirmed_inferred_count_in_exact_10": 10,
+      "exact_previous_10_dates": [
+        "2026-09-04",
+        "2026-09-07",
+        "2026-09-08",
+        "2026-09-09",
+        "2026-09-10",
+        "2026-09-11",
+        "2026-09-14",
+        "2026-09-15",
+        "2026-09-16",
+        "2026-09-17"
+      ],
+      "symbol": "VCB",
+      "temporary_baseline_usable": true
+    },
+    {
+      "confirmed_inferred_count_in_exact_10": 10,
+      "exact_previous_10_dates": [
+        "2026-09-04",
+        "2026-09-07",
+        "2026-09-08",
+        "2026-09-09",
+        "2026-09-10",
+        "2026-09-11",
+        "2026-09-14",
+        "2026-09-15",
+        "2026-09-16",
+        "2026-09-17"
+      ],
+      "symbol": "VIX",
+      "temporary_baseline_usable": true
+    }
+  ],
+  "exact_previous_10_dates": [
+    "2026-09-04",
+    "2026-09-07",
+    "2026-09-08",
+    "2026-09-09",
+    "2026-09-10",
+    "2026-09-11",
+    "2026-09-14",
+    "2026-09-15",
+    "2026-09-16",
+    "2026-09-17"
+  ],
+  "final_decision": "ALLOW_TEMP_INFERRED_BOOTSTRAP",
+  "fpt_2026_09_17": {
+    "classification": "CONFIRMED_INFERRED_BOUNDARY",
+    "failure_reasons": [],
+    "kbs_boundary_minute": "14:45",
+    "kbs_boundary_price": 74300,
+    "kbs_boundary_price_raw": "74.3",
+    "kbs_boundary_volume": "1887000",
+    "minute_match_kbs": true,
+    "minute_match_vci": true,
+    "price_match_kbs": true,
+    "price_match_vci": true,
+    "proof": "CROSS_PROVIDER_BOUNDARY_CONFIRMED_V1",
+    "quality": "INFERRED_BOUNDARY",
+    "source": "SSI_REST",
+    "ssi_bar_count": 226,
+    "ssi_boundary_minute": "14:45",
+    "ssi_boundary_price": 74300,
+    "ssi_boundary_time_raw": "14:45:00",
+    "ssi_boundary_volume": 1887000,
+    "ssi_candidate_boundary_bars": [
+      {
+        "close": 74300,
+        "high": 74300,
+        "low": 74300,
+        "minute": "14:45",
+        "open": 74300,
+        "provider_time": "14:45:00",
+        "volume": 1887000
+      }
+    ],
+    "ssi_daily_reconciled_exactly": true,
+    "ssi_daily_volume": 6626700,
+    "ssi_final_bar": {
+      "close": 74300,
+      "high": 74300,
+      "low": 74300,
+      "minute": "14:45",
+      "open": 74300,
+      "provider_time": "14:45:00",
+      "volume": 1887000
+    },
+    "ssi_intraday_total_volume": 6626700,
+    "ssi_last_continuous_minute": "14:29",
+    "ssi_last_continuous_price": 74000,
+    "ssi_last_continuous_time_raw": "14:29:59",
+    "ssi_volume_diff": 0,
+    "symbol": "FPT",
+    "trading_date": "2026-09-17",
+    "vci_boundary_minute": "14:45",
+    "vci_boundary_price": 74300,
+    "vci_boundary_price_raw": "74.3",
+    "vci_boundary_volume": "1887000",
+    "volume_match_kbs": true,
+    "volume_match_vci": true
+  },
+  "historical_proven_rows": 0,
+  "input_verification": {
+    "archive_present": false,
+    "archive_sha256": null,
+    "archive_sha256_matches_expected": false,
+    "combined_minute_rows": 20328,
+    "daily_rows": 90,
+    "duplicate_minute_keys": 0,
+    "extraction_reconciliation_exact": 90,
+    "extraction_reconciliation_rows": 90,
+    "gap_rest_rows": 2711,
+    "minute_quality_counts": {
+      "TRUSTED": 20328
+    },
+    "minute_source_counts": {
+      "SSI_REST": 20328
+    },
+    "minute_symbol_sessions": 90,
+    "missing_symbol_sessions": 0,
+    "old_rest_rows": 17617
+  },
+  "job": "BETA-04B",
+  "rows_attempted": 90,
+  "rows_confirmed": 90,
+  "rows_rejected": 0,
+  "rows_unavailable": 0,
+  "scope_rows": 90,
+  "sessions": [
+    "2026-08-25",
+    "2026-08-26",
+    "2026-08-27",
+    "2026-08-28",
+    "2026-09-03",
+    "2026-09-04",
+    "2026-09-07",
+    "2026-09-08",
+    "2026-09-09",
+    "2026-09-10",
+    "2026-09-11",
+    "2026-09-14",
+    "2026-09-15",
+    "2026-09-16",
+    "2026-09-17"
+  ],
+  "ssi_daily_reconciliation_exact": 90,
+  "ssi_daily_reconciliation_mismatch": 0,
+  "ssi_rest_stream_settlement": {
+    "differences": 0,
+    "exact_price_volume_matches": 12,
+    "rows": 12
+  },
+  "symbols": [
+    "FPT",
+    "HPG",
+    "SSI",
+    "VIC",
+    "VCB",
+    "VIX"
+  ],
+  "three_provider_exact_matches": 90,
+  "three_provider_mismatches": 0,
+  "vix_2026_09_16_event_vs_settled": {
+    "price_match": true,
+    "rest_close": 12650.0,
+    "rest_volume": 6264100,
+    "settled_match": true,
+    "stream_close": 12650.0,
+    "stream_is_partial": 1,
+    "stream_quality_status": "VOLUME_REGRESSION",
+    "stream_volume": 6264100,
+    "symbol": "VIX",
+    "trading_date": "2026-09-16",
+    "volume_match": true
+  }
+}
