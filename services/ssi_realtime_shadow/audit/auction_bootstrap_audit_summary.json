@@ -1,0 +1,153 @@
+{
+  "agreement": {
+    "ATC": {
+      "STRONG_AGREEMENT": 90
+    },
+    "ATO": {
+      "STRONG_AGREEMENT": 90
+    }
+  },
+  "audit_row_count": 180,
+  "classification_note": "STRONG requires exact timestamp, price and volume equality; WEAK requires equal timestamp and price with a volume difference. No product tolerance is applied.",
+  "comparison_row_count": 180,
+  "completed_session_rule": "strictly_before_evaluation_date",
+  "coverage": {
+    "ATC": {
+      "KBS": {
+        "coverage_pct": 100.0,
+        "provider_sessions_expected": 90,
+        "provider_sessions_usable": 90
+      },
+      "VCI": {
+        "coverage_pct": 100.0,
+        "provider_sessions_expected": 90,
+        "provider_sessions_usable": 90
+      }
+    },
+    "ATO": {
+      "KBS": {
+        "coverage_pct": 1.1111111111111112,
+        "provider_sessions_expected": 90,
+        "provider_sessions_usable": 1
+      },
+      "VCI": {
+        "coverage_pct": 1.1111111111111112,
+        "provider_sessions_expected": 90,
+        "provider_sessions_usable": 1
+      }
+    }
+  },
+  "daily_reconciliation": {
+    "KBS": {
+      "exact": 90,
+      "mismatch": 0,
+      "missing_daily": 0,
+      "rows": 90
+    },
+    "VCI": {
+      "exact": 81,
+      "mismatch": 9,
+      "missing_daily": 0,
+      "rows": 90
+    }
+  },
+  "evaluation_date": "2026-09-18",
+  "job": "BETA-04A",
+  "provider_fetch_failures": [],
+  "provider_fetch_successes": [
+    {
+      "provider": "KBS",
+      "symbol": "FPT"
+    },
+    {
+      "provider": "KBS",
+      "symbol": "HPG"
+    },
+    {
+      "provider": "KBS",
+      "symbol": "SSI"
+    },
+    {
+      "provider": "KBS",
+      "symbol": "VCB"
+    },
+    {
+      "provider": "KBS",
+      "symbol": "VIC"
+    },
+    {
+      "provider": "KBS",
+      "symbol": "VIX"
+    },
+    {
+      "provider": "VCI",
+      "symbol": "FPT"
+    },
+    {
+      "provider": "VCI",
+      "symbol": "HPG"
+    },
+    {
+      "provider": "VCI",
+      "symbol": "SSI"
+    },
+    {
+      "provider": "VCI",
+      "symbol": "VCB"
+    },
+    {
+      "provider": "VCI",
+      "symbol": "VIC"
+    },
+    {
+      "provider": "VCI",
+      "symbol": "VIX"
+    }
+  ],
+  "providers": [
+    "KBS",
+    "VCI"
+  ],
+  "quality_guard": {
+    "allowed_inferred_label": "INFERRED_BOUNDARY",
+    "proven_rows_emitted": 0
+  },
+  "recommendation": {
+    "ATC": {
+      "reason": "Some inferred boundaries are usable, but the complete audit set does not have exact isolation, agreement, and daily reconciliation throughout.",
+      "recommendation": "DIAGNOSTIC_ONLY"
+    },
+    "ATO": {
+      "reason": "At least one 09:15 boundary bar mixes the official daily open with continuous-trading prices, so exact ATO volume is not isolated.",
+      "recommendation": "DO_NOT_BOOTSTRAP"
+    }
+  },
+  "retrieval_start": "2026-08-14",
+  "session_count": 15,
+  "sessions_observed": [
+    "2026-08-25",
+    "2026-08-26",
+    "2026-08-27",
+    "2026-08-28",
+    "2026-09-03",
+    "2026-09-04",
+    "2026-09-07",
+    "2026-09-08",
+    "2026-09-09",
+    "2026-09-10",
+    "2026-09-11",
+    "2026-09-14",
+    "2026-09-15",
+    "2026-09-16",
+    "2026-09-17"
+  ],
+  "sessions_requested": 15,
+  "symbols": [
+    "FPT",
+    "HPG",
+    "SSI",
+    "VIC",
+    "VCB",
+    "VIX"
+  ]
+}
