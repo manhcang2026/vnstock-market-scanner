@@ -52,8 +52,8 @@ class AuctionHistoryRow:
         date.fromisoformat(self.trading_date)
         object.__setattr__(self, "exchange", normalize_exchange(self.exchange))
         auction_type = str(self.auction_type or "").strip().upper()
-        if auction_type != CLOSE_AUCTION:
-            raise ValueError("BETA-04C supports CLOSE_AUCTION history only")
+        if auction_type not in {OPEN_AUCTION, CLOSE_AUCTION}:
+            raise ValueError("unsupported auction_type")
         object.__setattr__(self, "auction_type", auction_type)
         if self.auction_price <= 0:
             raise ValueError("auction_price must be positive")
@@ -68,11 +68,18 @@ class AuctionHistoryRow:
         object.__setattr__(self, "source", source)
         object.__setattr__(self, "quality", quality)
         if quality == INFERRED_BOUNDARY:
-            if source != SSI_REST or self.proof_code != CROSS_PROVIDER_PROOF:
+            if (
+                auction_type != CLOSE_AUCTION
+                or source != SSI_REST
+                or self.proof_code != CROSS_PROVIDER_PROOF
+            ):
                 raise ValueError("inferred history requires approved SSI REST proof")
         elif quality == PROVEN:
             if source != SSI_STREAM:
                 raise ValueError("PROVEN history requires SSI_STREAM")
+            expected_session = "ATO" if auction_type == OPEN_AUCTION else "ATC"
+            if str(self.provider_session or "").strip().upper() != expected_session:
+                raise ValueError("PROVEN history requires explicit provider session")
         else:
             raise ValueError("unsupported history quality")
         provider_session = (
@@ -325,15 +332,19 @@ def bootstrap_auction_history(
     return report
 
 
-def read_atc_exact10(
+def read_auction_exact10(
     auction_connection: sqlite3.Connection,
     history_connection: sqlite3.Connection,
     daily_connection: sqlite3.Connection,
     *,
     symbol: str,
     as_of_date: str,
+    auction_type: str,
 ) -> Exact10Result:
     canonical_symbol = str(symbol or "").strip().upper()
+    canonical_type = str(auction_type or "").strip().upper()
+    if canonical_type not in {OPEN_AUCTION, CLOSE_AUCTION}:
+        raise ValueError("unsupported auction_type")
     candidate_dates = tuple(
         load_candidate_market_sessions(
             history_connection,
@@ -356,7 +367,7 @@ def read_atc_exact10(
                 WHERE symbol=? AND auction_type=?
                   AND finalized=1 AND trading_date IN ({placeholders})
                 """,
-                (canonical_symbol, CLOSE_AUCTION, *candidate_dates),
+                (canonical_symbol, canonical_type, *candidate_dates),
             )
         }
     missing = tuple(item for item in candidate_dates if item not in rows)
@@ -388,4 +399,41 @@ def read_atc_exact10(
         avg_closing_auction_volume=average,
         baseline_usable=usable,
         baseline_quality=quality,
+    )
+
+
+def read_atc_exact10(
+    auction_connection: sqlite3.Connection,
+    history_connection: sqlite3.Connection,
+    daily_connection: sqlite3.Connection,
+    *,
+    symbol: str,
+    as_of_date: str,
+) -> Exact10Result:
+    return read_auction_exact10(
+        auction_connection,
+        history_connection,
+        daily_connection,
+        symbol=symbol,
+        as_of_date=as_of_date,
+        auction_type=CLOSE_AUCTION,
+    )
+
+
+def read_ato_exact10(
+    auction_connection: sqlite3.Connection,
+    history_connection: sqlite3.Connection,
+    daily_connection: sqlite3.Connection,
+    *,
+    symbol: str,
+    as_of_date: str,
+) -> Exact10Result:
+    """Read opening-auction coverage without inventing historical ATO rows."""
+    return read_auction_exact10(
+        auction_connection,
+        history_connection,
+        daily_connection,
+        symbol=symbol,
+        as_of_date=as_of_date,
+        auction_type=OPEN_AUCTION,
     )
