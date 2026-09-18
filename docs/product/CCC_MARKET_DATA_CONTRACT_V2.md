@@ -8,11 +8,20 @@ Canonical trading timezone: **Asia/Ho_Chi_Minh**
 
 Scope: CCC V2 market/technical data; this document does not define proprietary signal thresholds.
 
+The locked principles in `CCC_V2_OPERATING_PRINCIPLES.md` dated 2026-09-18
+supersede conflicting retention, archive, cutover, and signal-state assumptions
+in this earlier foundation contract.
+
 ## 1. Authority and precedence
 
 This contract records the Product Owner decisions for DATA-V2-01. Where an older
 product or UI document assigns technical market data to Supabase, this contract
 takes precedence for CCC V2.
+
+CCC is current-centric: it is a realtime/near-realtime scanner and signal engine,
+not a general-purpose historical market-data warehouse. Historical storage must
+directly support current calculations, quality verification, signals, Golden
+Board, or signal-outcome analysis.
 
 | Domain | Canonical owner |
 |---|---|
@@ -151,8 +160,15 @@ Definitions:
   the average comparable 30-minute window.
 - Opening RVOL, where enabled, uses exchange/session-specific opening semantics.
 
-Rolling windows do not cross lunch or include ATO/ATC as ordinary continuous
-minutes. Zero or unavailable denominators produce `NULL`, not zero or infinity.
+RVOL15/RVOL30 may update every valid minute. Their comparable prior-session
+windows must be the identical valid continuous-minute window. Rolling windows
+reset between AM and PM, do not cross lunch, and do not include ATO/ATC as
+ordinary continuous minutes. DayRVOL continues cumulatively through the day.
+Zero or unavailable denominators produce `NULL`, not zero or infinity.
+
+The legacy baseline builder can zero-fill missing symbol minutes/days selected
+from a global calendar. This is a **REQUIRED CLEANUP / FIX** before production V2
+trust; missing data may be zero only when actual continuity proves zero trading.
 
 ## 7. Price feature contract
 
@@ -172,18 +188,25 @@ Canonical states and labels are:
 | State | Vietnamese label |
 |---|---|
 | `NORMAL` | Bình thường |
+| `WATCHING` | Đang theo dõi |
 | `FLOW_APPEARING` | Dòng tiền đang xuất hiện |
 | `FLOW_PRICE_CONFIRMED` | Dòng tiền & giá đã xác nhận |
 | `MOMENTUM_MAINTAINED` | Xu hướng đang được duy trì |
 | `MOMENTUM_WEAKENING` | Động lượng đang suy yếu |
 | `SELLING_PRESSURE` | Áp lực bán đang tăng |
 
+`WATCHING` means early abnormal volume/price behavior merits monitoring, while
+the conditions for an official signal state are not yet satisfied. It precedes
+`FLOW_APPEARING`; no numerical threshold is defined by this contract.
+
 `signal_level` is an ordinal value from 0 through 4. It is not the old V1
 0/4-to-4/4 vote count. The browser must not reconstruct signal state, and public
 payloads must not expose thresholds, weights, private reason trees, or scoring
 recipes.
 
-Every meaningful state transition creates an append-only `signal_events` row.
+The engine upserts one current state per eligible symbol and must not append a
+historical row every minute. Every meaningful state transition creates an
+append-only `signal_events` row, including `NORMAL -> WATCHING`.
 `event_id` is a canonical lowercase UUID4 text primary key. A unique semantic key
 over `symbol`, `detected_at`, `signal_state`, `engine_version`, and
 `config_version` protects retry idempotency.
@@ -193,6 +216,14 @@ opaque identifier, for example `cfg-20260918-001`. `engine_meta` may store an
 internal SHA-256 configuration fingerprint. Events and public APIs never store or
 expose proprietary threshold values.
 
+Signal parameters are server-side configuration, never browser constants or
+permanent hard-coded product decisions. Future authorized administration uses a
+draft followed by explicit Apply/Activate; every activation creates a new
+immutable `config_version`. Events retain the version active at detection time,
+and later configuration changes never rewrite historical facts. Parameter
+categories may include WATCHING volume, DayRVOL, RVOL15, RVOL30, Price5/Price15,
+weakening, and selling pressure, but this contract specifies no numeric values.
+
 The Signal Engine writes the immutable event and its private 1:1
 `signal_event_features` snapshot at transition time. A future separate,
 idempotent `signal_outcome_worker` enriches only the reserved close/max/min and
@@ -201,7 +232,9 @@ the detection facts. The private feature table is not part of the normal public
 frontend API.
 
 Golden Board V2 is a query/view/API over `signal_events` plus outcome fields. It is
-not a separate calculation table. Existing V1 Golden Board data remains untouched.
+not a separate calculation table. It may reconstruct first WATCHING, flow,
+confirmation, maintenance, weakening/selling-pressure transitions and their
+features/outcomes. Existing V1 Golden Board data remains untouched.
 
 ## 9. Feed health and metric quality
 
@@ -244,13 +277,15 @@ the high-level quality enum.
 
 ## 10. Bars and index contract
 
-`daily_bars` is canonical long-term SSI/VPS daily history: date, symbol, exchange,
-OHLC, volume, optional value, source, quality, and finalized timestamp. Only
-completed valid sessions feed MA calculations.
+`daily_bars` is canonical bounded SSI/VPS daily history: date, symbol, exchange,
+OHLC, volume, optional value, source, quality, and finalized timestamp. It targets
+approximately two calendar years/enough completed sessions for MA200 plus a
+reasonable buffer. Only completed valid sessions feed MA calculations; it is not
+an unlimited archive.
 
-`bars_5m_archive` is derived from trusted canonical 1-minute data. It stores symbol,
-exchange, date, local bar time, OHLC, volume, optional value, quality, source, and
-creation timestamp. It is not derived from browser data.
+`bars_5m_archive` remains an inert compatibility schema only. The previous
+approximately two-year archive requirement is superseded: current rollout builds
+no writer, bootstrap, retention job, or storage allocation for it.
 
 `market_index_current` is generic by `index_code`, initially targeting `VNINDEX`,
 `VN30`, `HNXINDEX`, and `UPCOMINDEX` where SSI supports them. Missing values are
@@ -263,14 +298,17 @@ connected by this contract.
 |---|---|---|
 | Raw SSI messages | transient; no long-term archive | ingest/recovery process |
 | Current quote/state/index | overwrite/current-state semantics | writer |
-| Canonical 1-minute bars | 15 recent trading sessions | future retention job |
-| Canonical 5-minute archive | approximately two years | future retention job |
-| Daily OHLCV | long-term | archival policy |
+| Canonical 1-minute bars | preserve and audit the existing 2026 corpus; fill only gaps; append completed days | separately approved capacity policy |
+| `bars_5m_archive` | inert compatibility schema; no current writer/retention target | none in current rollout |
+| Daily OHLCV | bounded to approximately two calendar years/MA200 plus buffer | bounded history policy |
 | Volume baseline | rolling target of 10 completed sessions | baseline rebuild |
 | Signal events and private feature snapshots | long-term | archival policy |
 | Operational logs | configurable 30–90 days | operations/log rotation |
 
-DATA-V2-01 performs no deletion and installs no retention scheduler.
+Do not backfill pre-2026 1-minute data without explicit Product Owner approval and
+do not automatically delete valid 2026 rows. Existing coverage must be inventoried
+before completeness is claimed. DATA-V2-01 performs no deletion and installs no
+retention scheduler.
 
 ## 12. Serving projections
 
@@ -299,3 +337,10 @@ The current V1 website, Supabase market tables, GitHub Actions, and Golden Board
 remain in production during shadow build-out. This contract authorizes neither a
 cutover nor a migration. SSI history may progressively replace temporary legacy
 seed data, but providers must never be mixed silently in an active volume baseline.
+
+The Product Owner target is to stop legacy Supabase technical daily/intraday
+writers by the end of September 2026 only after V2/SSI verification. Required
+backup and a reader audit must precede identifying and later deleting obsolete
+technical V1 data. No writer stop or destructive Supabase cleanup is authorized
+by this contract; Supabase remains canonical for auth/business, reference, and
+financial data.

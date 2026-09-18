@@ -6,6 +6,10 @@ Market data contract: **2**
 
 Storage schema: **1**
 
+The locked principles in `../product/CCC_V2_OPERATING_PRINCIPLES.md` dated
+2026-09-18 supersede conflicting retention, long-term 5m archive, and signal-state
+assumptions in this earlier foundation document.
+
 ## 1. Scope
 
 This is an additive local SQLite design. It creates no production database,
@@ -33,14 +37,14 @@ it from the running collector in DATA-V2-01.
 | **EXISTING** | Realtime volume engine | DayRVOL, RVOL15, RVOL30, opening RVOL, coverage, nullable unavailable metrics and trust reasons; preserve the working engine. |
 | **EXISTING** | SSI stream/history normalization | Universe-filtered quote ingest, 1m aggregation, REST bootstrap, dedupe/checkpoints and quality flags; preserve. |
 | **PARTIAL** | Daily history | Chart code can aggregate 1m data to daily at read time, and finalizer persists trusted 1m days; no canonical `daily_bars` exists. Add the table only. |
-| **PARTIAL** | 5m candles | Chart/live paths aggregate intervals on demand; no approximately two-year canonical archive. Add `bars_5m_archive` only. |
+| **INERT** | 5m archive schema | `bars_5m_archive` may remain for compatibility, but the former two-year archive plan is superseded. No writer, bootstrap, retention job, or storage allocation is planned. |
 | **PARTIAL** | Current stock state | `latest_quotes` covers raw quote state; volume snapshots are in memory/logs. No unified trend/price/signal/quality row. Add `stock_state_current`. |
 | **PARTIAL** | Quality/feed health | Granular minute reasons and a stale detector exist. No persisted V2 feed enum separate from high-level metric quality. New current tables separate them. |
 | **PARTIAL** | Baseline validity/trust | The current builder selects a global trading calendar and zero-fills absent symbol minutes/days; `metrics_trusted` does not become false solely for `INSUFFICIENT_HISTORY`. DATA-V2-02 must distinguish a valid no-trade minute from missing data and map incomplete coverage to degraded trust. |
 | **PARTIAL** | Universe source | Runtime uses a file or legacy `stock_snapshot` symbol list and `stock_metadata` for exchange lookup. Schema V1 adds the approved minimal cache, but sync/fallback runtime remains for a later job. |
 | **PARTIAL** | Confirmed SSI fields | SSI contracts support Ceiling/Floor/RefPrice, OHLC, TotalVol/TotalVal, bid/ask, change/ratio, security session/status, realtime index MI, DailyStockPrice, DailyOhlc, IntradayOhlc, and DailyIndex. The collector persists only a subset; this is an implementation gap, not missing provider capability. |
 | **MISSING** | Canonical daily bars | Add `daily_bars`. |
-| **MISSING** | Canonical 5m archive | Add `bars_5m_archive`. |
+| **INERT** | `bars_5m_archive` | Schema definition remains; not a current rollout deliverable. |
 | **MISSING** | Persisted current technical state | Add `stock_state_current`. |
 | **MISSING** | V2 event journal/private features | Add `signal_events` and `signal_event_features`. |
 | **MISSING** | SSI Vietnam index current state | Add `market_index_current`. |
@@ -63,17 +67,17 @@ open, migrate, or change the configured runtime paths.
 | `/app/data/ssi_shadow.db` | Existing realtime ingest: `minute_bars`, `latest_quotes`, collector/checkpoint metadata. |
 | `/app/data/ccc_v2_baseline.db` | Existing `volume_baseline`, `volume_baseline_coverage`, `volume_baseline_metadata`. |
 | `/app/data/ccc_market_v2.db` | `daily_bars`, `stock_state_current`, `signal_events`, `signal_event_features`, `market_index_current`, `universe_cache`, `trading_calendar`, `engine_meta`. |
-| `/app/data/ccc_5m_archive.db` | `bars_5m_archive` only. |
+| `/app/data/ccc_5m_archive.db` | Reserved/inert compatibility path only; no current production creation or writer. |
 
-The dedicated 5m database is required because roughly 800 symbols × 54 bars per
-session × 500 sessions already yields about 21.6 million rows, before V3 universe
-expansion. `signal_events` and `signal_event_features` remain together in
+The former dedicated two-year 5m archive requirement is superseded. The schema
+may remain to avoid migration churn, but current rollout does not create or feed
+the database. `signal_events` and `signal_event_features` remain together in
 `ccc_market_v2.db` for enforced foreign-key ownership.
 
 The schema code remains path-agnostic: `ensure_market_storage_schema` initializes
 the `ccc_market_v2.db` table set on an explicit connection, while
-`ensure_5m_archive_schema` initializes only the archive table. A later rollout job
-must pass the locked paths explicitly after a SQLite-consistent backup.
+`ensure_5m_archive_schema` remains a path-agnostic compatibility initializer only;
+no current rollout job should invoke it against production.
 
 ## 4. Table catalog
 
@@ -88,7 +92,7 @@ must pass the locked paths explicitly after a SQLite-consistent backup.
 | `volume_baseline_coverage` | existing/reused | `symbol` | Baseline coverage. |
 | `volume_baseline_metadata` | existing/reused | `key` | Baseline build schema/lookback. |
 | `daily_bars` | new | `(symbol, trading_date)` | Canonical completed daily OHLCV. |
-| `bars_5m_archive` | new | `(symbol, trading_date, bar_time)` | Longer-retention 5m archive. |
+| `bars_5m_archive` | inert compatibility schema | `(symbol, trading_date, bar_time)` | No planned writer, bootstrap, or retention target. |
 | `stock_state_current` | new | `symbol` | One canonical current V2 state row per symbol. |
 | `signal_events` | new | `event_id` UUID4 text | Append-only transition journal and future outcomes. |
 | `signal_event_features` | new/private | `signal_event_id` | Private 1:1 feature snapshot. |
@@ -102,16 +106,18 @@ state. `stock_state_current` is a different, engine-facing materialized projecti
 
 ## 5. Keys and relationships
 
-### Daily and 5m bars
+### Daily bars and inert 5m compatibility schema
 
 The symbol-first primary keys optimize per-symbol chronological reads and enforce
 one canonical bar at a given grain. Secondary date/time indexes support finalization,
 retention selection, and all-market session scans.
 
-Both tables enforce nonnegative volume/value and valid OHLC envelopes. `value` is
+`daily_bars` enforces nonnegative volume/value and valid OHLC envelopes. `value` is
 nullable while the current collector persists only a subset of confirmed SSI
 fields. `source` and high-level quality are mandatory for provider traceability.
-The 5m table and its date/time index live only in `ccc_5m_archive.db`.
+Daily retention is bounded to approximately two calendar years/enough sessions
+for MA200 plus reasonable buffer. The 5m table/index definition remains inert and
+has no current production owner.
 
 ### Current state
 
@@ -147,6 +153,11 @@ idempotent `signal_outcome_worker` may update only the reserved close/max/min an
 30m/EOD/T+1/T+3 outcome columns. It must not create a second event or rewrite the
 detection facts. No cleanup trigger is installed.
 
+The current state is upserted once per symbol; no event row is appended every
+minute. Events are created only for meaningful transitions, including
+`NORMAL -> WATCHING`. Golden Board reads this journal rather than a redundant
+calculation table.
+
 `signal_event_features.signal_event_id` is both its primary key and a foreign key
 to `signal_events.event_id`, with `ON DELETE RESTRICT`. This enforces 1:1 ownership and
 prevents orphan features. Every connection that writes must enable
@@ -156,6 +167,11 @@ prevents orphan features. Every connection that writes must enable
 immutable opaque ID such as `cfg-20260918-001`. An internal SHA-256 configuration
 fingerprint may be stored under a private `engine_meta` key. Threshold values are
 never stored in the public event row or exposed through public APIs.
+
+Future threshold administration uses draft/edit followed by an explicit
+Apply/Activate action. Every activation creates a new immutable `config_version`;
+old events retain their detection-time version and are never rewritten. No
+numeric threshold or browser-side configuration is defined here.
 
 ### Universe and trading calendar
 
@@ -183,7 +199,7 @@ Schema checks enforce:
 
 - sessions: `OPEN_AUCTION`, `AM_CONTINUOUS`, `LUNCH_BREAK`, `PM_CONTINUOUS`,
   `CLOSE_AUCTION`, `POST_TRADING`, `CLOSED`;
-- states: `NORMAL`, `FLOW_APPEARING`, `FLOW_PRICE_CONFIRMED`,
+- states: `NORMAL`, `WATCHING`, `FLOW_APPEARING`, `FLOW_PRICE_CONFIRMED`,
   `MOMENTUM_MAINTAINED`, `MOMENTUM_WEAKENING`, `SELLING_PRESSURE`;
 - signal level: integer 0 through 4;
 - feed: `LIVE`, `STALE`, `DISCONNECTED`, `EXPECTED_IDLE`;
@@ -199,6 +215,9 @@ continuity and every other volume-quality check pass. Missing symbol/minute data
 never zero-filled unless continuity proves a zero traded-volume delta. Missing
 MA/RVOL/Price values remain `NULL`. Overall `metrics_trusted` means all mandatory
 inputs for the evaluated signal are trusted, not that every optional field exists.
+
+The current baseline builder's ability to zero-fill missing symbol minutes/days
+is a **REQUIRED CLEANUP / FIX** before V2 production trust.
 
 Feed state is global/collector-aware and separate from session state. Proposed
 configurable defaults are: `LIVE` at no more than 15 seconds accepted market-event
@@ -226,8 +245,10 @@ It is idempotent, preserves unrelated metadata, and refuses a database whose
 contract/schema version is newer than the code. Version timestamps change only
 when a version advances, so a no-op ensure is deterministic.
 
-The isolated `ccc_5m_archive.db` has no application metadata table and uses SQLite
-`PRAGMA user_version = 1`; its only application table is `bars_5m_archive`.
+If initialized in a temporary compatibility test, `ccc_5m_archive.db` has no
+application metadata table and uses SQLite `PRAGMA user_version = 1`; its only
+application table is `bars_5m_archive`. Current rollout does not initialize it in
+production.
 `engine_meta` may later hold a private `config_sha256` fingerprint alongside the
 contract/schema versions, but DATA-V2-01 has no config payload to fingerprint.
 
@@ -250,15 +271,17 @@ Existing tables are not renamed, dropped, or rewritten by schema V1.
 |---|---|---|
 | raw SSI payload | transient only | bounded recovery buffer |
 | `latest_quotes`, `stock_state_current`, `market_index_current` | current row | upsert writer |
-| `minute_bars` | 15 completed trading sessions | session-aware retention job after archive/finalization verification |
-| `bars_5m_archive` | approximately two years | date/session-aware retention job |
-| `daily_bars` | long-term | backup/archive policy |
+| `minute_bars` | preserve/audit existing valid 2026 corpus, fill gaps only, append completed sessions | capacity-driven policy only after separate approval |
+| `bars_5m_archive` | inert; no retention allocation | no writer/job in current rollout |
+| `daily_bars` | approximately two calendar years/MA200 plus reasonable buffer | bounded history policy |
 | baseline tables | rolling 10 completed sessions | deterministic rebuild/swap |
 | signal tables | long-term | backup/archive policy |
 | operational logs | configurable 30–90 days | log rotation |
 
-Calendar days must not be substituted for trading-session counts. No deletion is
-performed by DATA-V2-01.
+Do not claim the 2026 1-minute corpus complete before symbol/date/session audit,
+delete valid rows automatically, or backfill pre-2026 1m without explicit Product
+Owner approval. Calendar days must not replace trading-session counts. No deletion
+is performed by DATA-V2-01.
 
 ### Backup policy
 
@@ -270,14 +293,15 @@ method); never raw-copy an actively WAL-written database.
 | `/app/data/ccc_market_v2.db` | Nightly after market close/finalization |
 | `/app/data/ccc_v2_baseline.db` | Nightly |
 | `/app/data/ssi_shadow.db` | Short-retention operational backup |
-| `/app/data/ccc_5m_archive.db` | Weekly |
+| `/app/data/ccc_5m_archive.db` | None planned; compatibility schema is inert |
 
 Oracle volume backup is an additional infrastructure layer, not the sole database
 backup. DATA-V2-01 installs no backup job.
 
 ## 9. Legacy compatibility
 
-- V1 Supabase market tables and data remain unchanged.
+- V1 Supabase market tables and data remain unchanged until separately approved
+  cutover and cleanup. End-of-September 2026 is a target, not deletion authority.
 - Existing GitHub Actions, website routes, Golden Board V1, Docker/systemd/nginx,
   and VPS databases remain unchanged.
 - Existing SSI collector, historical bootstrap, chart API, live gateway, daily
@@ -291,19 +315,19 @@ backup. DATA-V2-01 installs no backup job.
 
 1. **DATA-V2-01 (this stage):** docs, path-agnostic schema module, temporary-DB
    tests. No runtime effect.
-2. **Schema rollout:** back up consistently, then apply/verify schema to the locked
-   `/app/data/ccc_market_v2.db` and `/app/data/ccc_5m_archive.db` paths without
-   starting writers.
-3. **Canonical daily/5m writers:** finalize trusted 1m data into daily/5m tables;
-   verify session boundaries and provider consistency.
+2. **Schema rollout:** back up consistently, then apply/verify the active schema
+   to `/app/data/ccc_market_v2.db`; leave the 5m compatibility schema inert.
+3. **History preparation:** inventory the existing 2026 1m corpus, fetch only
+   verified gaps, append newly completed sessions, and bootstrap bounded daily
+   history for MA support. Build no 5m archive writer.
 4. **Feature/state shadow writer:** implement MA and Price engines, project existing
    volume snapshots, persist `stock_state_current`; compare without serving it.
 5. **Signal/event shadow writer:** implement approved private config/state machine
    and append events/features; no public threshold disclosure.
 6. **Index ingest:** connect supported SSI Vietnam indices and validate feed health.
 7. **Read APIs:** add entitlement-aware Scanner/Stock Detail/Golden Board projections.
-8. **Retention:** enable only after archives, backups, observability, and restore
-   tests are accepted.
+8. **Retention:** apply only the locked current-centric policies after backups,
+   observability, capacity evidence, and separate Product Owner approval.
 9. **Cutover:** separate Product Owner approval; V1 remains rollback-capable.
 
 ## 11. Inputs for DATA-V2-02 implementation planning
@@ -328,7 +352,8 @@ repair:
    V2 requires `NULL` until exactly 10/200 completed valid sessions are available.
 2. The current volume baseline zero-fills a missing symbol minute/day selected from
    the global trading calendar. Without a separate continuity decision, this can
-   conflate “no trade” with “missing data.”
+   conflate “no trade” with “missing data.” This is a **REQUIRED CLEANUP / FIX**
+   before production V2 trust.
 3. `INSUFFICIENT_HISTORY` is recorded as a volume reason, but by itself does not
    currently make `metrics_trusted` false. V2 requires incomplete coverage not to
    claim full trust.

@@ -342,6 +342,38 @@ def test_signal_events_allow_multiple_events_per_symbol(
     ).fetchone()[0] == 2
 
 
+def test_watching_is_accepted_in_current_and_event_state_checks(
+    connection: sqlite3.Connection,
+) -> None:
+    _insert_stock_state(connection)
+    connection.execute(
+        "UPDATE stock_state_current "
+        "SET signal_state = 'WATCHING', previous_signal_state = 'WATCHING' "
+        "WHERE symbol = 'HPG'"
+    )
+    connection.execute(
+        """
+        INSERT INTO signal_events (
+            event_id, symbol, exchange, trading_date, detected_at,
+            previous_state, signal_state, signal_level,
+            price_at_signal, change_pct_at_signal, session_type,
+            engine_version, config_version, quality_status, metrics_trusted
+        ) VALUES (?, 'SSI', 'HOSE', '2026-09-18', ?, 'NORMAL',
+                  'WATCHING', 0, 28000, 0.5, 'AM_CONTINUOUS',
+                  '2.0.0', 'cfg-20260918-001', 'TRUSTED', 1)
+        """,
+        (EVENT_ID_3, "2026-09-18T09:20:00+07:00"),
+    )
+    assert connection.execute(
+        "SELECT signal_state, previous_signal_state FROM stock_state_current"
+    ).fetchone() == ("WATCHING", "WATCHING")
+    assert connection.execute(
+        "SELECT previous_state, signal_state FROM signal_events "
+        "WHERE event_id = ?",
+        (EVENT_ID_3,),
+    ).fetchone() == ("NORMAL", "WATCHING")
+
+
 def test_signal_event_features_enforce_one_to_one_foreign_key(
     connection: sqlite3.Connection,
 ) -> None:

@@ -2,6 +2,10 @@
 
 Status: **DATA-V2-02 implementation candidate — Product Owner review required**
 
+The locked principles in `../product/CCC_V2_OPERATING_PRINCIPLES.md` dated
+2026-09-18 supersede older retention projections in this document. CCC is
+current-centric, not a general-purpose history warehouse.
+
 This is an isolated, local foundation. It does not wire a scheduler, modify the
 running collector, write `stock_state_current`, change Supabase, or create a
 production database.
@@ -137,29 +141,28 @@ schema overhead.
 | `minute_bars` | 4,372 | 17,907,712 | 40,960 | 178.66752 |
 | `bars_5m_archive` | 4,153 | 17,010,688 | 16,384 | 169.94304 |
 
-Measured projections (binary GiB, `1 GiB = 1,073,741,824 bytes`):
+The bytes/row measurements remain useful capacity evidence. Earlier scenarios
+based on 15-session 1m deletion, a two-year 5m archive, or unlimited daily
+history are superseded and are not rollout targets.
+
+Current-policy projection (binary GiB, `1 GiB = 1,073,741,824 bytes`):
 
 | Projection | Rows | Estimated GiB |
 |---|---:|---:|
-| 1m, 800 × 270 × 15 sessions | 3,240,000 | 0.539 |
-| 5m, 800 × 54 × 250 sessions | 10,800,000 | 1.709 |
-| 5m, two years | 21,600,000 | 3.419 |
-| Daily, five years | 1,000,000 | 0.147 |
-| Daily, ten years | 2,000,000 | 0.293 |
+| Daily, approximately two calendar years (800 × 250 × 2) | 400,000 | 0.059 |
+| Existing 2026 1m corpus | audit actual rows/coverage before planning | unknown |
+| Long-term 5m archive | not part of current rollout | no allocation target |
 
-At the observed 5.2 GiB used, the upper-order 15-session 1m + two-year 5m +
-ten-year daily projection adds about 4.251 GiB, for about 9.451 GiB used or 21%
-of a 45 GiB filesystem. It remains below the stated 60%, 70%, and 80% levels.
-Those levels correspond to 27.0, 31.5, and 36.0 GiB used, leaving 21.8, 26.3,
-and 30.8 GiB of growth from the observed baseline. With the intended bounded
-15-session/2-year retention, the estimate does not cross any threshold; no date
-can be honestly assigned without actual growth, fragmentation, WAL, indexes from
-future schemas, and non-market filesystem usage.
+The valid existing SSI 1m 2026 corpus must be inventoried, preserved, and filled
+only where coverage gaps are proven. It must not be forced into the former
+15-session estimate or automatically deleted. Pre-2026 1m backfill requires
+explicit Product Owner approval. The `bars_5m_archive` benchmark remains a schema
+measurement only; the table is inert and no writer/bootstrap/retention job is
+planned.
 
-For a deliberately unbounded comparison only, adding one measured 5m year plus
-one daily year per year after the 1m footprint would reach roughly 60% in 12.2
-years, 70% in 14.8 years, and 80% in 17.4 years. This is not the retention model
-and is not a deletion recommendation.
+Filesystem threshold timing cannot be recalculated honestly until the existing
+2026 corpus and other production paths are audited. No capacity projection in
+this document authorizes deletion.
 
 The synthetic values have relatively uniform text lengths and insertion order;
 real symbol mix, page fill, churn, WAL/checkpoint behavior, fragmentation,
@@ -181,5 +184,8 @@ label an average of fewer than N observations as MA-N, while V2 returns `NULL`.
 Production rollout still needs Product Owner approval, credentials-backed small
 HOSE/HNX/UPCOM verification, coverage/depth reporting across the approved
 universe, production path/orchestration design, expected-session reconciliation,
-backup/rollback, and a separate current-day EOD finalizer. None is implemented
-or implied by DATA-V2-02.
+backup/rollback, and a separate current-day EOD finalizer. Daily bootstrap should
+target approximately two calendar years/enough completed sessions for MA200 plus
+reasonable buffer; symbols with insufficient history retain `NULL` and accumulate
+sessions naturally. None of the rollout work is implemented or implied by
+DATA-V2-02.

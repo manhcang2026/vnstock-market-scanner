@@ -133,7 +133,7 @@ _MARKET_V1_STATEMENTS = (
 
         signal_state TEXT NOT NULL CHECK (
             signal_state IN (
-                'NORMAL', 'FLOW_APPEARING', 'FLOW_PRICE_CONFIRMED',
+                'NORMAL', 'WATCHING', 'FLOW_APPEARING', 'FLOW_PRICE_CONFIRMED',
                 'MOMENTUM_MAINTAINED', 'MOMENTUM_WEAKENING', 'SELLING_PRESSURE'
             )
         ),
@@ -142,7 +142,7 @@ _MARKET_V1_STATEMENTS = (
         signal_at TEXT,
         previous_signal_state TEXT CHECK (
             previous_signal_state IS NULL OR previous_signal_state IN (
-                'NORMAL', 'FLOW_APPEARING', 'FLOW_PRICE_CONFIRMED',
+                'NORMAL', 'WATCHING', 'FLOW_APPEARING', 'FLOW_PRICE_CONFIRMED',
                 'MOMENTUM_MAINTAINED', 'MOMENTUM_WEAKENING', 'SELLING_PRESSURE'
             )
         ),
@@ -204,13 +204,13 @@ _MARKET_V1_STATEMENTS = (
         detected_at TEXT NOT NULL,
         previous_state TEXT CHECK (
             previous_state IS NULL OR previous_state IN (
-                'NORMAL', 'FLOW_APPEARING', 'FLOW_PRICE_CONFIRMED',
+                'NORMAL', 'WATCHING', 'FLOW_APPEARING', 'FLOW_PRICE_CONFIRMED',
                 'MOMENTUM_MAINTAINED', 'MOMENTUM_WEAKENING', 'SELLING_PRESSURE'
             )
         ),
         signal_state TEXT NOT NULL CHECK (
             signal_state IN (
-                'NORMAL', 'FLOW_APPEARING', 'FLOW_PRICE_CONFIRMED',
+                'NORMAL', 'WATCHING', 'FLOW_APPEARING', 'FLOW_PRICE_CONFIRMED',
                 'MOMENTUM_MAINTAINED', 'MOMENTUM_WEAKENING', 'SELLING_PRESSURE'
             )
         ),

@@ -36,6 +36,23 @@ class SSIHTTPError(SSIHistoricalError):
         self.status_code = status_code
 
 
+@dataclass(frozen=True, slots=True)
+class SSIRequestTelemetry:
+    """Non-secret metadata for one HTTP attempt."""
+
+    path: str
+    http_status: int | None
+    duration_ms: float
+    rate_limit_limit: str | None
+    rate_limit_remaining: str | None
+    rate_limit_reset: str | None
+    retry_after: str | None
+    attempt: int
+    is_retry: bool
+    will_retry: bool
+    response_keys: tuple[str, ...] | None
+
+
 @dataclass(frozen=True)
 class HistoricalBar:
     symbol: str
@@ -210,6 +227,7 @@ class SSIHistoricalClient:
         page_size: int = 1000,
         max_pages_per_range: int = MAX_PAGE_INDEX,
         max_retry_delay: float = 60,
+        telemetry_sink: Callable[[SSIRequestTelemetry], None] | None = None,
     ) -> None:
         if not consumer_id or not consumer_secret:
             raise ValueError("SSI credentials are required")
@@ -233,6 +251,7 @@ class SSIHistoricalClient:
         self.page_size = page_size
         self.max_pages_per_range = max_pages_per_range
         self.max_retry_delay = max_retry_delay
+        self.telemetry_sink = telemetry_sink
         self._access_token: str | None = None
 
     def _url(self, path: str) -> str:
@@ -267,6 +286,53 @@ class SSIHistoricalClient:
                 pass
         return min(float(2 ** (attempt - 1)), self.max_retry_delay)
 
+    @staticmethod
+    def _safe_header(headers: Any, name: str) -> str | None:
+        if not headers:
+            return None
+        direct = headers.get(name)
+        if direct is not None:
+            return str(direct)
+        target = name.casefold()
+        for key, value in headers.items():
+            if str(key).casefold() == target:
+                return str(value)
+        return None
+
+    def _emit_telemetry(
+        self,
+        *,
+        path: str,
+        response: Any | None,
+        duration_ms: float,
+        attempt: int,
+        will_retry: bool,
+        response_keys: tuple[str, ...] | None = None,
+    ) -> None:
+        if self.telemetry_sink is None:
+            return
+        headers = getattr(response, "headers", {}) or {}
+        status = getattr(response, "status_code", None)
+        event = SSIRequestTelemetry(
+            path=path,
+            http_status=int(status) if status is not None else None,
+            duration_ms=max(0.0, duration_ms),
+            rate_limit_limit=self._safe_header(headers, "X-RATELIMIT-LIMIT"),
+            rate_limit_remaining=self._safe_header(
+                headers, "X-RATELIMIT-REMAINING"
+            ),
+            rate_limit_reset=self._safe_header(headers, "X-RATELIMIT-RESET"),
+            retry_after=self._safe_header(headers, "Retry-After"),
+            attempt=attempt,
+            is_retry=attempt > 1,
+            will_retry=will_retry,
+            response_keys=response_keys,
+        )
+        try:
+            self.telemetry_sink(event)
+        except Exception:
+            LOG.warning("SSI telemetry observer failed for %s", path)
+
     def _request_json(
         self,
         method: str,
@@ -282,6 +348,7 @@ class SSIHistoricalClient:
             if authenticated:
                 headers["Authorization"] = f"{self.auth_type} {self._get_token()}"
             response = None
+            started_at = time_module.monotonic()
             try:
                 response = self.session.request(
                     method,
@@ -292,6 +359,14 @@ class SSIHistoricalClient:
                     timeout=self.request_timeout,
                 )
             except (requests.Timeout, requests.ConnectionError) as exc:
+                will_retry = attempt < self.max_attempts
+                self._emit_telemetry(
+                    path=path,
+                    response=None,
+                    duration_ms=(time_module.monotonic() - started_at) * 1000,
+                    attempt=attempt,
+                    will_retry=will_retry,
+                )
                 if attempt >= self.max_attempts:
                     raise SSIHistoricalError(
                         f"SSI request failed after {attempt} attempts: {type(exc).__name__}"
@@ -303,11 +378,32 @@ class SSIHistoricalClient:
                 self._access_token = None
                 refreshed_after_unauthorized = True
                 if attempt < self.max_attempts:
+                    self._emit_telemetry(
+                        path=path,
+                        response=response,
+                        duration_ms=(time_module.monotonic() - started_at) * 1000,
+                        attempt=attempt,
+                        will_retry=True,
+                    )
                     continue
             if response.status_code in RETRYABLE_STATUS_CODES and attempt < self.max_attempts:
+                self._emit_telemetry(
+                    path=path,
+                    response=response,
+                    duration_ms=(time_module.monotonic() - started_at) * 1000,
+                    attempt=attempt,
+                    will_retry=True,
+                )
                 self.sleep(self._retry_delay(response, attempt))
                 continue
             if response.status_code < 200 or response.status_code >= 300:
+                self._emit_telemetry(
+                    path=path,
+                    response=response,
+                    duration_ms=(time_module.monotonic() - started_at) * 1000,
+                    attempt=attempt,
+                    will_retry=False,
+                )
                 raise SSIHTTPError(
                     response.status_code,
                     f"SSI HTTP {response.status_code} for {path}",
@@ -315,16 +411,46 @@ class SSIHistoricalClient:
             try:
                 payload = response.json()
             except ValueError as exc:
+                self._emit_telemetry(
+                    path=path,
+                    response=response,
+                    duration_ms=(time_module.monotonic() - started_at) * 1000,
+                    attempt=attempt,
+                    will_retry=False,
+                )
                 raise SSIHistoricalError(f"SSI returned invalid JSON for {path}") from exc
             if not isinstance(payload, dict):
+                self._emit_telemetry(
+                    path=path,
+                    response=response,
+                    duration_ms=(time_module.monotonic() - started_at) * 1000,
+                    attempt=attempt,
+                    will_retry=False,
+                )
                 raise SSIHistoricalError(f"SSI returned an invalid payload for {path}")
             provider_status = payload.get("status")
             if provider_status is not None and not _provider_status_is_success(
                 provider_status
             ):
+                self._emit_telemetry(
+                    path=path,
+                    response=response,
+                    duration_ms=(time_module.monotonic() - started_at) * 1000,
+                    attempt=attempt,
+                    will_retry=False,
+                    response_keys=tuple(sorted(str(key) for key in payload)),
+                )
                 raise SSIHistoricalError(
                     f"SSI provider status {provider_status!r} for {path}"
                 )
+            self._emit_telemetry(
+                path=path,
+                response=response,
+                duration_ms=(time_module.monotonic() - started_at) * 1000,
+                attempt=attempt,
+                will_retry=False,
+                response_keys=tuple(sorted(str(key) for key in payload)),
+            )
             return payload
         raise SSIHistoricalError(f"SSI request attempts exhausted for {path}")
 
