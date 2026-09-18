@@ -22,7 +22,7 @@ from .stock_state_current import (
     project_stock_state,
     upsert_stock_state_current,
 )
-from .volume_baseline import COVERAGE_PROOF, prove_volume_session
+from .volume_baseline import COVERAGE_PROOF, prove_replay_volume_session
 
 
 SERVICE_ROOT = Path(__file__).resolve().parents[1]
@@ -294,7 +294,7 @@ def _audit_replay_day(
     replay_proven: set[str] = set()
     failures: list[dict[str, Any]] = []
     for symbol in sorted(universe_symbols):
-        proof = prove_volume_session(
+        proof = prove_replay_volume_session(
             source, daily, symbol=symbol, trading_date=trading_date
         )
         if proof.proven:

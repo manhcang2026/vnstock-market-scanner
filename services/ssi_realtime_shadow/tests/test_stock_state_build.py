@@ -17,13 +17,21 @@ from app.volume_baseline import BASELINE_SCHEMA, COVERAGE_PROOF, volume_market_g
 TRADING_DATE = "2026-09-18"  # Friday; the builder may be run on the weekend.
 
 
-def _write_realtime(path: Path) -> None:
+def _write_realtime(
+    path: Path,
+    *,
+    data_source: str = "SSI_STREAM",
+    is_partial: bool = False,
+    has_gap: bool = False,
+    quality_status: str = "TRUSTED",
+    row_volume: int = 10,
+) -> None:
     connection = sqlite3.connect(path)
     connection.executescript(SCHEMA)
     grid = volume_market_grid("UPCOM")
     cumulative = 0
     for point in grid:
-        cumulative += 10
+        cumulative += row_volume
         close = 100.0
         connection.execute(
             """
@@ -31,8 +39,8 @@ def _write_realtime(path: Path) -> None:
                 trading_date, minute, symbol, open, high, low, close, volume,
                 last_total_volume, event_count, is_partial, exchange,
                 quality_status, has_gap, data_source, updated_at
-            ) VALUES (?, ?, 'VGI', ?, ?, ?, ?, 10, ?, 1, 0, 'UPCOM',
-                      'TRUSTED', 0, 'SSI_REST', ?)
+            ) VALUES (?, ?, 'VGI', ?, ?, ?, ?, ?, ?, 1, ?, 'UPCOM',
+                      ?, ?, ?, ?)
             """,
             (
                 TRADING_DATE,
@@ -41,7 +49,12 @@ def _write_realtime(path: Path) -> None:
                 close,
                 close,
                 close,
+                row_volume,
                 cumulative,
+                int(is_partial),
+                quality_status,
+                int(has_gap),
+                data_source,
                 f"{TRADING_DATE}T{point.minute}:00+07:00",
             ),
         )
@@ -115,7 +128,7 @@ def _write_baseline(
     connection.close()
 
 
-def _write_daily_history(path: Path) -> None:
+def _write_daily_history(path: Path, *, current_volume: int = 2700) -> None:
     connection = sqlite3.connect(path)
     ensure_market_storage_schema(
         connection, applied_at=datetime(2026, 9, 18, tzinfo=VN_TZ)
@@ -139,9 +152,9 @@ def _write_daily_history(path: Path) -> None:
             symbol, trading_date, exchange, open, high, low, close,
             volume, value, source, quality_status, finalized_at
         ) VALUES ('VGI', ?, 'UPCOM', 100, 120, 99, 120,
-                  2700, NULL, 'SSI_DAILY_OHLC', 'TRUSTED', ?)
+                  ?, NULL, 'SSI_DAILY_OHLC', 'TRUSTED', ?)
         """,
-        (TRADING_DATE, f"{TRADING_DATE}T15:01:00+07:00"),
+        (TRADING_DATE, current_volume, f"{TRADING_DATE}T15:01:00+07:00"),
     )
     connection.commit()
     connection.close()
@@ -251,3 +264,51 @@ def test_baseline_proof_metadata_and_exact_coverage_gate_state_trust(
         assert state[1] == "TRUSTED"
     else:
         assert state[1] == "DEGRADED"
+
+
+def test_replay_day_accepts_complete_trusted_ssi_stream(tmp_path: Path) -> None:
+    realtime = tmp_path / "ssi_shadow.db"
+    baseline = tmp_path / "ccc_v2_baseline.db"
+    market = tmp_path / "ccc_market_v2.db"
+    _write_realtime(realtime, data_source="SSI_STREAM")
+    _write_baseline(baseline, proof=COVERAGE_PROOF)
+    _write_daily_history(market)
+
+    summary = build_stock_state_current(
+        realtime_db=realtime, baseline_db=baseline, market_db=market
+    )
+    assert summary["replay_day_audit"]["replay_day_completeness_proven"] is True
+    assert summary["baseline_proven_symbol_count"] == 1
+    assert summary["trusted_state_count"] == 1
+
+
+@pytest.mark.parametrize(
+    ("realtime_options", "daily_volume", "reason"),
+    [
+        ({"has_gap": True}, 2700, "UNSAFE_INTRADAY"),
+        ({"is_partial": True}, 2700, "UNSAFE_INTRADAY"),
+        ({}, 2701, "VOLUME_MISMATCH"),
+        ({"data_source": "LEGACY_UNVERIFIED"}, 2700, "UNSAFE_INTRADAY"),
+    ],
+)
+def test_replay_day_rejects_unsafe_or_unreconciled_stream_rows(
+    tmp_path: Path,
+    realtime_options: dict[str, object],
+    daily_volume: int,
+    reason: str,
+) -> None:
+    realtime = tmp_path / "ssi_shadow.db"
+    baseline = tmp_path / "ccc_v2_baseline.db"
+    market = tmp_path / "ccc_market_v2.db"
+    _write_realtime(realtime, **realtime_options)
+    _write_baseline(baseline, proof=COVERAGE_PROOF)
+    _write_daily_history(market, current_volume=daily_volume)
+
+    summary = build_stock_state_current(
+        realtime_db=realtime, baseline_db=baseline, market_db=market
+    )
+    audit = summary["replay_day_audit"]
+    assert audit["replay_day_completeness_proven"] is False
+    assert audit["failure_samples"][0]["reason"] == reason
+    assert summary["baseline_proven_symbol_count"] == 0
+    assert summary["trusted_state_count"] == 0

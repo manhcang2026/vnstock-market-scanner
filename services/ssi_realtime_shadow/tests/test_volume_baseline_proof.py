@@ -235,3 +235,61 @@ def test_exact_previous_ten_excludes_as_of_and_does_not_reach_back(tmp_path: Pat
     connection.close()
     assert metadata["coverage_proof"] == COVERAGE_PROOF
     assert metadata["as_of_date"] == as_of
+
+
+def test_calendar_keeps_intraday_observed_date_when_daily_is_globally_missing(
+    tmp_path: Path,
+) -> None:
+    start = date(2026, 8, 31)
+    dates: list[str] = []
+    current = start
+    while len(dates) < 11:
+        if current.weekday() < 5:
+            dates.append(current.isoformat())
+        current += timedelta(days=1)
+    missing_daily_date = dates[-5]
+    history_rows = [("HPG", "HOSE", item, "09:16", 10) for item in dates]
+    daily_rows = [
+        ("HPG", "HOSE", item, 10)
+        for item in dates
+        if item != missing_daily_date
+    ]
+    _, _, output, summary = _build(
+        tmp_path,
+        history_rows=history_rows,
+        daily_rows=daily_rows,
+        as_of_date=(date.fromisoformat(dates[-1]) + timedelta(days=1)).isoformat(),
+        symbols=["HPG"],
+    )
+
+    coverage = _coverage(output, "HPG")
+    assert summary.candidate_market_sessions == 10
+    assert summary.daily_missing_count == 1
+    assert coverage["baseline_sessions_used"] == 9
+    assert coverage["first_history_date"] == dates[1]
+    assert dates[0] != coverage["first_history_date"]
+    assert summary.samples[0]["failures"][0]["trading_date"] == missing_daily_date
+    assert summary.samples[0]["failures"][0]["reason"] == "DAILY_MISSING"
+
+
+def test_historical_baseline_still_rejects_ssi_stream(tmp_path: Path) -> None:
+    history = tmp_path / "history.db"
+    daily = tmp_path / "daily.db"
+    output = tmp_path / "baseline.db"
+    _history_db(history, [("HPG", "HOSE", "2026-09-11", "09:16", 10)])
+    connection = sqlite3.connect(history)
+    connection.execute("UPDATE minute_bars SET data_source='SSI_STREAM'")
+    connection.commit()
+    connection.close()
+    _daily_db(daily, [("HPG", "HOSE", "2026-09-11", 10)])
+
+    summary = build_volume_baseline(
+        history_db=history,
+        daily_db=daily,
+        output_db=output,
+        as_of_date="2026-09-12",
+        symbols=["HPG"],
+    )
+    assert summary.candidate_market_sessions == 1
+    assert summary.unsafe_intraday_count == 1
+    assert _coverage(output, "HPG")["baseline_sessions_used"] == 0

@@ -22,10 +22,13 @@ canonical grid minutes be zero-filled for cumulative and rolling windows.
 
 ## Exact previous-session window
 
-The required `--as-of-date` is excluded. Candidate dates are the latest
-`--lookback` trusted SSI DailyOhlc session dates strictly before it. If one of
-those exact dates cannot be proven for a symbol, the builder records fewer
-used sessions and never reaches back to an older replacement date.
+The required `--as-of-date` is excluded. Candidate dates are the latest exact
+`--lookback` dates strictly before it from the union of trusted SSI DailyOhlc
+dates and canonical SSI one-minute dates (`SSI_REST` or `SSI_STREAM`). This
+keeps a real SSI-observed market date in the window even when DailyOhlc
+ingestion is globally missing. Its proof then fails as `DAILY_MISSING`; the
+builder records fewer used sessions and never reaches back to an older
+replacement date. Historical baseline proof itself remains REST-only.
 
 ## Durable proof and trust propagation
 
@@ -39,6 +42,11 @@ can trust volume metrics only when the proof mechanism is supported, the
 baseline date exactly matches the selected replay date, both used/proven
 coverage counts are 10, the volume engine has no quality failure, and the
 current replay session is independently complete.
+
+The offline state builder accepts trusted, non-partial, gap-free canonical
+`SSI_STREAM` and `SSI_REST` rows for the selected replay day, since both are
+SSI sources, and still requires exact DailyOhlc volume reconciliation. Legacy,
+unverified, unsupported, or unreconciled rows cannot prove replay completeness.
 
 The offline state builder reports current-day evidence: selected date, minute
 and quote symbol counts, per-exchange stored minute range, trusted/partial/gap

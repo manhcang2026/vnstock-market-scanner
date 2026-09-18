@@ -12,6 +12,7 @@ from .market_session import VN_TZ, SessionType, classify_market_session, normali
 COVERAGE_PROOF = "SSI_DAILY_VOLUME_RECONCILED_V1"
 TRUSTED_DAILY_SOURCE = "SSI_DAILY_OHLC"
 TRUSTED_INTRADAY_SOURCE = "SSI_REST"
+TRUSTED_REPLAY_SOURCES = frozenset({"SSI_REST", "SSI_STREAM"})
 SAMPLE_SYMBOLS = ("HPG", "SHS", "VGI")
 
 BASELINE_SCHEMA = """
@@ -288,30 +289,58 @@ def _migrate_output_schema(connection: sqlite3.Connection) -> None:
 
 
 def load_candidate_market_sessions(
-    daily: sqlite3.Connection, *, as_of_date: str, lookback: int
+    history: sqlite3.Connection,
+    daily: sqlite3.Connection,
+    *,
+    as_of_date: str,
+    lookback: int,
 ) -> list[str]:
     date.fromisoformat(as_of_date)
-    rows = daily.execute(
-        """
-        SELECT DISTINCT trading_date FROM daily_bars
-        WHERE source=? AND quality_status='TRUSTED' AND trading_date < ?
-        ORDER BY trading_date DESC LIMIT ?
-        """,
-        (TRUSTED_DAILY_SOURCE, as_of_date, lookback),
-    ).fetchall()
-    return sorted(str(row[0]) for row in rows)
+    observed_dates = {
+        str(row[0])
+        for row in daily.execute(
+            """
+            SELECT DISTINCT trading_date FROM daily_bars
+            WHERE source=? AND quality_status='TRUSTED' AND trading_date < ?
+            """,
+            (TRUSTED_DAILY_SOURCE, as_of_date),
+        )
+    }
+    observed_dates.update(
+        str(row[0])
+        for row in history.execute(
+            """
+            SELECT DISTINCT trading_date FROM minute_bars
+            WHERE data_source IN ('SSI_REST', 'SSI_STREAM')
+              AND exchange IN ('HOSE', 'HNX', 'UPCOM')
+              AND trading_date < ?
+            """,
+            (as_of_date,),
+        )
+    )
+    canonical_dates: list[str] = []
+    for value in observed_dates:
+        try:
+            if date.fromisoformat(value).isoformat() == value:
+                canonical_dates.append(value)
+        except ValueError:
+            continue
+    return sorted(canonical_dates)[-lookback:]
 
 
-def prove_volume_session(
+def _prove_volume_session(
     history: sqlite3.Connection,
     daily: sqlite3.Connection,
     *,
     symbol: str,
     trading_date: str,
+    allowed_intraday_sources: frozenset[str],
 ) -> SessionProof:
     daily_row = daily.execute(
-        "SELECT exchange, volume, source, quality_status FROM daily_bars "
-        "WHERE symbol=? AND trading_date=?",
+        """
+        SELECT exchange, volume, source, quality_status FROM daily_bars
+        WHERE symbol=? AND trading_date=?
+        """,
         (symbol, trading_date),
     ).fetchone()
     if daily_row is None or str(daily_row["source"]) != TRUSTED_DAILY_SOURCE or str(daily_row["quality_status"]).upper() != "TRUSTED":
@@ -349,7 +378,7 @@ def prove_volume_session(
         if row_exchange != exchange:
             mismatch = True
         if (
-            str(row["data_source"] or "") != TRUSTED_INTRADAY_SOURCE
+            str(row["data_source"] or "") not in allowed_intraday_sources
             or str(row["quality_status"] or "").upper() != "TRUSTED"
             or bool(row["is_partial"])
             or bool(row["has_gap"])
@@ -368,6 +397,40 @@ def prove_volume_session(
         return SessionProof(symbol, trading_date, exchange, daily_volume, represented, "VOLUME_MISMATCH")
     reason = "PROVEN_ZERO" if daily_volume == 0 and not bars else "PROVEN"
     return SessionProof(symbol, trading_date, exchange, daily_volume, represented, reason, tuple(bars))
+
+
+def prove_volume_session(
+    history: sqlite3.Connection,
+    daily: sqlite3.Connection,
+    *,
+    symbol: str,
+    trading_date: str,
+) -> SessionProof:
+    """Prove a historical baseline session using SSI REST bars only."""
+    return _prove_volume_session(
+        history,
+        daily,
+        symbol=symbol,
+        trading_date=trading_date,
+        allowed_intraday_sources=frozenset({TRUSTED_INTRADAY_SOURCE}),
+    )
+
+
+def prove_replay_volume_session(
+    history: sqlite3.Connection,
+    daily: sqlite3.Connection,
+    *,
+    symbol: str,
+    trading_date: str,
+) -> SessionProof:
+    """Prove a selected replay day using canonical SSI stream or REST bars."""
+    return _prove_volume_session(
+        history,
+        daily,
+        symbol=symbol,
+        trading_date=trading_date,
+        allowed_intraday_sources=TRUSTED_REPLAY_SOURCES,
+    )
 
 
 def _source_symbols(
@@ -428,7 +491,9 @@ def build_volume_baseline(
             raise ValueError("History database has no minute_bars table")
         if not _table_exists(daily, "daily_bars"):
             raise ValueError("Daily database has no daily_bars table")
-        candidates = load_candidate_market_sessions(daily, as_of_date=as_of_date, lookback=lookback)
+        candidates = load_candidate_market_sessions(
+            history, daily, as_of_date=as_of_date, lookback=lookback
+        )
         selected_symbols = _source_symbols(history, daily, candidates, symbols)
         all_proofs: dict[str, list[SessionProof]] = {
             symbol: [
