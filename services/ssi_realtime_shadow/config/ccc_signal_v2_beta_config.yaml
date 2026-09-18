@@ -1,0 +1,344 @@
+# ============================================================
+# CHUYỆN CHỢ CHỨNG — SIGNAL ENGINE V2 BETA CONFIG
+# ============================================================
+#
+# This file is the SINGLE SOURCE OF TRUTH for CCC V2 beta
+# signal thresholds.
+#
+# Frontend MUST NOT reconstruct these rules.
+# Python code MUST NOT scatter threshold constants.
+#
+# Thresholds are provisional beta values and may be tuned later
+# while preserving the public frontend signal contract.
+# ============================================================
+
+config_version: "cfg-20260918-beta-001"
+engine_version: "2.0.0-beta"
+
+contract:
+  signal_contract_version: "ccc-state-v1"
+  timezone: "Asia/Ho_Chi_Minh"
+
+locked_rules:
+  technical_provider: "SSI_ONLY"
+
+  exact_previous_sessions: 10
+  allow_11th_session_substitution: false
+
+  missing_is_zero: false
+
+  daily_volume_authority: "SSI_DAILY_OHLC"
+
+  continuous:
+    rvol15_cross_lunch: false
+    rvol30_cross_lunch: false
+    price5_cross_lunch: false
+    price15_cross_lunch: false
+
+  auctions:
+    ato_is_continuous_window: false
+    atc_is_continuous_window: false
+
+    historical_ato_bootstrap: false
+    historical_atc_inferred_bootstrap: true
+
+  signal:
+    trusted_signal_requires_trusted_market_data: true
+    frontend_may_reconstruct_signal: false
+    browser_may_apply_thresholds: false
+
+quality:
+  require_metrics_trusted_for_strong_signal: true
+
+  required_baseline_sessions: 10
+
+  strong_signal_requires_exact_baseline: true
+
+  unavailable_metric_value: null
+
+  degraded_behavior:
+    allow_normal: true
+    allow_watching: true
+    allow_strong_positive_signal: false
+    allow_selling_pressure: false
+
+watching:
+  enabled: true
+
+  day_rvol_min: 1.30
+
+  rvol15_min: 1.50
+  rvol30_min: 1.50
+
+  abs_price5_pct_min: 0.60
+  abs_price15_pct_min: 0.90
+
+  absorption:
+    enabled: true
+    rvol_min: 2.00
+    abs_price15_pct_max: 0.35
+
+positive_flow:
+  flow_appearing:
+    enabled: true
+
+    rvol15_min: 1.80
+    rvol30_min: 1.80
+
+    price5_pct_min: 0.50
+    price15_pct_min: 0.80
+
+    day_rvol_min: 1.20
+
+  flow_price_confirmed:
+    enabled: true
+
+    rvol30_min: 2.00
+    price15_pct_min: 1.20
+    day_rvol_min: 1.40
+
+  momentum_maintained:
+    enabled: true
+
+    rvol30_min: 1.40
+    price15_pct_floor: -0.20
+
+    retain_recent_high_pct_max: 1.20
+
+negative_flow:
+  momentum_weakening:
+    enabled: true
+
+    price5_pct_max: -0.50
+    price15_pct_max: -0.80
+
+    rvol30_min: 1.20
+
+    loss_from_recent_high_pct_min: 1.20
+
+  selling_pressure:
+    enabled: true
+
+    rvol15_min: 1.80
+    rvol30_min: 1.80
+
+    price5_pct_max: -0.80
+    price15_pct_max: -1.20
+
+    day_rvol_min: 1.20
+
+  shock:
+    enabled: true
+
+    rvol15_min: 2.50
+    price5_pct_max: -1.50
+
+    resulting_state: "SELLING_PRESSURE"
+
+opening_auction:
+  enabled: true
+
+  baseline:
+    required_sessions: 10
+    allowed_quality:
+      - "PROVEN"
+
+    allow_inferred_boundary: false
+
+  thresholds:
+    opening_rvol_watch_min: 1.80
+    opening_rvol_strong_min: 2.50
+
+    positive_gap_watch_pct: 1.00
+    positive_gap_strong_pct: 2.00
+
+    negative_gap_watch_pct: -1.00
+    negative_gap_strong_pct: -2.00
+
+    neutral_gap_abs_pct_max: 0.40
+
+  behavior:
+    strong_positive_state: "FLOW_PRICE_CONFIRMED"
+    positive_watch_state: "FLOW_APPEARING"
+
+    strong_negative_state: "SELLING_PRESSURE"
+    negative_watch_state: "WATCHING"
+
+    high_volume_neutral_price_state: "WATCHING"
+
+closing_auction:
+  enabled: true
+
+  baseline:
+    required_sessions: 10
+
+    allowed_quality:
+      - "PROVEN"
+      - "MIXED"
+      - "INFERRED_BOUNDARY"
+
+  thresholds:
+    closing_rvol_watch_min: 1.80
+    closing_rvol_strong_min: 2.50
+
+    closing_volume_share_watch_pct: 20.0
+    closing_volume_share_strong_pct: 35.0
+
+    positive_price_impact_watch_pct: 0.80
+    positive_price_impact_strong_pct: 1.50
+
+    negative_price_impact_watch_pct: -0.80
+    negative_price_impact_strong_pct: -1.50
+
+    neutral_price_impact_abs_pct_max: 0.30
+
+  behavior:
+    strong_positive_state: "FLOW_PRICE_CONFIRMED"
+    positive_watch_state: "FLOW_APPEARING"
+
+    strong_negative_state: "SELLING_PRESSURE"
+    negative_watch_state: "WATCHING"
+
+    high_volume_neutral_price_state: "WATCHING"
+
+state_model:
+  states:
+    NORMAL:
+      level: 0
+      direction: "NEUTRAL"
+      summary_vi: "Chưa ghi nhận tín hiệu nổi bật."
+
+    WATCHING:
+      level: 1
+      direction: "NEUTRAL"
+      summary_vi: "Khối lượng đang tăng, tín hiệu giá chưa xác nhận."
+
+    FLOW_APPEARING:
+      level: 2
+      direction: "BULLISH"
+      summary_vi: "Dòng tiền đang xuất hiện, giá bắt đầu phản ứng tích cực."
+
+    FLOW_PRICE_CONFIRMED:
+      level: 3
+      direction: "BULLISH"
+      summary_vi: "Dòng tiền và biến động giá đã cùng xác nhận."
+
+    MOMENTUM_MAINTAINED:
+      level: 4
+      direction: "BULLISH"
+      summary_vi: "Động lượng đang được duy trì."
+
+    MOMENTUM_WEAKENING:
+      level: 2
+      direction: "NEUTRAL"
+      summary_vi: "Động lượng đang suy yếu, cần theo dõi phản ứng tiếp theo."
+
+    SELLING_PRESSURE:
+      level: 3
+      direction: "BEARISH"
+      summary_vi: "Khối lượng tăng mạnh đi cùng áp lực giảm giá."
+
+  evaluation_priority:
+    - "SELLING_PRESSURE"
+    - "MOMENTUM_WEAKENING"
+    - "MOMENTUM_MAINTAINED"
+    - "FLOW_PRICE_CONFIRMED"
+    - "FLOW_APPEARING"
+    - "WATCHING"
+    - "NORMAL"
+
+  positive_previous_states:
+    - "FLOW_APPEARING"
+    - "FLOW_PRICE_CONFIRMED"
+    - "MOMENTUM_MAINTAINED"
+
+  inactive_sessions:
+    - "LUNCH_BREAK"
+    - "POST_TRADING"
+    - "CLOSED"
+
+  inactive_session_behavior:
+    create_new_signal_from_clock_only: false
+    preserve_existing_state_when_safe: true
+
+reason_codes:
+  deterministic_order:
+    - "METRICS_UNTRUSTED"
+    - "BASELINE_INCOMPLETE"
+
+    - "DAY_RVOL_ELEVATED"
+
+    - "RVOL15_ELEVATED"
+    - "RVOL15_STRONG"
+
+    - "RVOL30_ELEVATED"
+    - "RVOL30_STRONG"
+
+    - "PRICE5_UP"
+    - "PRICE5_STRONG_UP"
+    - "PRICE15_UP"
+    - "PRICE15_STRONG_UP"
+
+    - "PRICE5_DOWN"
+    - "PRICE5_STRONG_DOWN"
+    - "PRICE15_DOWN"
+    - "PRICE15_STRONG_DOWN"
+
+    - "HIGH_VOLUME_PRICE_ABSORPTION"
+
+    - "ATO_RVOL_ELEVATED"
+    - "ATO_RVOL_STRONG"
+    - "ATO_GAP_UP"
+    - "ATO_GAP_STRONG_UP"
+    - "ATO_GAP_DOWN"
+    - "ATO_GAP_STRONG_DOWN"
+
+    - "ATC_RVOL_ELEVATED"
+    - "ATC_RVOL_STRONG"
+    - "ATC_VOLUME_SHARE_HIGH"
+    - "ATC_VOLUME_SHARE_STRONG"
+    - "ATC_PRICE_UP"
+    - "ATC_PRICE_STRONG_UP"
+    - "ATC_PRICE_DOWN"
+    - "ATC_PRICE_STRONG_DOWN"
+
+    - "ABOVE_MA10"
+    - "BELOW_MA10"
+
+    - "ABOVE_MA200"
+    - "BELOW_MA200"
+
+  ma_context:
+    emit_above_below_ma10: true
+    emit_above_below_ma200: true
+
+    # NEAR_MA10 / NEAR_MA200 are intentionally NOT enabled in this beta
+    # because no official near-MA threshold is locked in this config yet.
+    emit_near_ma10: false
+    emit_near_ma200: false
+
+frontend:
+  expose_raw_thresholds: false
+
+  expose:
+    current_metrics: true
+    signal_state: true
+    signal_level: true
+    signal_direction: true
+    reason_codes: true
+    signal_summary_vi: true
+    quality: true
+    config_version: true
+    engine_version: true
+
+  reason_codes_format: "ARRAY"
+
+personalization:
+  enabled: false
+
+  future_scope: "VIP"
+
+  principle:
+    canonical_market_state_remains_shared: true
+    personalization_is_overlay_only: true
+    personalized_thresholds_must_not_modify_canonical_state: true

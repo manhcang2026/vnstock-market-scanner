@@ -8,7 +8,9 @@ from typing import Iterable
 import pytest
 
 from app.storage import SQLiteStore
-from app.volume_baseline import build_volume_baseline, volume_market_grid
+from app.market_storage_schema import ensure_market_storage_schema
+from app.volume_baseline import build_volume_baseline as _build_volume_baseline
+from app.volume_baseline import volume_market_grid
 from app.volume_baseline_build import build_parser
 
 
@@ -56,6 +58,47 @@ def _connect(path: Path) -> sqlite3.Connection:
     connection = sqlite3.connect(path)
     connection.row_factory = sqlite3.Row
     return connection
+
+
+def _daily_from_history(history: Path, daily: Path) -> str:
+    source = sqlite3.connect(history)
+    target = sqlite3.connect(daily)
+    ensure_market_storage_schema(target)
+    target.execute("DELETE FROM daily_bars")
+    rows = source.execute(
+        """
+        SELECT symbol, trading_date, exchange, SUM(volume)
+        FROM minute_bars GROUP BY symbol, trading_date, exchange
+        """
+    ).fetchall()
+    target.executemany(
+        """
+        INSERT INTO daily_bars (
+          symbol,trading_date,exchange,open,high,low,close,volume,value,
+          source,quality_status,finalized_at
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+        """,
+        [(*row[:3], 1, 1, 1, 1, row[3], None, "SSI_DAILY_OHLC", "TRUSTED", "fixed") for row in rows],
+    )
+    target.commit()
+    latest = max(date.fromisoformat(str(row[1])) for row in rows)
+    source.close()
+    target.close()
+    return (latest + timedelta(days=1)).isoformat()
+
+
+def build_volume_baseline(*, history_db: Path, output_db: Path, **kwargs):
+    daily_db = kwargs.pop("daily_db", output_db.with_name(output_db.stem + "-daily.db"))
+    as_of_date = kwargs.pop("as_of_date", None)
+    if as_of_date is None:
+        as_of_date = _daily_from_history(history_db, daily_db)
+    return _build_volume_baseline(
+        history_db=history_db,
+        daily_db=daily_db,
+        output_db=output_db,
+        as_of_date=as_of_date,
+        **kwargs,
+    )
 
 
 def _weekdays(start: date, count: int) -> list[str]:
@@ -115,8 +158,12 @@ def test_volume_baseline_cli_accepts_sample_arguments() -> None:
         [
             "--history-db",
             "/app/data/ssi_history_v2.db",
+            "--daily-db",
+            "/app/data/ccc_market_v2.db",
             "--output-db",
             "/app/data/ccc_v2_baseline.db",
+            "--as-of-date",
+            "2026-09-18",
             "--lookback",
             "10",
             "--symbols",
@@ -398,11 +445,11 @@ def test_lookback_uses_latest_ten_sessions_and_coverage_keeps_all_history(
     baseline = connection.execute(
         "SELECT * FROM volume_baseline WHERE symbol='SHS' AND minute='09:15'"
     ).fetchone()
-    assert coverage["available_sessions"] == 12
+    assert coverage["available_sessions"] == 10
     assert coverage["baseline_sessions_used"] == 10
-    assert coverage["active_sessions_available"] == 12
+    assert coverage["active_sessions_available"] == 10
     assert coverage["active_sessions_used"] == 10
-    assert coverage["first_history_date"] == dates[0]
+    assert coverage["first_history_date"] == dates[2]
     assert coverage["last_history_date"] == dates[-1]
     assert baseline["historical_sessions"] == 10
     assert baseline["avg_volume_15"] == 7.5
@@ -434,7 +481,7 @@ def test_four_sessions_report_four_and_no_history_symbol_does_not_fail(
     assert connection.execute(
         "SELECT MIN(historical_sessions) FROM volume_baseline WHERE symbol='HPG'"
     ).fetchone()[0] == 4
-    assert no_history["available_sessions"] == 0
+    assert no_history["available_sessions"] == 4
     assert no_history["baseline_sessions_used"] == 0
     assert no_history["active_sessions_available"] == 0
     assert no_history["active_sessions_used"] == 0
@@ -447,7 +494,7 @@ def test_four_sessions_report_four_and_no_history_symbol_does_not_fail(
     connection.close()
 
 
-def test_global_calendar_zero_fills_whole_missing_sessions_between_active_days(
+def test_global_calendar_does_not_zero_fill_whole_missing_sessions(
     tmp_path: Path,
 ) -> None:
     history = tmp_path / "history.db"
@@ -481,22 +528,22 @@ def test_global_calendar_zero_fills_whole_missing_sessions_between_active_days(
         "SELECT * FROM volume_baseline WHERE symbol='SHS' AND minute='14:45'"
     ).fetchone()
     assert coverage["available_sessions"] == 10
-    assert coverage["baseline_sessions_used"] == 10
+    assert coverage["baseline_sessions_used"] == 2
     assert coverage["active_sessions_available"] == 2
     assert coverage["active_sessions_used"] == 2
     assert coverage["first_history_date"] == dates[0]
     assert coverage["last_history_date"] == dates[-1]
-    assert rolling["historical_sessions"] == 10
-    assert rolling["avg_cumulative_volume"] == 40
-    assert rolling["avg_volume_15"] == 40
-    assert rolling_30["historical_sessions"] == 10
-    assert rolling_30["avg_volume_30"] == 40
-    assert close["historical_sessions"] == 10
-    assert close["avg_cumulative_volume"] == 40
+    assert rolling["historical_sessions"] == 2
+    assert rolling["avg_cumulative_volume"] == 200
+    assert rolling["avg_volume_15"] == 200
+    assert rolling_30["historical_sessions"] == 2
+    assert rolling_30["avg_volume_30"] == 200
+    assert close["historical_sessions"] == 2
+    assert close["avg_cumulative_volume"] == 200
     connection.close()
 
 
-def test_global_calendar_includes_trailing_missing_sessions_after_last_trade(
+def test_global_calendar_excludes_unproven_trailing_missing_sessions(
     tmp_path: Path,
 ) -> None:
     history = tmp_path / "history.db"
@@ -526,14 +573,14 @@ def test_global_calendar_includes_trailing_missing_sessions_after_last_trade(
     assert coverage["available_sessions"] == 10
     assert coverage["active_sessions_available"] == 2
     assert coverage["last_history_date"] == dates[4]
-    assert opening["historical_sessions"] == 10
-    assert opening["avg_opening_volume"] == 10
-    assert close["historical_sessions"] == 10
-    assert close["avg_cumulative_volume"] == 20
+    assert opening["historical_sessions"] == 2
+    assert opening["avg_opening_volume"] == 50
+    assert close["historical_sessions"] == 2
+    assert close["avg_cumulative_volume"] == 100
     connection.close()
 
 
-def test_newly_observed_symbol_excludes_calendar_sessions_before_first_bar(
+def test_newly_observed_symbol_keeps_exact_candidate_window_but_uses_only_proven(
     tmp_path: Path,
 ) -> None:
     history = tmp_path / "history.db"
@@ -557,14 +604,14 @@ def test_newly_observed_symbol_excludes_calendar_sessions_before_first_bar(
     row = connection.execute(
         "SELECT * FROM volume_baseline WHERE symbol='NEW' AND minute='09:14'"
     ).fetchone()
-    assert coverage["available_sessions"] == 3
-    assert coverage["baseline_sessions_used"] == 3
+    assert coverage["available_sessions"] == 10
+    assert coverage["baseline_sessions_used"] == 2
     assert coverage["active_sessions_available"] == 2
     assert coverage["active_sessions_used"] == 2
     assert coverage["first_history_date"] == dates[7]
     assert coverage["last_history_date"] == dates[9]
-    assert row["historical_sessions"] == 3
-    assert row["avg_volume_15"] == 40
+    assert row["historical_sessions"] == 2
+    assert row["avg_volume_15"] == 60
     connection.close()
 
 
@@ -594,12 +641,12 @@ def test_active_sessions_used_only_counts_active_dates_inside_lookback(
     row = connection.execute(
         "SELECT * FROM volume_baseline WHERE symbol='SHS' AND minute='09:14'"
     ).fetchone()
-    assert coverage["available_sessions"] == 12
-    assert coverage["baseline_sessions_used"] == 10
-    assert coverage["active_sessions_available"] == 2
+    assert coverage["available_sessions"] == 10
+    assert coverage["baseline_sessions_used"] == 1
+    assert coverage["active_sessions_available"] == 1
     assert coverage["active_sessions_used"] == 1
-    assert row["historical_sessions"] == 10
-    assert row["avg_volume_15"] == 20
+    assert row["historical_sessions"] == 1
+    assert row["avg_volume_15"] == 200
     connection.close()
 
 

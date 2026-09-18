@@ -17,10 +17,12 @@ from .normalization import parse_trading_date
 
 LOG = logging.getLogger(__name__)
 INTRADAY_PATH = "api/v2/Market/IntradayOhlc"
+DAILY_OHLC_PATH = "api/v2/Market/DailyOhlc"
 TOKEN_PATH = "api/v2/Market/AccessToken"
 RETRYABLE_STATUS_CODES = {408, 425, 429, 500, 502, 503, 504}
 NON_EQUITY_MARKETS = {"DER"}
 MAX_PAGE_INDEX = 10
+DAILY_MAX_RANGE_DAYS = 30
 PROVIDER_TIME_RE = re.compile(r"^(?:\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?|\d{6})$")
 
 
@@ -32,6 +34,23 @@ class SSIHTTPError(SSIHistoricalError):
     def __init__(self, status_code: int, message: str) -> None:
         super().__init__(message)
         self.status_code = status_code
+
+
+@dataclass(frozen=True, slots=True)
+class SSIRequestTelemetry:
+    """Non-secret metadata for one HTTP attempt."""
+
+    path: str
+    http_status: int | None
+    duration_ms: float
+    rate_limit_limit: str | None
+    rate_limit_remaining: str | None
+    rate_limit_reset: str | None
+    retry_after: str | None
+    attempt: int
+    is_retry: bool
+    will_retry: bool
+    response_keys: tuple[str, ...] | None
 
 
 @dataclass(frozen=True)
@@ -128,7 +147,7 @@ def normalize_historical_record(
         return None
 
     trading_date = parse_trading_date(
-        _first(record, "TradingDate", "tradingDate", "trading_date")
+        _first(record, "TradingDate", "tradingDate", "tradingdate", "trading_date")
     )
     parsed_time = _parse_provider_time(_first(record, "Time", "time"))
     if trading_date is None or parsed_time is None:
@@ -208,6 +227,7 @@ class SSIHistoricalClient:
         page_size: int = 1000,
         max_pages_per_range: int = MAX_PAGE_INDEX,
         max_retry_delay: float = 60,
+        telemetry_sink: Callable[[SSIRequestTelemetry], None] | None = None,
     ) -> None:
         if not consumer_id or not consumer_secret:
             raise ValueError("SSI credentials are required")
@@ -231,6 +251,7 @@ class SSIHistoricalClient:
         self.page_size = page_size
         self.max_pages_per_range = max_pages_per_range
         self.max_retry_delay = max_retry_delay
+        self.telemetry_sink = telemetry_sink
         self._access_token: str | None = None
 
     def _url(self, path: str) -> str:
@@ -265,6 +286,53 @@ class SSIHistoricalClient:
                 pass
         return min(float(2 ** (attempt - 1)), self.max_retry_delay)
 
+    @staticmethod
+    def _safe_header(headers: Any, name: str) -> str | None:
+        if not headers:
+            return None
+        direct = headers.get(name)
+        if direct is not None:
+            return str(direct)
+        target = name.casefold()
+        for key, value in headers.items():
+            if str(key).casefold() == target:
+                return str(value)
+        return None
+
+    def _emit_telemetry(
+        self,
+        *,
+        path: str,
+        response: Any | None,
+        duration_ms: float,
+        attempt: int,
+        will_retry: bool,
+        response_keys: tuple[str, ...] | None = None,
+    ) -> None:
+        if self.telemetry_sink is None:
+            return
+        headers = getattr(response, "headers", {}) or {}
+        status = getattr(response, "status_code", None)
+        event = SSIRequestTelemetry(
+            path=path,
+            http_status=int(status) if status is not None else None,
+            duration_ms=max(0.0, duration_ms),
+            rate_limit_limit=self._safe_header(headers, "X-RATELIMIT-LIMIT"),
+            rate_limit_remaining=self._safe_header(
+                headers, "X-RATELIMIT-REMAINING"
+            ),
+            rate_limit_reset=self._safe_header(headers, "X-RATELIMIT-RESET"),
+            retry_after=self._safe_header(headers, "Retry-After"),
+            attempt=attempt,
+            is_retry=attempt > 1,
+            will_retry=will_retry,
+            response_keys=response_keys,
+        )
+        try:
+            self.telemetry_sink(event)
+        except Exception:
+            LOG.warning("SSI telemetry observer failed for %s", path)
+
     def _request_json(
         self,
         method: str,
@@ -280,6 +348,7 @@ class SSIHistoricalClient:
             if authenticated:
                 headers["Authorization"] = f"{self.auth_type} {self._get_token()}"
             response = None
+            started_at = time_module.monotonic()
             try:
                 response = self.session.request(
                     method,
@@ -290,6 +359,14 @@ class SSIHistoricalClient:
                     timeout=self.request_timeout,
                 )
             except (requests.Timeout, requests.ConnectionError) as exc:
+                will_retry = attempt < self.max_attempts
+                self._emit_telemetry(
+                    path=path,
+                    response=None,
+                    duration_ms=(time_module.monotonic() - started_at) * 1000,
+                    attempt=attempt,
+                    will_retry=will_retry,
+                )
                 if attempt >= self.max_attempts:
                     raise SSIHistoricalError(
                         f"SSI request failed after {attempt} attempts: {type(exc).__name__}"
@@ -301,11 +378,32 @@ class SSIHistoricalClient:
                 self._access_token = None
                 refreshed_after_unauthorized = True
                 if attempt < self.max_attempts:
+                    self._emit_telemetry(
+                        path=path,
+                        response=response,
+                        duration_ms=(time_module.monotonic() - started_at) * 1000,
+                        attempt=attempt,
+                        will_retry=True,
+                    )
                     continue
             if response.status_code in RETRYABLE_STATUS_CODES and attempt < self.max_attempts:
+                self._emit_telemetry(
+                    path=path,
+                    response=response,
+                    duration_ms=(time_module.monotonic() - started_at) * 1000,
+                    attempt=attempt,
+                    will_retry=True,
+                )
                 self.sleep(self._retry_delay(response, attempt))
                 continue
             if response.status_code < 200 or response.status_code >= 300:
+                self._emit_telemetry(
+                    path=path,
+                    response=response,
+                    duration_ms=(time_module.monotonic() - started_at) * 1000,
+                    attempt=attempt,
+                    will_retry=False,
+                )
                 raise SSIHTTPError(
                     response.status_code,
                     f"SSI HTTP {response.status_code} for {path}",
@@ -313,16 +411,46 @@ class SSIHistoricalClient:
             try:
                 payload = response.json()
             except ValueError as exc:
+                self._emit_telemetry(
+                    path=path,
+                    response=response,
+                    duration_ms=(time_module.monotonic() - started_at) * 1000,
+                    attempt=attempt,
+                    will_retry=False,
+                )
                 raise SSIHistoricalError(f"SSI returned invalid JSON for {path}") from exc
             if not isinstance(payload, dict):
+                self._emit_telemetry(
+                    path=path,
+                    response=response,
+                    duration_ms=(time_module.monotonic() - started_at) * 1000,
+                    attempt=attempt,
+                    will_retry=False,
+                )
                 raise SSIHistoricalError(f"SSI returned an invalid payload for {path}")
             provider_status = payload.get("status")
             if provider_status is not None and not _provider_status_is_success(
                 provider_status
             ):
+                self._emit_telemetry(
+                    path=path,
+                    response=response,
+                    duration_ms=(time_module.monotonic() - started_at) * 1000,
+                    attempt=attempt,
+                    will_retry=False,
+                    response_keys=tuple(sorted(str(key) for key in payload)),
+                )
                 raise SSIHistoricalError(
                     f"SSI provider status {provider_status!r} for {path}"
                 )
+            self._emit_telemetry(
+                path=path,
+                response=response,
+                duration_ms=(time_module.monotonic() - started_at) * 1000,
+                attempt=attempt,
+                will_retry=False,
+                response_keys=tuple(sorted(str(key) for key in payload)),
+            )
             return payload
         raise SSIHistoricalError(f"SSI request attempts exhausted for {path}")
 
@@ -345,20 +473,28 @@ class SSIHistoricalClient:
         return self._access_token
 
     @staticmethod
-    def _rows_and_total(payload: dict[str, Any]) -> tuple[list[dict[str, Any]], int | None]:
-        data = payload.get("data")
-        total = payload.get("totalRecord")
+    def _rows_and_total(
+        payload: dict[str, Any], endpoint: str = "IntradayOhlc"
+    ) -> tuple[list[dict[str, Any]], int | None]:
+        data = _first(payload, "dataList", "data")
+        total = _first(payload, "totalrecord", "totalRecord")
         if isinstance(data, dict):
-            total = data.get("totalRecord", total)
-            data = _first(data, "items", "data", "rows")
+            nested_total = _first(data, "totalrecord", "totalRecord")
+            if nested_total is not None:
+                total = nested_total
+            data = _first(data, "dataList", "items", "data", "rows")
         if data is None:
             data = []
         if not isinstance(data, list) or not all(isinstance(row, dict) for row in data):
-            raise SSIHistoricalError("SSI IntradayOhlc response data is not a row list")
+            raise SSIHistoricalError(
+                f"SSI {endpoint} response data is not a row list"
+            )
         try:
             parsed_total = int(total) if total is not None else None
         except (TypeError, ValueError) as exc:
-            raise SSIHistoricalError("SSI IntradayOhlc totalRecord is invalid") from exc
+            raise SSIHistoricalError(
+                f"SSI {endpoint} totalRecord is invalid"
+            ) from exc
         return data, parsed_total
 
     def _fetch_page(
@@ -462,11 +598,158 @@ class SSIHistoricalClient:
         for row in self._fetch_range(canonical_symbol, start, end, resolution):
             key = (
                 str(_first(row, "Symbol", "symbol") or canonical_symbol).upper(),
-                str(_first(row, "TradingDate", "tradingDate", "trading_date") or ""),
+                str(
+                    _first(
+                        row,
+                        "TradingDate",
+                        "tradingDate",
+                        "tradingdate",
+                        "trading_date",
+                    )
+                    or ""
+                ),
                 str(_first(row, "Time", "time") or ""),
             )
             unique.setdefault(key, row)
         return list(unique.values())
+
+    def _fetch_daily_page(
+        self,
+        symbol: str,
+        from_date: date,
+        to_date: date,
+        page_index: int,
+    ) -> tuple[list[dict[str, Any]], int | None]:
+        if not 1 <= page_index <= MAX_PAGE_INDEX:
+            raise ValueError(f"page_index must be between 1 and {MAX_PAGE_INDEX}")
+        payload = self._request_json(
+            "GET",
+            DAILY_OHLC_PATH,
+            params={
+                "symbol": symbol,
+                "fromDate": from_date.strftime("%d/%m/%Y"),
+                "toDate": to_date.strftime("%d/%m/%Y"),
+                "pageIndex": page_index,
+                "pageSize": self.page_size,
+                "ascending": True,
+            },
+            authenticated=True,
+        )
+        return self._rows_and_total(payload, "DailyOhlc")
+
+    def _fetch_daily_range(
+        self,
+        symbol: str,
+        from_date: date,
+        to_date: date,
+    ) -> list[dict[str, Any]]:
+        first_rows, total = self._fetch_daily_page(symbol, from_date, to_date, 1)
+        capacity = self.page_size * self.max_pages_per_range
+        if total is not None and total > capacity:
+            if from_date >= to_date:
+                raise SSIHistoricalError(
+                    f"{symbol} has {total} daily rows on {from_date.isoformat()}, "
+                    f"above the safe pagination capacity {capacity}"
+                )
+            midpoint = from_date + timedelta(days=(to_date - from_date).days // 2)
+            return self._fetch_daily_range(
+                symbol, from_date, midpoint
+            ) + self._fetch_daily_range(symbol, midpoint + timedelta(days=1), to_date)
+
+        rows = list(first_rows)
+        if total is not None:
+            pages = max(1, math.ceil(total / self.page_size))
+        else:
+            pages = 1 if len(first_rows) < self.page_size else self.max_pages_per_range
+        for page_index in range(2, pages + 1):
+            page_rows, page_total = self._fetch_daily_page(
+                symbol, from_date, to_date, page_index
+            )
+            if page_total != total:
+                raise SSIHistoricalError(
+                    f"SSI totalRecord changed while paging daily history for {symbol}"
+                )
+            if not page_rows:
+                if total is not None and len(rows) < total:
+                    raise SSIHistoricalError(
+                        f"SSI daily pagination ended early for {symbol}: "
+                        f"{len(rows)}/{total}"
+                    )
+                break
+            rows.extend(page_rows)
+            if total is None and len(page_rows) < self.page_size:
+                break
+        if total is not None and len(rows) < total:
+            raise SSIHistoricalError(
+                f"SSI daily pagination incomplete for {symbol}: {len(rows)}/{total}"
+            )
+        if total is not None and len(rows) > total:
+            raise SSIHistoricalError(
+                f"SSI daily pagination exceeded totalRecord for {symbol}: "
+                f"{len(rows)}/{total}"
+            )
+        if total is None and len(rows) >= capacity:
+            raise SSIHistoricalError(
+                f"SSI DailyOhlc omitted totalRecord and {symbol} reached "
+                "pagination capacity"
+            )
+        return rows
+
+    def fetch_daily_ohlc(
+        self,
+        symbol: str,
+        from_date: date | str,
+        to_date: date | str,
+    ) -> list[dict[str, Any]]:
+        """Fetch official SSI daily OHLC rows with bounded ranges and dedupe."""
+        canonical_symbol = str(symbol or "").strip().upper()
+        if not canonical_symbol:
+            raise ValueError("symbol is required")
+        start = _coerce_date(from_date)
+        end = _coerce_date(to_date)
+        if start > end:
+            raise ValueError("from_date must not be after to_date")
+
+        rows: list[dict[str, Any]] = []
+        chunk_start = start
+        while chunk_start <= end:
+            chunk_end = min(
+                chunk_start + timedelta(days=DAILY_MAX_RANGE_DAYS - 1), end
+            )
+            rows.extend(
+                self._fetch_daily_range(canonical_symbol, chunk_start, chunk_end)
+            )
+            chunk_start = chunk_end + timedelta(days=1)
+
+        unique: dict[tuple[str, str], dict[str, Any]] = {}
+        invalid_rows: list[dict[str, Any]] = []
+        for row in rows:
+            raw_symbol = str(
+                _first(row, "Symbol", "symbol") or canonical_symbol
+            ).strip().upper()
+            raw_date = str(
+                _first(
+                    row,
+                    "TradingDate",
+                    "tradingDate",
+                    "tradingdate",
+                    "trading_date",
+                )
+                or ""
+            ).strip()
+            if not raw_symbol or not raw_date:
+                invalid_rows.append(row)
+                continue
+            key = (raw_symbol, raw_date)
+            existing = unique.get(key)
+            if existing is None:
+                unique[key] = row
+            elif existing != row:
+                raise SSIHistoricalError(
+                    "SSI DailyOhlc returned conflicting duplicate rows for "
+                    f"{raw_symbol}/{raw_date}"
+                )
+        return list(unique.values()) + invalid_rows
 
 
 def normalize_historical_rows(

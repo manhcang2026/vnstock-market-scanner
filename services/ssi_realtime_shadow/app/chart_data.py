@@ -10,7 +10,7 @@ from typing import Iterable
 SYMBOL_RE = re.compile(r"^[A-Z0-9]{2,12}$")
 ALLOWED_RESOLUTIONS = {1, 5, 15, 30, 60, 1440}
 FINALIZED_STATUSES = {"PASS", "REST_PASS"}
-CANONICAL_HISTORY_SOURCES = {"SSI_REST", "SSI_STREAM_FINAL"}
+CANONICAL_HISTORY_SOURCES = {"SSI_REST", "SSI_STREAM"}
 
 
 @dataclass(frozen=True)
@@ -157,7 +157,7 @@ def _canonical_history_dates(
     """Choose dates where history wins at the whole-day level.
 
     PASS/REST_PASS is authoritative even when one symbol has no historical bars.
-    Older SSI_REST/SSI_STREAM_FINAL history created before daily-finalize metadata
+    Older SSI_REST/SSI_STREAM history created before daily-finalize metadata
     existed is also canonical. Explicit BLOCKED/REST_BLOCKED metadata prevents
     legacy-source inference for that day.
     """

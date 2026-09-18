@@ -3,5 +3,6 @@
 __pycache__/
 *.pyc
 data/
+audit/beta04b_input/
 vendor/*.tar.gz
 vendor/*.whl
