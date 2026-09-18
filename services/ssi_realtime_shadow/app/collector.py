@@ -170,6 +170,7 @@ class QuoteCollector:
         *,
         started_at: datetime | None = None,
         volume_event_handler: Callable[[VolumeEvent], object] | None = None,
+        extra_stats_provider: Callable[[], dict[str, object]] | None = None,
     ) -> None:
         self.universe = universe
         self.store = store
@@ -179,6 +180,7 @@ class QuoteCollector:
         self._initialized_keys: set[tuple[str, str]] = set()
         self.last_event_at: datetime | None = None
         self.volume_event_handler = volume_event_handler
+        self.extra_stats_provider = extra_stats_provider
         self.auction_accumulator = AuctionSessionAccumulator()
 
     def _can_seed_from_zero(self, event_at: datetime, exchange: str | None) -> bool:
@@ -448,8 +450,8 @@ class QuoteCollector:
                         minute,
                     )
 
-    def snapshot_stats(self) -> dict[str, int]:
-        return {
+    def snapshot_stats(self) -> dict[str, object]:
+        values: dict[str, object] = {
             "received_messages": self.stats.received_messages,
             "accepted_events": self.stats.accepted_events,
             "ignored_outside_universe": self.stats.ignored_outside_universe,
@@ -464,3 +466,6 @@ class QuoteCollector:
             "auction_projection_events": self.stats.auction_projection_events,
             "auction_projection_errors": self.stats.auction_projection_errors,
         }
+        if self.extra_stats_provider is not None:
+            values.update(self.extra_stats_provider())
+        return values

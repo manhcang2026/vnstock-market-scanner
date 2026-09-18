@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .auction import AuctionSessionBucket
+from .price_momentum import MinutePrice
 
 
 SCHEMA = """
@@ -163,6 +164,7 @@ class SQLiteStore:
         self._commit_every_seconds = max(1, commit_every_seconds)
         with self._lock:
             self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.execute("PRAGMA busy_timeout=5000")
             self._conn.execute("PRAGMA synchronous=NORMAL")
             self._conn.execute("PRAGMA temp_store=MEMORY")
             self._conn.executescript(SCHEMA)
@@ -278,6 +280,81 @@ class SQLiteStore:
                 )
                 for row in rows
             )
+
+    def get_latest_quote(self, symbol: str, trading_date: str) -> dict[str, Any] | None:
+        """Return the canonical full quote after collector normalization."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM latest_quotes WHERE symbol=? AND trading_date=?",
+                (str(symbol or "").strip().upper(), trading_date),
+            ).fetchone()
+            return dict(row) if row is not None else None
+
+    def get_minute_price(
+        self, symbol: str, trading_date: str, minute: str
+    ) -> MinutePrice | None:
+        with self._lock:
+            row = self._conn.execute(
+                """
+                SELECT trading_date, minute, close, quality_status,
+                       is_partial, has_gap
+                FROM minute_bars
+                WHERE symbol=? AND trading_date=? AND minute=?
+                """,
+                (str(symbol or "").strip().upper(), trading_date, minute),
+            ).fetchone()
+            if row is None:
+                return None
+            return MinutePrice(
+                trading_date=str(row["trading_date"]),
+                minute=str(row["minute"]),
+                close=float(row["close"]),
+                quality_status=str(row["quality_status"]),
+                is_partial=bool(row["is_partial"]),
+                has_gap=bool(row["has_gap"]),
+            )
+
+    def get_day_minute_prices(
+        self, trading_date: str
+    ) -> dict[str, list[MinutePrice]]:
+        """Hydrate current-day price anchors without exposing the connection."""
+        result: dict[str, list[MinutePrice]] = {}
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT symbol, trading_date, minute, close, quality_status,
+                       is_partial, has_gap
+                FROM minute_bars WHERE trading_date=?
+                ORDER BY minute, symbol
+                """,
+                (trading_date,),
+            ).fetchall()
+        for row in rows:
+            result.setdefault(str(row["symbol"]), []).append(
+                MinutePrice(
+                    trading_date=str(row["trading_date"]),
+                    minute=str(row["minute"]),
+                    close=float(row["close"]),
+                    quality_status=str(row["quality_status"]),
+                    is_partial=bool(row["is_partial"]),
+                    has_gap=bool(row["has_gap"]),
+                )
+            )
+        return result
+
+    def get_volume_hydration_rows(self, trading_date: str) -> list[dict[str, Any]]:
+        """Return canonical stored bars in deterministic chronological order."""
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT trading_date, minute, symbol, volume, last_total_volume,
+                       exchange, quality_status, is_partial, has_gap, data_source
+                FROM minute_bars WHERE trading_date=?
+                ORDER BY minute, symbol
+                """,
+                (trading_date,),
+            ).fetchall()
+            return [dict(row) for row in rows]
 
     def upsert_minute_bar(
         self,

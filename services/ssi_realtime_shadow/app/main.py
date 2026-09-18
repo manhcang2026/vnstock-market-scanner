@@ -9,6 +9,7 @@ from datetime import datetime
 from types import SimpleNamespace
 
 from .collector import QuoteCollector
+from .live_state_runtime import LiveStateRuntime
 from .market_session import VN_TZ, market_feed_stale
 from .realtime_volume import RealtimeVolumeEngine, VolumeEvent, VolumeSnapshot
 from .settings import Settings
@@ -101,11 +102,14 @@ def _volume_event_handler(
     engine: RealtimeVolumeEngine,
     qa_logger: VolumeShadowQALogger,
     on_snapshot_logged: Callable[[], None],
+    live_runtime: LiveStateRuntime | None = None,
 ) -> Callable[[VolumeEvent], None]:
     def handle(event: VolumeEvent) -> None:
         snapshot = engine.on_event(event)
         if qa_logger.log_if_changed(snapshot):
             on_snapshot_logged()
+        if live_runtime is not None:
+            live_runtime.handle_snapshot(snapshot, event=event)
 
     return handle
 
@@ -115,12 +119,15 @@ def _advance_volume_shadow(
     qa_logger: VolumeShadowQALogger,
     collector: QuoteCollector,
     now: datetime,
+    live_runtime: LiveStateRuntime | None = None,
 ) -> None:
     try:
         changed = engine.advance_time(now)
         for snapshot in changed.values():
             if qa_logger.log_if_changed(snapshot):
                 collector.stats.volume_shadow_snapshots += 1
+            if live_runtime is not None:
+                live_runtime.handle_snapshot(snapshot, observed_at=now)
     except Exception:
         collector.stats.volume_shadow_advance_errors += 1
         LOG.exception("CCC V2 volume shadow advance_time failed")
@@ -144,7 +151,6 @@ def main() -> int:
         format="%(asctime)s %(levelname)s %(name)s - %(message)s",
     )
 
-    universe = load_universe(settings)
     store = SQLiteStore(
         settings.database_path,
         commit_every_events=settings.commit_every_events,
@@ -158,6 +164,54 @@ def main() -> int:
         if volume_engine is not None
         else None
     )
+    started_at = datetime.now(VN_TZ)
+    live_runtime: LiveStateRuntime | None = None
+    if settings.live_state_enabled and volume_engine is not None:
+        try:
+            live_runtime = LiveStateRuntime(
+                volume_engine=volume_engine,
+                hot_store=store,
+                market_db_path=settings.market_v2_database_path,
+                history_db_path=settings.ssi_history_path,
+                active_at=started_at,
+            )
+            LOG.info("CCC V2 live state initialized: %s", live_runtime.health())
+        except Exception:
+            LOG.exception(
+                "CCC V2 live state initialization failed; raw collection will continue"
+            )
+    elif settings.live_state_enabled:
+        LOG.error(
+            "CCC V2 live state unavailable because volume engine did not initialize"
+        )
+
+    def live_health() -> dict[str, object]:
+        if live_runtime is not None:
+            return live_runtime.health()
+        return {
+            "live_state_enabled": settings.live_state_enabled,
+            "live_state_initialized": False,
+            "live_state_updates": 0,
+            "live_state_errors": int(settings.live_state_enabled),
+            "live_state_last_update_at": None,
+            "live_state_trading_date": started_at.date().isoformat(),
+            "live_state_baseline_as_of_date": (
+                volume_engine.baseline.as_of_date if volume_engine is not None else None
+            ),
+            "live_state_baseline_ready": False,
+            "live_state_market_db_path": str(settings.market_v2_database_path),
+            "live_state_history_available": settings.ssi_history_path.is_file(),
+        }
+
+    # Universe loading remains after all local live-state hydration so the stream
+    # cannot start before the runtime is ready.
+    try:
+        universe = load_universe(settings)
+    except Exception:
+        if live_runtime is not None:
+            live_runtime.close()
+        store.close()
+        raise
 
     def shutdown(signum: int, _frame: object) -> None:
         LOG.info("Received signal %s; shutting down", signum)
@@ -183,14 +237,18 @@ def main() -> int:
             LOG.error("SSI stream error: %s", error)
             stream_error.set()
 
-        started_at = datetime.now(VN_TZ)
         collector: QuoteCollector
 
         def snapshot_logged() -> None:
             collector.stats.volume_shadow_snapshots += 1
 
         volume_handler = (
-            _volume_event_handler(volume_engine, volume_qa_logger, snapshot_logged)
+            _volume_event_handler(
+                volume_engine,
+                volume_qa_logger,
+                snapshot_logged,
+                live_runtime=live_runtime,
+            )
             if volume_engine is not None and volume_qa_logger is not None
             else None
         )
@@ -199,10 +257,13 @@ def main() -> int:
             store,
             started_at=started_at,
             volume_event_handler=volume_handler,
+            extra_stats_provider=live_health,
         )
         store.set_meta("started_at", started_at.isoformat(), started_at.isoformat())
         store.set_meta("channel", settings.ssi_channel, started_at.isoformat())
         store.set_meta("universe_size", str(len(universe)), started_at.isoformat())
+        for key, value in live_health().items():
+            store.set_meta(key, str(value), started_at.isoformat())
         store.commit()
 
         LOG.info(
@@ -225,6 +286,7 @@ def main() -> int:
                     volume_qa_logger,
                     collector,
                     now,
+                    live_runtime=live_runtime,
                 )
             if market_feed_stale(
                 now,
@@ -240,6 +302,9 @@ def main() -> int:
                 stats = collector.snapshot_stats()
                 LOG.info("collector stats: %s", stats)
                 store.set_meta("last_stats", str(stats), now.isoformat())
+                if live_runtime is not None:
+                    for key, value in live_runtime.health().items():
+                        store.set_meta(key, str(value), now.isoformat())
                 store.commit()
                 last_stats_log = time.monotonic()
 
@@ -250,7 +315,11 @@ def main() -> int:
             store.set_meta("stopped_at", now, now)
             store.commit()
         finally:
-            store.close()
+            try:
+                if live_runtime is not None:
+                    live_runtime.close()
+            finally:
+                store.close()
 
 
 if __name__ == "__main__":

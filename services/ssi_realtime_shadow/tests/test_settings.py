@@ -58,3 +58,38 @@ def test_invalid_volume_shadow_boolean_fails_deterministically(
 
     with pytest.raises(RuntimeError, match="VOLUME_ENGINE_ENABLED"):
         Settings.from_env()
+
+
+def test_live_state_defaults_disabled_and_paths_resolve_under_service_root(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _required_env(monkeypatch)
+    monkeypatch.delenv("LIVE_STATE_ENABLED", raising=False)
+    monkeypatch.delenv("MARKET_V2_DATABASE_PATH", raising=False)
+    monkeypatch.delenv("SSI_HISTORY_PATH", raising=False)
+
+    settings = Settings.from_env()
+
+    assert not settings.live_state_enabled
+    assert settings.market_v2_database_path == ROOT / "data/ccc_market_v2.db"
+    assert settings.ssi_history_path == ROOT / "data/ssi_history_2026.db"
+
+
+def test_live_state_requires_volume_engine(monkeypatch: pytest.MonkeyPatch) -> None:
+    _required_env(monkeypatch)
+    monkeypatch.setenv("LIVE_STATE_ENABLED", "true")
+    monkeypatch.setenv("VOLUME_ENGINE_ENABLED", "false")
+
+    with pytest.raises(RuntimeError, match="requires VOLUME_ENGINE_ENABLED"):
+        Settings.from_env()
+
+
+def test_live_paths_use_service_path_helper(monkeypatch: pytest.MonkeyPatch) -> None:
+    _required_env(monkeypatch)
+    monkeypatch.setenv("MARKET_V2_DATABASE_PATH", "fixtures/market.db")
+    monkeypatch.setenv("SSI_HISTORY_PATH", "fixtures/history.db")
+
+    settings = Settings.from_env()
+
+    assert settings.market_v2_database_path == ROOT / "fixtures/market.db"
+    assert settings.ssi_history_path == ROOT / "fixtures/history.db"

@@ -1,0 +1,311 @@
+"""No-network local readiness audit for the CCC V2 live-state runtime."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sqlite3
+from datetime import date
+from pathlib import Path
+from typing import Any, Iterable
+
+from .auction_history import read_atc_exact10, read_ato_exact10
+from .daily_ma import calculate_moving_averages_from_db
+from .market_storage_schema import STORAGE_SCHEMA_VERSION
+from .settings import ROOT
+from .signal_config import load_signal_config
+from .realtime_volume import load_volume_baseline
+from .volume_baseline import COVERAGE_PROOF
+
+
+def _readonly(path: Path) -> sqlite3.Connection:
+    connection = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA query_only=ON")
+    return connection
+
+
+def _tables(connection: sqlite3.Connection) -> set[str]:
+    return {
+        str(row[0])
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )
+    }
+
+
+def _schema_version(connection: sqlite3.Connection) -> int | None:
+    if "engine_meta" not in _tables(connection):
+        return None
+    row = connection.execute(
+        "SELECT value FROM engine_meta WHERE key='storage_schema'"
+    ).fetchone()
+    try:
+        return int(row[0]) if row is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _columns(connection: sqlite3.Connection, table: str) -> set[str]:
+    return {
+        str(row[1])
+        for row in connection.execute(f"PRAGMA table_info({table})")
+    }
+
+
+def _symbols(connection: sqlite3.Connection, target: str) -> list[str]:
+    return [
+        str(row[0])
+        for row in connection.execute(
+            "SELECT DISTINCT symbol FROM daily_bars "
+            "WHERE trading_date < ? ORDER BY symbol",
+            (target,),
+        )
+    ]
+
+
+def inspect_live_readiness(
+    *,
+    target_trading_date: str,
+    hot_db: Path,
+    market_db: Path,
+    history_db: Path,
+    baseline_db: Path,
+) -> dict[str, Any]:
+    parsed = date.fromisoformat(target_trading_date)
+    if parsed.isoformat() != target_trading_date:
+        raise ValueError("target trading date must be canonical YYYY-MM-DD")
+    result: dict[str, Any] = {
+        "target_trading_date": target_trading_date,
+        "signal_config_ok": False,
+        "contract_version": None,
+        "config_version": None,
+        "engine_version": None,
+        "hot_db_exists": hot_db.is_file(),
+        "hot_schema_ok": False,
+        "market_db_exists": market_db.is_file(),
+        "market_schema_version": None,
+        "history_db_exists": history_db.is_file(),
+        "history_min_date": None,
+        "history_max_date": None,
+        "baseline_exists": baseline_db.is_file(),
+        "baseline_schema_version": None,
+        "baseline_lookback": None,
+        "baseline_coverage_proof": None,
+        "baseline_as_of_date": None,
+        "baseline_date_matches_target": False,
+        "baseline_symbols_total": 0,
+        "baseline_symbols_exact10": 0,
+        "baseline_symbols_partial": 0,
+        "daily_symbols_total": 0,
+        "ma10_ready_symbols": 0,
+        "ma200_ready_symbols": 0,
+        "auction_ato_exact10_symbols": 0,
+        "auction_atc_exact10_symbols": 0,
+        "blocking_errors": [],
+        "warnings": [],
+        "ready_for_live_signal": False,
+    }
+    blocking: list[str] = result["blocking_errors"]
+    warnings: list[str] = result["warnings"]
+
+    try:
+        config = load_signal_config()
+        result.update(
+            signal_config_ok=True,
+            contract_version=config.contract_version,
+            config_version=config.config_version,
+            engine_version=config.engine_version,
+        )
+    except Exception as exc:
+        blocking.append(f"SIGNAL_CONFIG_INVALID:{type(exc).__name__}")
+
+    if hot_db.is_file():
+        try:
+            hot = _readonly(hot_db)
+            try:
+                required_tables = {
+                    "minute_bars", "latest_quotes", "auction_session_buckets"
+                }
+                result["hot_schema_ok"] = (
+                    required_tables <= _tables(hot)
+                    and {
+                        "trading_date", "minute", "symbol", "volume",
+                        "last_total_volume", "exchange", "quality_status",
+                        "is_partial", "has_gap",
+                    } <= _columns(hot, "minute_bars")
+                    and {
+                        "symbol", "trading_date", "event_time", "last_price",
+                        "exchange", "updated_at",
+                    } <= _columns(hot, "latest_quotes")
+                )
+            finally:
+                hot.close()
+            if not result["hot_schema_ok"]:
+                blocking.append("HOT_SCHEMA_INVALID")
+        except Exception as exc:
+            blocking.append(f"HOT_DB_UNREADABLE:{type(exc).__name__}")
+    else:
+        blocking.append("HOT_DB_MISSING")
+
+    market: sqlite3.Connection | None = None
+    symbols: list[str] = []
+    if market_db.is_file():
+        try:
+            market = _readonly(market_db)
+            result["market_schema_version"] = _schema_version(market)
+            if result["market_schema_version"] != STORAGE_SCHEMA_VERSION:
+                blocking.append("MARKET_SCHEMA_VERSION_MISMATCH")
+            if "daily_bars" in _tables(market):
+                symbols = _symbols(market, target_trading_date)
+                result["daily_symbols_total"] = len(symbols)
+                for symbol in symbols:
+                    ma = calculate_moving_averages_from_db(
+                        market, symbol=symbol, as_of_date=target_trading_date
+                    )
+                    result["ma10_ready_symbols"] += int(ma.ma10 is not None)
+                    result["ma200_ready_symbols"] += int(ma.ma200 is not None)
+            else:
+                blocking.append("MARKET_DAILY_BARS_MISSING")
+        except sqlite3.Error as exc:
+            blocking.append(f"MARKET_DB_UNREADABLE:{type(exc).__name__}")
+            if market is not None:
+                market.close()
+                market = None
+    else:
+        blocking.append("MARKET_DB_MISSING")
+
+    history: sqlite3.Connection | None = None
+    if history_db.is_file():
+        try:
+            history = _readonly(history_db)
+            if "minute_bars" not in _tables(history):
+                warnings.append("HISTORY_MINUTE_BARS_MISSING")
+            else:
+                row = history.execute(
+                    "SELECT MIN(trading_date), MAX(trading_date) FROM minute_bars"
+                ).fetchone()
+                result["history_min_date"] = row[0] if row else None
+                result["history_max_date"] = row[1] if row else None
+                if result["history_min_date"] is None:
+                    warnings.append("HISTORY_EMPTY:auction_metrics_unavailable")
+        except sqlite3.Error as exc:
+            warnings.append(f"HISTORY_DB_UNREADABLE:{type(exc).__name__}")
+            if history is not None:
+                history.close()
+                history = None
+    else:
+        warnings.append("HISTORY_DB_MISSING:auction_metrics_unavailable")
+
+    if baseline_db.is_file():
+        try:
+            baseline = load_volume_baseline(baseline_db)
+            exact = sum(
+                item.baseline_sessions_used == 10
+                and item.active_sessions_used == 10
+                for item in baseline.coverage.values()
+            )
+            partial = sum(
+                0 < item.baseline_sessions_used < 10
+                or 0 < item.active_sessions_used < 10
+                for item in baseline.coverage.values()
+            )
+            result.update(
+                baseline_schema_version=baseline.schema_version,
+                baseline_lookback=baseline.lookback,
+                baseline_coverage_proof=baseline.coverage_proof,
+                baseline_as_of_date=baseline.as_of_date,
+                baseline_date_matches_target=(
+                    baseline.as_of_date == target_trading_date
+                ),
+                baseline_symbols_total=len(baseline.coverage),
+                baseline_symbols_exact10=exact,
+                baseline_symbols_partial=partial,
+            )
+            if baseline.schema_version != 2:
+                blocking.append("BASELINE_SCHEMA_VERSION_MISMATCH")
+            if baseline.lookback != 10:
+                blocking.append("BASELINE_LOOKBACK_MISMATCH")
+            if baseline.coverage_proof != COVERAGE_PROOF:
+                blocking.append("BASELINE_COVERAGE_PROOF_MISMATCH")
+            if baseline.as_of_date != target_trading_date:
+                blocking.append("BASELINE_DATE_MISMATCH")
+            if exact == 0:
+                blocking.append("BASELINE_HAS_NO_EXACT10_SYMBOLS")
+            if partial:
+                warnings.append(f"BASELINE_PARTIAL_SYMBOLS:{partial}")
+        except Exception as exc:
+            blocking.append(f"BASELINE_INVALID:{type(exc).__name__}")
+    else:
+        blocking.append("BASELINE_MISSING")
+
+    if market is not None and history is not None:
+        tables = _tables(market)
+        if "auction_session_history" not in tables:
+            warnings.append("AUCTION_HISTORY_TABLE_MISSING")
+        else:
+            for symbol in symbols:
+                try:
+                    ato = read_ato_exact10(
+                        market, history, market,
+                        symbol=symbol, as_of_date=target_trading_date,
+                    )
+                    atc = read_atc_exact10(
+                        market, history, market,
+                        symbol=symbol, as_of_date=target_trading_date,
+                    )
+                    result["auction_ato_exact10_symbols"] += int(
+                        ato.baseline_usable and ato.sessions_used == 10
+                        and ato.proven_sessions == 10
+                    )
+                    result["auction_atc_exact10_symbols"] += int(
+                        atc.baseline_usable and atc.sessions_used == 10
+                    )
+                except (sqlite3.Error, TypeError, ValueError):
+                    continue
+            if result["auction_ato_exact10_symbols"] < len(symbols):
+                warnings.append(
+                    "ATO_EXACT10_PARTIAL_EXPECTED:no_historical_bootstrap"
+                )
+            if result["auction_atc_exact10_symbols"] < len(symbols):
+                warnings.append("ATC_EXACT10_PARTIAL")
+
+    if history is not None:
+        history.close()
+    if market is not None:
+        market.close()
+    result["ready_for_live_signal"] = not blocking
+    return result
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--trading-date", required=True)
+    parser.add_argument("--hot-db", type=Path, default=ROOT / "data/ssi_shadow.db")
+    parser.add_argument(
+        "--market-db", type=Path, default=ROOT / "data/ccc_market_v2.db"
+    )
+    parser.add_argument(
+        "--history-db", type=Path, default=ROOT / "data/ssi_history_2026.db"
+    )
+    parser.add_argument(
+        "--baseline-db", type=Path, default=ROOT / "data/ccc_v2_baseline.db"
+    )
+    return parser
+
+
+def main(argv: Iterable[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
+    report = inspect_live_readiness(
+        target_trading_date=args.trading_date,
+        hot_db=args.hot_db,
+        market_db=args.market_db,
+        history_db=args.history_db,
+        baseline_db=args.baseline_db,
+    )
+    print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+    return 0 if report["ready_for_live_signal"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

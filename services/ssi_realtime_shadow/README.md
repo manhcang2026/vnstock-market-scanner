@@ -92,3 +92,29 @@ Phiên bản này **chưa ghi production Supabase**. Mục tiêu đầu tiên l�
 - dữ liệu ingest đủ tin cậy để làm đầu vào cho các engine CCC V2 tiếp theo.
 
 Sau khi đạt tiêu chí cutover, service mới mở rộng API/WebSocket và writer sang bảng production/shadow phù hợp.
+## CCC V2 live current-state runtime
+
+The opt-in live path is enabled with both `VOLUME_ENGINE_ENABLED=true` and
+`LIVE_STATE_ENABLED=true`. It reuses the canonical collector event after hot
+minute, quote, auction, and volume state have been updated, then materializes a
+single row per symbol in `ccc_market_v2.db.stock_state_current`. The default is
+disabled so the existing raw collector remains unchanged until controlled
+deployment.
+
+Live trust and replay/EOD proof are intentionally different. During an active
+session, a matching immutable `SSI_DAILY_VOLUME_RECONCILED_V1` exact-10
+baseline plus a trusted current `VolumeSnapshot` is sufficient; the current
+day does not yet need a final `DailyOhlc` row. The offline
+`stock_state_build.py` replay path continues to require current-day DailyOhlc
+volume reconciliation. The live runtime never writes `daily_bars` or
+`signal_events`.
+
+Local readiness is network-free:
+
+```text
+python -m app.live_ready_check --trading-date 2026-09-21
+```
+
+The `LiveRuntimeHarness` in `app.live_runtime_harness` drives fixture messages
+through the real collector normalization, volume engine, live projector,
+current-state table, and frontend serializer without a provider connection.
