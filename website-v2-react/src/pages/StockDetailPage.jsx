@@ -1,7 +1,15 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
-import { fetchChart, fetchQuote, fetchTechnicalAccess } from '../lib/cccApi'
+import {
+  fetchCccIntelligence,
+  fetchChart,
+  fetchPublicStockContext,
+  fetchQuote,
+  fetchRadar,
+  fetchTechnicalAccess,
+} from '../lib/cccApi'
+import { fetchFinancialContext, fetchQuarterlyFinancials } from '../lib/financialData'
 import { findStockMetadataBySymbol } from '../lib/stockSearch'
 import StockDetailV3View from '../components/stock/StockDetailV3View'
 import '../styles/stock-detail.css'
@@ -78,14 +86,14 @@ function chartRequestFor(
   return { key, query, chartFrom }
 }
 
-function loadChartCached({ key, symbol, query, token }) {
+function loadChartCached({ key, symbol, query }) {
   const cached = getCachedChart(key)
   if (cached) return Promise.resolve(cached)
 
   const inFlight = chartRequestCache.get(key)
   if (inFlight) return inFlight
 
-  const request = fetchChart(symbol, query, { token })
+  const request = fetchChart(symbol, query)
     .then((data) => {
       putCachedChart(key, data)
       return data
@@ -120,6 +128,17 @@ function abortError(error) {
   return error?.name === 'AbortError'
 }
 
+const FRIENDLY_ERRORS = {
+  quote: 'Giá thị trường tạm thời chưa sẵn sàng.',
+  publicContext: 'Bối cảnh MA tạm thời chưa sẵn sàng.',
+  financial: 'Dữ liệu cơ bản tạm thời chưa sẵn sàng.',
+  quarterly: 'Dữ liệu BCTC tạm thời chưa sẵn sàng.',
+  access: 'Chưa thể kiểm tra phạm vi CCC Technical.',
+  ccc: 'CCC Intelligence tạm thời chưa sẵn sàng.',
+  radar: 'CCC Radar tạm thời chưa sẵn sàng.',
+  chart: 'Biểu đồ giá tạm thời chưa sẵn sàng.',
+}
+
 // CCC_LIVE_WS_REACT_V1
 function liveWebSocketUrl() {
   const configured = import.meta.env.VITE_CCC_WS_URL
@@ -145,7 +164,12 @@ export default function StockDetailPage() {
   const [resolution, setResolution] = useState(5)
   const [metadataState, setMetadataState] = useState({ symbol: '', data: null })
   const [quoteState, setQuoteState] = useState({ symbol: '', data: null, error: '' })
+  const [publicContextState, setPublicContextState] = useState({ symbol: '', data: null, error: '' })
   const [accessState, setAccessState] = useState({ symbol: '', data: null, error: '' })
+  const [cccState, setCccState] = useState({ symbol: '', data: null, error: '' })
+  const [radarState, setRadarState] = useState({ data: null, error: '' })
+  const [financialState, setFinancialState] = useState({ symbol: '', data: null, error: '' })
+  const [quarterlyState, setQuarterlyState] = useState({ symbol: '', data: null, error: '' })
   const [chartState, setChartState] = useState({
     key: '',
     symbol: '',
@@ -189,11 +213,53 @@ export default function StockDetailPage() {
         setQuoteState({
           symbol,
           data: null,
-          error: error?.message || 'Không tải được giá thị trường.',
+          error: FRIENDLY_ERRORS.quote,
         })
       })
 
     return () => controller.abort()
+  }, [symbol, validSymbol])
+
+  useEffect(() => {
+    if (!validSymbol) return undefined
+    const controller = new AbortController()
+    fetchPublicStockContext(symbol, { signal: controller.signal })
+      .then((data) => setPublicContextState({ symbol, data, error: '' }))
+      .catch((error) => {
+        if (abortError(error)) return
+        setPublicContextState({
+          symbol,
+          data: null,
+          error: FRIENDLY_ERRORS.publicContext,
+        })
+      })
+    return () => controller.abort()
+  }, [symbol, validSymbol])
+
+  useEffect(() => {
+    if (!validSymbol) return undefined
+    let active = true
+    Promise.allSettled([
+      fetchFinancialContext(symbol),
+      fetchQuarterlyFinancials(symbol),
+    ]).then(([financialResult, quarterlyResult]) => {
+      if (!active) return
+      setFinancialState(financialResult.status === 'fulfilled'
+        ? { symbol, data: financialResult.value, error: '' }
+        : {
+            symbol,
+            data: null,
+            error: FRIENDLY_ERRORS.financial,
+          })
+      setQuarterlyState(quarterlyResult.status === 'fulfilled'
+        ? { symbol, data: quarterlyResult.value, error: '' }
+        : {
+            symbol,
+            data: null,
+            error: FRIENDLY_ERRORS.quarterly,
+          })
+    })
+    return () => { active = false }
   }, [symbol, validSymbol])
 
   useEffect(() => {
@@ -207,7 +273,7 @@ export default function StockDetailPage() {
         setAccessState({
           symbol,
           data: null,
-          error: error?.message || 'Không kiểm tra được quyền kỹ thuật.',
+          error: FRIENDLY_ERRORS.access,
         })
       })
 
@@ -234,11 +300,67 @@ export default function StockDetailPage() {
   }, [ready, user, accessToken, fetchedAccess])
 
   useEffect(() => {
+    if (!validSymbol || !accessToken || !access?.technical_allowed) return undefined
+    let active = true
+    let controller
+    const load = () => {
+      controller?.abort()
+      controller = new AbortController()
+      fetchCccIntelligence(symbol, { token: accessToken, signal: controller.signal })
+        .then((data) => {
+          if (active) setCccState({ symbol, data, error: '' })
+        })
+        .catch((error) => {
+          if (active && !abortError(error)) {
+            setCccState((current) => ({
+              symbol,
+              data: current.symbol === symbol ? current.data : null,
+              error: FRIENDLY_ERRORS.ccc,
+            }))
+          }
+        })
+    }
+    load()
+    const timer = window.setInterval(load, 10_000)
+    return () => {
+      active = false
+      controller?.abort()
+      window.clearInterval(timer)
+    }
+  }, [symbol, validSymbol, accessToken, access?.technical_allowed])
+
+  useEffect(() => {
+    if (!ready) return undefined
+    let active = true
+    let controller
+    const load = () => {
+      controller?.abort()
+      controller = new AbortController()
+      fetchRadar({ token: accessToken || undefined, signal: controller.signal })
+        .then((data) => {
+          if (active) setRadarState({ data, error: '' })
+        })
+        .catch((error) => {
+          if (active && !abortError(error)) {
+            setRadarState((current) => ({
+              data: current.data,
+              error: FRIENDLY_ERRORS.radar,
+            }))
+          }
+        })
+    }
+    load()
+    const timer = window.setInterval(load, 20_000)
+    return () => {
+      active = false
+      controller?.abort()
+      window.clearInterval(timer)
+    }
+  }, [ready, accessToken])
+
+  useEffect(() => {
     if (
       !validSymbol
-      || !ready
-      || !accessToken
-      || !access?.technical_allowed
       || !ALLOWED_RESOLUTIONS.has(resolution)
     ) {
       return undefined
@@ -256,9 +378,9 @@ export default function StockDetailPage() {
 
         socket.send(JSON.stringify({
           type: 'subscribe',
+          channel: 'chart',
           symbol,
           resolution,
-          token: accessToken,
         }))
 
         setLiveState({
@@ -303,7 +425,7 @@ export default function StockDetailPage() {
         })
       }
 
-      socket.onclose = (event) => {
+      socket.onclose = () => {
         if (closedByEffect) return
 
         setLiveState((current) => (
@@ -312,7 +434,6 @@ export default function StockDetailPage() {
             : current
         ))
 
-        if (event.code === 4401 || event.code === 4403) return
         reconnectTimer = window.setTimeout(connect, 2000)
       }
 
@@ -331,9 +452,6 @@ export default function StockDetailPage() {
   }, [
     symbol,
     validSymbol,
-    ready,
-    accessToken,
-    access?.technical_allowed,
     resolution,
   ])
 
@@ -359,7 +477,7 @@ export default function StockDetailPage() {
   const chartKey = chartRequest.key
 
   useEffect(() => {
-    if (!validSymbol || !chartDate || !accessToken || !access?.technical_allowed) return undefined
+    if (!validSymbol || !chartDate) return undefined
     if (!ALLOWED_RESOLUTIONS.has(resolution)) return undefined
 
     let active = true
@@ -367,7 +485,6 @@ export default function StockDetailPage() {
       key: chartKey,
       symbol,
       query: chartRequest.query,
-      token: accessToken,
     })
       .then((data) => {
         if (active) {
@@ -380,7 +497,7 @@ export default function StockDetailPage() {
           })
         }
       })
-      .catch((error) => {
+      .catch(() => {
         if (!active) return
         setChartState((current) => ({
           key: chartKey,
@@ -389,7 +506,7 @@ export default function StockDetailPage() {
           data: current.symbol === symbol && current.resolution === resolution
             ? current.data
             : null,
-          error: error?.message || 'Không tải được biểu đồ.',
+          error: FRIENDLY_ERRORS.chart,
         }))
       })
 
@@ -403,12 +520,10 @@ export default function StockDetailPage() {
     chartKey,
     chartRequest.query,
     resolution,
-    accessToken,
-    access?.technical_allowed,
   ])
 
   useEffect(() => {
-    if (!validSymbol || !chartDate || !accessToken || !access?.technical_allowed) return undefined
+    if (!validSymbol || !chartDate) return undefined
 
     const timer = window.setTimeout(() => {
       for (const nextResolution of ALLOWED_RESOLUTIONS) {
@@ -419,7 +534,6 @@ export default function StockDetailPage() {
           key: next.key,
           symbol,
           query: next.query,
-          token: accessToken,
         }).catch(() => {})
       }
     }, 120)
@@ -430,8 +544,6 @@ export default function StockDetailPage() {
     validSymbol,
     chartDate,
     resolution,
-    accessToken,
-    access?.technical_allowed,
   ])
 
   if (!validSymbol) {
@@ -463,7 +575,7 @@ export default function StockDetailPage() {
     ? chartState.error
     : ''
   const bars = Array.isArray(chart?.bars) ? chart.bars : []
-  const chartLoading = access?.technical_allowed && !chart && !chartError
+  const chartLoading = !chart && !chartError
   const loadingOlderHistory = Boolean(
     chart
     && chartState.symbol === symbol
@@ -496,29 +608,7 @@ export default function StockDetailPage() {
   const accessLoading = ready && user && !fetchedAccess && !accessError
 
   let chartContent
-  if (!ready) {
-    chartContent = <div className="detail-state">Đang kiểm tra phiên đăng nhập…</div>
-  } else if (!user) {
-    chartContent = (
-      <div className="technical-lock">
-        <strong>Đăng nhập để mở vùng kỹ thuật</strong>
-        <p>Giá thị trường vẫn công khai. Biểu đồ kỹ thuật được kiểm tra quyền ở server.</p>
-        <Link to="/dang-nhap">Đăng nhập</Link>
-      </div>
-    )
-  } else if (accessLoading) {
-    chartContent = <div className="detail-state">Đang kiểm tra technical entitlement…</div>
-  } else if (accessError) {
-    chartContent = <div className="detail-state is-error">{accessError}</div>
-  } else if (access && !access.technical_allowed) {
-    chartContent = (
-      <div className="technical-lock">
-        <strong>CCC Technical Intelligence ngoài phạm vi hiện tại</strong>
-        <p>Public quote vẫn hiển thị. Backend không trả technical payload cho mã ngoài entitlement.</p>
-        <span>{access.reason || 'OUTSIDE_ENTITLEMENT'}</span>
-      </div>
-    )
-  } else if (chartError) {
+  if (chartError) {
     chartContent = <div className="detail-state is-error">{chartError}</div>
   } else if (chartLoading) {
     chartContent = <div className="detail-state">Đang tải biểu đồ kỹ thuật…</div>
@@ -552,7 +642,6 @@ export default function StockDetailPage() {
       changeClass={changeClass}
       formatNumber={formatNumber}
       formatPercent={formatPercent}
-      chart={chart}
       chartContent={chartContent}
       liveConnected={liveConnected}
       ready={ready}
@@ -560,6 +649,19 @@ export default function StockDetailPage() {
       accessLoading={accessLoading}
       accessError={accessError}
       access={access}
+      publicContext={publicContextState.symbol === symbol ? publicContextState.data : null}
+      publicContextError={publicContextState.symbol === symbol ? publicContextState.error : ''}
+      ccc={cccState.symbol === symbol ? cccState.data : null}
+      cccError={cccState.symbol === symbol ? cccState.error : ''}
+      cccLoading={Boolean(access?.technical_allowed && cccState.symbol !== symbol)}
+      radar={radarState.data}
+      radarError={radarState.error}
+      financial={financialState.symbol === symbol ? financialState.data : null}
+      financialError={financialState.symbol === symbol ? financialState.error : ''}
+      financialLoading={financialState.symbol !== symbol}
+      quarterly={quarterlyState.symbol === symbol ? quarterlyState.data : null}
+      quarterlyError={quarterlyState.symbol === symbol ? quarterlyState.error : ''}
+      quarterlyLoading={quarterlyState.symbol !== symbol}
     />
   )
 }

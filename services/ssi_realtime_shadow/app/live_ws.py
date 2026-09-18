@@ -4,7 +4,6 @@ import argparse
 import asyncio
 import json
 import sqlite3
-import time
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -12,11 +11,7 @@ from zoneinfo import ZoneInfo
 from websockets.exceptions import ConnectionClosed
 from websockets.server import serve
 
-from .access_control import (
-    AuthenticationRequired,
-    EntitlementServiceUnavailable,
-    SupabaseEntitlementClient,
-)
+from .access_control import SupabaseEntitlementClient
 
 VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 ALLOWED_RESOLUTIONS = {5, 15, 30, 60, 1440}
@@ -215,51 +210,22 @@ class LiveGateway:
         payload = json.loads(raw)
         if not isinstance(payload, dict) or payload.get("type") != "subscribe":
             raise ValueError("subscribe message required")
+        if payload.get("channel", "chart") != "chart":
+            raise ValueError("unsupported channel")
         symbol = _normalize_symbol(payload.get("symbol"))
         resolution = _normalize_resolution(payload.get("resolution", 5))
         token = str(payload.get("token") or "").strip()
-        if not token:
-            raise AuthenticationRequired("AUTH_REQUIRED")
         return symbol, resolution, token
 
     async def handler(self, websocket) -> None:
         try:
             symbol, resolution, token = await self._receive_subscription(websocket)
-        except AuthenticationRequired:
-            await websocket.close(code=4401, reason="AUTH_REQUIRED")
-            return
         except (ValueError, TypeError, json.JSONDecodeError, asyncio.TimeoutError):
             await websocket.close(code=4400, reason="INVALID_SUBSCRIPTION")
             return
 
         try:
-            if not self._authorize(token=token, symbol=symbol):
-                await websocket.close(code=4403, reason="TECHNICAL_ACCESS_DENIED")
-                return
-        except AuthenticationRequired:
-            await websocket.close(code=4401, reason="INVALID_OR_EXPIRED_SESSION")
-            return
-        except EntitlementServiceUnavailable:
-            await websocket.close(code=1013, reason="ENTITLEMENT_UNAVAILABLE")
-            return
-
-        last_auth_check = time.monotonic()
-
-        try:
             while True:
-                if time.monotonic() - last_auth_check >= self.revalidate_seconds:
-                    try:
-                        if not self._authorize(token=token, symbol=symbol):
-                            await websocket.close(code=4403, reason="TECHNICAL_ACCESS_DENIED")
-                            return
-                    except AuthenticationRequired:
-                        await websocket.close(code=4401, reason="INVALID_OR_EXPIRED_SESSION")
-                        return
-                    except EntitlementServiceUnavailable:
-                        await websocket.close(code=1013, reason="ENTITLEMENT_UNAVAILABLE")
-                        return
-                    last_auth_check = time.monotonic()
-
                 snapshot = self.store.snapshot(symbol=symbol, resolution=resolution)
                 await websocket.send(
                     json.dumps(snapshot, ensure_ascii=False, separators=(",", ":"))
@@ -282,21 +248,17 @@ class LiveGateway:
                     continue
 
                 if payload.get("type") == "subscribe":
+                    if payload.get("channel", "chart") != "chart":
+                        await websocket.close(code=4400, reason="INVALID_SUBSCRIPTION")
+                        return
                     next_symbol = _normalize_symbol(payload.get("symbol", symbol))
                     next_resolution = _normalize_resolution(
                         payload.get("resolution", resolution)
                     )
                     next_token = str(payload.get("token") or token).strip()
-                    if not self._authorize(token=next_token, symbol=next_symbol):
-                        await websocket.close(
-                            code=4403,
-                            reason="TECHNICAL_ACCESS_DENIED",
-                        )
-                        return
                     symbol = next_symbol
                     resolution = next_resolution
                     token = next_token
-                    last_auth_check = time.monotonic()
         except ConnectionClosed:
             return
         except (sqlite3.Error, OSError):

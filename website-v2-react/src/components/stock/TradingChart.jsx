@@ -191,6 +191,43 @@ function chartHeightFor(container, fullscreenElement) {
   return container.clientWidth < 640 ? 520 : 620
 }
 
+function chartThemeOptions() {
+  const light = document.documentElement.dataset.theme === 'light'
+  const colors = light
+    ? {
+        background: '#ffffff', text: '#526071', border: '#d9dee7',
+        grid: 'rgba(85, 99, 118, .12)', crosshair: 'rgba(69, 84, 105, .4)',
+        label: '#5e6d82', separator: '#d9dee7', hover: 'rgba(85, 99, 118, .16)',
+      }
+    : {
+        background: '#0f1726', text: '#8fa0b8', border: '#263249',
+        grid: 'rgba(89, 105, 132, .16)', crosshair: 'rgba(180, 191, 210, .42)',
+        label: '#263249', separator: '#263249', hover: 'rgba(132, 146, 166, .18)',
+      }
+  return {
+    layout: {
+      background: { type: ColorType.Solid, color: colors.background },
+      textColor: colors.text,
+      panes: {
+        enableResize: true,
+        separatorColor: colors.separator,
+        separatorHoverColor: colors.hover,
+      },
+    },
+    grid: {
+      vertLines: { color: colors.grid },
+      horzLines: { color: colors.grid },
+    },
+    crosshair: {
+      mode: CrosshairMode.Normal,
+      vertLine: { color: colors.crosshair, width: 1, style: 2, labelBackgroundColor: colors.label },
+      horzLine: { color: colors.crosshair, width: 1, style: 2, labelBackgroundColor: colors.label },
+    },
+    rightPriceScale: { borderColor: colors.border },
+    timeScale: { borderColor: colors.border },
+  }
+}
+
 // CCC_LAZY_HISTORY_V2
 export default function TradingChart({
   bars = [],
@@ -236,6 +273,15 @@ export default function TradingChart({
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [cursor, setCursor] = useState(null)
   const [pinned, setPinned] = useState(null)
+
+  useEffect(() => {
+    if (!pinned) return undefined
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') setPinned(null)
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [pinned])
 
   useEffect(() => {
     loadOlderCallbackRef.current = onNeedOlderHistory
@@ -284,45 +330,23 @@ export default function TradingChart({
 
     container.innerHTML = ''
 
+    const themeOptions = chartThemeOptions()
     const chart = createChart(container, {
       width: container.clientWidth,
       height: chartHeightFor(container, document.fullscreenElement === wrapRef.current),
       layout: {
-        background: { type: ColorType.Solid, color: '#0f1726' },
-        textColor: '#8fa0b8',
+        ...themeOptions.layout,
         fontSize: 11,
         attributionLogo: false,
-        panes: {
-          enableResize: true,
-          separatorColor: '#263249',
-          separatorHoverColor: 'rgba(132, 146, 166, .18)',
-        },
       },
-      grid: {
-        vertLines: { color: 'rgba(89, 105, 132, .16)' },
-        horzLines: { color: 'rgba(89, 105, 132, .16)' },
-      },
-      crosshair: {
-        mode: CrosshairMode.Normal,
-        vertLine: {
-          color: 'rgba(180, 191, 210, .42)',
-          width: 1,
-          style: 2,
-          labelBackgroundColor: '#263249',
-        },
-        horzLine: {
-          color: 'rgba(180, 191, 210, .42)',
-          width: 1,
-          style: 2,
-          labelBackgroundColor: '#263249',
-        },
-      },
+      grid: themeOptions.grid,
+      crosshair: themeOptions.crosshair,
       rightPriceScale: {
-        borderColor: '#263249',
+        ...themeOptions.rightPriceScale,
         scaleMargins: { top: 0.08, bottom: 0.08 },
       },
       timeScale: {
-        borderColor: '#263249',
+        ...themeOptions.timeScale,
         timeVisible: true,
         secondsVisible: false,
         rightOffset: 6,
@@ -566,12 +590,20 @@ export default function TradingChart({
       })
     }
     document.addEventListener('fullscreenchange', handleFullscreenChange)
+    const themeObserver = new MutationObserver(() => {
+      chart.applyOptions(chartThemeOptions())
+    })
+    themeObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme'],
+    })
 
     return () => {
       chartInstanceRef.current = null
       liveSeriesRef.current = null
       lastSeriesTimeRef.current = null
       observer.disconnect()
+      themeObserver.disconnect()
       document.removeEventListener('fullscreenchange', handleFullscreenChange)
       timeScale.unsubscribeVisibleTimeRangeChange(handleVisibleTimeRangeChange)
       timeScale.unsubscribeVisibleLogicalRangeChange(handleVisibleLogicalRangeChange)
@@ -849,9 +881,10 @@ export default function TradingChart({
 
   const liveBars = liveComputed.bars
   const latest = liveBars[liveBars.length - 1]
-  const activePinned = pinned && liveBars.some(
+  const pinnedBar = pinned && liveBars.find(
     (bar) => bar.trading_date === pinned.trading_date && bar.minute === pinned.minute,
-  ) ? pinned : null
+  )
+  const activePinned = pinnedBar ? { ...pinnedBar, inspectorStyle: pinned.inspectorStyle } : null
   const display = activePinned || cursor || (latest
     ? {
         trading_date: latest.trading_date,
@@ -1022,6 +1055,14 @@ export default function TradingChart({
             <div className="inspector-title">
               <strong>{formatBarTime(activePinned, resolution)}</strong>
               <span>OHLCV</span>
+              <button
+                type="button"
+                className="inspector-close"
+                aria-label="Đóng thông số nến"
+                onClick={() => setPinned(null)}
+              >
+                ×
+              </button>
             </div>
             <dl>
               <div><dt>Mở</dt><dd>{priceFormat(activePinned.open)}</dd></div>

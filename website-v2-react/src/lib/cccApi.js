@@ -31,6 +31,18 @@ export function fetchTechnicalAccess(symbol, options) {
   return requestJson(`/access/${encodeURIComponent(symbol)}`, options)
 }
 
+export function fetchPublicStockContext(symbol, options) {
+  return requestJson(`/stock-detail/${encodeURIComponent(symbol)}`, options)
+}
+
+export function fetchCccIntelligence(symbol, options) {
+  return requestJson(`/ccc/${encodeURIComponent(symbol)}`, options)
+}
+
+export function fetchRadar(options) {
+  return requestJson('/radar', options)
+}
+
 export function fetchChart(symbol, query = '', options) {
   const suffix = query ? `?${query}` : ''
   return requestJson(`/chart/${encodeURIComponent(symbol)}${suffix}`, options)

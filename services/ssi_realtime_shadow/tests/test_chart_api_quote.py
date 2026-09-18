@@ -1,11 +1,21 @@
 from __future__ import annotations
 
 import sqlite3
+import http.client
+import json
+import threading
+from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-from app.chart_api import _fetch_latest_quote, _normalize_symbol
+from app.chart_api import (
+    ChartAPIHandler,
+    ChartHTTPServer,
+    _fetch_latest_quote,
+    _normalize_symbol,
+)
 
 
 SCHEMA = """
@@ -82,3 +92,61 @@ def test_quote_not_found(tmp_path: Path) -> None:
 def test_invalid_symbol(symbol: str) -> None:
     with pytest.raises(ValueError):
         _normalize_symbol(symbol)
+
+
+def test_chart_endpoint_is_public_and_returns_market_bars_only(tmp_path: Path) -> None:
+    @dataclass
+    class Bar:
+        trading_date: str
+        minute: str
+        open: float
+        high: float
+        low: float
+        close: float
+        volume: int
+
+    class FakeStore:
+        realtime_path = tmp_path / "unused.db"
+
+        def query(self, **_kwargs):
+            return SimpleNamespace(
+                symbol="HPG",
+                date_from="2026-09-18",
+                date_to="2026-09-18",
+                resolution=5,
+                invalid_ohlc_dropped=0,
+                source_counts={"SSI_STREAM": 1},
+                bars=[Bar("2026-09-18", "10:00", 20, 21, 19, 20.5, 1000)],
+            )
+
+    class AccessMustNotRun:
+        def check(self, **_kwargs):
+            raise AssertionError("public chart must not call entitlement")
+
+    server = ChartHTTPServer(
+        ("127.0.0.1", 0),
+        ChartAPIHandler,
+        FakeStore(),
+        AccessMustNotRun(),
+        tmp_path / "state.db",
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        connection = http.client.HTTPConnection(*server.server_address, timeout=5)
+        connection.request(
+            "GET",
+            "/v1/chart/HPG?from=2026-09-18&to=2026-09-18&resolution=5",
+        )
+        response = connection.getresponse()
+        payload = json.loads(response.read())
+        assert response.status == 200
+        assert payload["bars"][0]["close"] == 20.5
+        serialized = json.dumps(payload)
+        assert "day_rvol" not in serialized
+        assert "signal_state" not in serialized
+        assert "reason_codes" not in serialized
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)

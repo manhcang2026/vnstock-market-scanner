@@ -1,14 +1,30 @@
 .trading-terminal {
+  --chart-bg: #0f1726;
+  --chart-toolbar: #121c2d;
+  --chart-popover: #172238;
+  --chart-hover: rgba(255, 255, 255, .04);
+  --chart-active: rgba(255, 255, 255, .06);
+  --chart-overlay: rgba(19, 29, 47, .94);
   position: relative;
   min-width: 0;
-  background: #0f1726;
+  background: var(--chart-bg);
+  color: var(--text);
+}
+
+html[data-theme="light"] .trading-terminal {
+  --chart-bg: #ffffff;
+  --chart-toolbar: #f4f6f9;
+  --chart-popover: #ffffff;
+  --chart-hover: rgba(31, 49, 73, .05);
+  --chart-active: rgba(31, 49, 73, .08);
+  --chart-overlay: rgba(255, 255, 255, .96);
 }
 
 .trading-terminal:fullscreen {
   width: 100vw;
   height: 100vh;
   overflow: hidden;
-  background: #0f1726;
+  background: var(--chart-bg);
 }
 
 .terminal-toolbar {
@@ -19,7 +35,7 @@
   min-height: 48px;
   padding: 7px 10px;
   border-bottom: 1px solid var(--border);
-  background: #121c2d;
+  background: var(--chart-toolbar);
 }
 
 .timeframe-group,
@@ -51,12 +67,12 @@
 
 .terminal-toolbar button:hover {
   color: var(--text);
-  background: rgba(255, 255, 255, .04);
+  background: var(--chart-hover);
 }
 
 .terminal-toolbar button.is-active {
   border-color: var(--border-strong);
-  background: rgba(255, 255, 255, .06);
+  background: var(--chart-active);
   color: var(--text);
 }
 
@@ -80,8 +96,8 @@
 }
 
 .trading-terminal:fullscreen .fullscreen-button {
-  border-color: rgba(255, 255, 255, .22);
-  background: rgba(255, 255, 255, .08);
+  border-color: var(--border-strong);
+  background: var(--chart-active);
   color: var(--text);
 }
 
@@ -92,7 +108,7 @@
   min-height: 34px;
   padding: 6px 12px;
   overflow-x: auto;
-  border-bottom: 1px solid rgba(89, 105, 132, .18);
+  border-bottom: 1px solid var(--border);
   color: var(--muted);
   font-size: 10px;
   white-space: nowrap;
@@ -116,7 +132,7 @@
   min-height: 28px;
   padding: 3px 12px 4px;
   overflow-x: auto;
-  border-bottom: 1px solid rgba(89, 105, 132, .12);
+  border-bottom: 1px solid var(--border);
   font-size: 10px;
   font-weight: 700;
   white-space: nowrap;
@@ -145,7 +161,7 @@
 
 .terminal-attribution {
   padding: 5px 10px 7px;
-  border-top: 1px solid rgba(89, 105, 132, .16);
+  border-top: 1px solid var(--border);
   color: var(--muted);
   font-size: 10px;
   text-align: right;
@@ -211,7 +227,7 @@
   padding: 6px;
   border: 1px solid var(--border-strong);
   border-radius: 8px;
-  background: #172238;
+  background: var(--chart-popover);
   box-shadow: 0 14px 34px rgba(0, 0, 0, .34);
 }
 
@@ -229,7 +245,7 @@
 
 .terminal-toolbar .ma-menu button.is-enabled {
   color: var(--text);
-  background: rgba(255, 255, 255, .04);
+  background: var(--chart-hover);
 }
 
 .ma-menu b {
@@ -266,13 +282,13 @@
   right: 58px;
   width: 220px;
   padding: 10px 11px;
-  border: 1px solid rgba(116, 137, 171, .44);
+  border: 1px solid var(--border-strong);
   border-radius: 8px;
-  background: rgba(19, 29, 47, .94);
+  background: var(--chart-overlay);
   box-shadow: 0 10px 28px rgba(0, 0, 0, .28);
   color: var(--text);
   font-size: 11px;
-  pointer-events: none;
+  pointer-events: auto;
   backdrop-filter: blur(6px);
 }
 
@@ -283,7 +299,7 @@
   gap: 8px;
   margin-bottom: 8px;
   padding-bottom: 7px;
-  border-bottom: 1px solid rgba(116, 137, 171, .22);
+  border-bottom: 1px solid var(--border);
 }
 
 .inspector-title strong {
@@ -295,6 +311,24 @@
   font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
+}
+
+.inspector-close {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--chart-hover);
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+}
+
+.inspector-close:hover {
+  color: var(--text);
 }
 
 .candle-inspector dl {

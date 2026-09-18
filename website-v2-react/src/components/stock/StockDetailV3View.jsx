@@ -14,17 +14,11 @@ const SESSION_LABELS = {
   CLOSED: 'Đóng cửa',
 }
 
-function describeMarketSession(quote) {
-  const raw = String(quote?.trading_session || '').trim().toUpperCase()
+function describeMarketSession(quote, publicContext) {
+  const raw = String(publicContext?.session_type || quote?.trading_session || '').trim().toUpperCase()
   if (!raw) return { label: 'Phiên chưa xác định', raw: '', semantic: false }
   if (SESSION_LABELS[raw]) return { label: SESSION_LABELS[raw], raw, semantic: true }
-  return { label: `Phiên ${raw}`, raw, semantic: false }
-}
-
-function sourceLabel(source) {
-  const value = String(source || '').trim()
-  if (!value) return 'Nguồn chưa xác định'
-  return value.startsWith('SSI') ? 'SSI' : value
+  return { label: 'Phiên chưa xác định', raw, semantic: false }
 }
 
 export default function StockDetailV3View({
@@ -37,7 +31,6 @@ export default function StockDetailV3View({
   changeClass,
   formatNumber,
   formatPercent,
-  chart,
   chartContent,
   liveConnected,
   ready,
@@ -45,22 +38,31 @@ export default function StockDetailV3View({
   accessLoading,
   accessError,
   access,
+  publicContext,
+  publicContextError,
+  ccc,
+  cccError,
+  cccLoading,
+  radar,
+  radarError,
+  financial,
+  financialError,
+  financialLoading,
+  quarterly,
+  quarterlyError,
+  quarterlyLoading,
 }) {
   const companyName = metadataLoading
     ? 'Đang tải thông tin doanh nghiệp…'
     : metadata?.display_name || metadata?.company_name || 'Thông tin doanh nghiệp chưa có'
   const exchange = quote?.exchange || metadata?.exchange || '—'
-  const marketSession = describeMarketSession(quote)
+  const marketSession = describeMarketSession(quote, publicContext)
 
   return (
     <div className="stock-v3-page">
       <StockDetailSignalRail
-        symbol={symbol}
-        ready={ready}
-        user={user}
-        accessLoading={accessLoading}
-        accessError={accessError}
-        access={access}
+        radar={radar}
+        radarError={radarError}
       />
 
       <div className="stock-v3-workspace">
@@ -75,7 +77,7 @@ export default function StockDetailV3View({
             </div>
             <p>{companyName}</p>
             <small>
-              Cập nhật {quote?.event_time || '—'} · {sourceLabel(quote?.source)}
+              Cập nhật {quote?.event_time || '—'}
             </small>
           </div>
 
@@ -97,6 +99,13 @@ export default function StockDetailV3View({
           </section>
         ) : null}
 
+        {publicContextError ? (
+          <section className="stock-v3-error" role="status">
+            <strong>Chưa tải được bối cảnh MA</strong>
+            <p>{publicContextError}</p>
+          </section>
+        ) : null}
+
         <section className="stock-v3-chart-card" aria-label={`Biểu đồ kỹ thuật ${symbol}`}>
           <header className="stock-v3-chart-header">
             <h2>Diễn biến giá</h2>
@@ -105,27 +114,34 @@ export default function StockDetailV3View({
         </section>
 
         <StockDetailTabs
+          symbol={symbol}
           quote={quote}
           quoteLoading={quoteLoading}
           formatNumber={formatNumber}
+          metadata={metadata}
+          publicContext={publicContext}
           ready={ready}
           user={user}
           accessLoading={accessLoading}
           accessError={accessError}
           access={access}
+          ccc={ccc}
+          cccError={cccError}
+          cccLoading={cccLoading}
+          financial={financial}
+          financialError={financialError}
+          financialLoading={financialLoading}
+          quarterly={quarterly}
+          quarterlyError={quarterlyError}
+          quarterlyLoading={quarterlyLoading}
         />
       </div>
 
       <StockDetailContextPanel
         quote={quote}
-        chart={chart}
+        publicContext={publicContext}
         liveConnected={liveConnected}
         marketSession={marketSession}
-        ready={ready}
-        user={user}
-        accessLoading={accessLoading}
-        accessError={accessError}
-        access={access}
       />
     </div>
   )

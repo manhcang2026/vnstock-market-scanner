@@ -136,6 +136,11 @@
   gap: 8px;
 }
 
+.stock-header-utility:disabled {
+  cursor: default;
+  opacity: .72;
+}
+
 .stock-v3-clock {
   display: inline-flex;
   align-items: baseline;
@@ -191,6 +196,11 @@
   color: var(--muted);
   font-size: 13px;
   font-weight: 650;
+}
+
+button.stock-shell-nav-link {
+  border: 0;
+  background: transparent;
 }
 
 .stock-shell-nav-link.is-compact {
@@ -337,7 +347,8 @@
   .stock-menu-button,
   .stock-v3-nav-rail,
   .stock-v3-brand-copy,
-  .stock-header-account {
+  .stock-header-account,
+  .stock-header-utility {
     display: none;
   }
 

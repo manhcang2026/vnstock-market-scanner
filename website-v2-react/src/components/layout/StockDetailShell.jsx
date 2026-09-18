@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { NavLink, useNavigate } from 'react-router-dom'
+import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import '../../styles/stock-detail-shell.css'
 
 const desktopNavItems = [
@@ -56,6 +56,9 @@ function Icon({ name, size = 20 }) {
     more: <><circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /></>,
     account: <><circle cx="12" cy="8" r="4" /><path d="M4.5 21a7.5 7.5 0 0 1 15 0" /></>,
     chevron: <><path d="m9 18 6-6-6-6" /></>,
+    bell: <><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></>,
+    help: <><circle cx="12" cy="12" r="9" /><path d="M9.8 9a2.4 2.4 0 1 1 3.3 2.2c-.8.4-1.1.9-1.1 1.8m0 3h.01" /></>,
+    settings: <><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6 1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z" /></>,
   }
 
   return (
@@ -108,6 +111,11 @@ export default function StockDetailShell({
   const moreSheetRef = useRef(null)
   const moreWasOpenRef = useRef(false)
   const navigate = useNavigate()
+  const location = useLocation()
+  const accountName = user?.user_metadata?.display_name
+    || user?.user_metadata?.full_name
+    || user?.email?.split('@')[0]
+    || 'Đăng nhập'
 
   useEffect(() => {
     if (drawerOpen) drawerCloseRef.current?.focus()
@@ -190,6 +198,15 @@ export default function StockDetailShell({
 
         <div className="stock-v3-header-actions">
           <VietnamClock />
+          <button type="button" className="stock-header-button stock-header-utility" aria-label="Thông báo" title="Thông báo chưa được kết nối" disabled>
+            <Icon name="bell" size={17} />
+          </button>
+          <button type="button" className="stock-header-button stock-header-utility" aria-label="Trợ giúp" title="Nội dung trợ giúp chưa có route" disabled>
+            <Icon name="help" size={17} />
+          </button>
+          <button type="button" className="stock-header-button stock-header-utility" onClick={onToggleTheme} aria-label="Cài đặt giao diện" title="Cài đặt giao diện">
+            <Icon name="settings" size={17} />
+          </button>
           <button
             type="button"
             className="stock-header-account"
@@ -197,7 +214,7 @@ export default function StockDetailShell({
             title={user?.email || 'Tài khoản'}
           >
             <Icon name="account" size={17} />
-            <span>{!ready ? '…' : user ? 'Tài khoản' : 'Đăng nhập'}</span>
+            <span>{!ready ? '…' : accountName}</span>
           </button>
           <button
             type="button"
@@ -213,7 +230,16 @@ export default function StockDetailShell({
 
       <aside className="stock-v3-nav-rail" aria-label="Điều hướng chính thu gọn">
         {desktopNavItems.map((item) => (
-          <ShellNavLink key={item.to} item={item} compact />
+          <button
+            key={item.to}
+            type="button"
+            className={`stock-shell-nav-link is-compact${location.pathname === item.to ? ' is-active' : ''}`}
+            aria-label={`Mở nhãn ${item.label}`}
+            aria-expanded={drawerOpen}
+            onClick={() => setDrawerOpen(true)}
+          >
+            <Icon name={item.icon} />
+          </button>
         ))}
       </aside>
 
@@ -226,25 +252,7 @@ export default function StockDetailShell({
             onClick={() => setDrawerOpen(false)}
           />
           <aside id="stock-v3-drawer" className="stock-v3-drawer" aria-label="Menu chính">
-            <div className="stock-v3-drawer-header">
-              <div>
-                <strong>Chuyện Chợ Chứng</strong>
-                <span>Stock Intelligence</span>
-              </div>
-              <button
-                ref={drawerCloseRef}
-                type="button"
-                className="stock-header-button"
-                aria-label="Đóng menu chính"
-                onClick={() => {
-                  setDrawerOpen(false)
-                  menuButtonRef.current?.focus()
-                }}
-              >
-                <Icon name="close" />
-              </button>
-            </div>
-            <nav>
+            <nav ref={drawerCloseRef} tabIndex={-1}>
               {desktopNavItems.map((item) => (
                 <ShellNavLink key={item.to} item={item} onClick={() => setDrawerOpen(false)} />
               ))}
@@ -252,7 +260,7 @@ export default function StockDetailShell({
             <div className="stock-v3-drawer-footer">
               <button type="button" onClick={() => navigate('/dang-nhap')}>
                 <Icon name="account" />
-                <span>{user ? user.email : 'Đăng nhập / Tài khoản'}</span>
+                <span>{user ? accountName : 'Đăng nhập / Tài khoản'}</span>
               </button>
             </div>
           </aside>
@@ -347,6 +355,16 @@ export default function StockDetailShell({
                 <strong>Giao diện</strong>
                 <small>{theme === 'dark' ? 'Chuyển sang Sáng' : 'Chuyển sang Tối'}</small>
               </span>
+              <Icon name="chevron" size={18} />
+            </button>
+            <button type="button" className="stock-v3-sheet-row" disabled>
+              <Icon name="bell" />
+              <span><strong>Thông báo</strong><small>Chưa kết nối dữ liệu thông báo</small></span>
+              <Icon name="chevron" size={18} />
+            </button>
+            <button type="button" className="stock-v3-sheet-row" disabled>
+              <Icon name="help" />
+              <span><strong>Trợ giúp</strong><small>Chưa có nội dung trợ giúp</small></span>
               <Icon name="chevron" size={18} />
             </button>
           </section>

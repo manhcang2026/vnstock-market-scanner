@@ -1,7 +1,9 @@
 from pathlib import Path
+import asyncio
+import json
 import sqlite3
 
-from app.live_ws import LiveSQLiteStore, _bucket_start
+from app.live_ws import LiveGateway, LiveSQLiteStore, _bucket_start
 
 
 def _make_db(path: Path) -> None:
@@ -112,3 +114,21 @@ def test_snapshot_builds_daily_candle(tmp_path: Path) -> None:
     assert candle["low"] == 72900
     assert candle["close"] == 73800
     assert candle["volume"] == 310000
+
+
+def test_public_chart_subscription_does_not_require_token(tmp_path: Path) -> None:
+    class FakeWebSocket:
+        async def recv(self):
+            return json.dumps({
+                "type": "subscribe",
+                "channel": "chart",
+                "symbol": "HPG",
+                "resolution": 15,
+            })
+
+    gateway = LiveGateway(store=LiveSQLiteStore(tmp_path / "missing.db"))
+    symbol, resolution, token = asyncio.run(
+        gateway._receive_subscription(FakeWebSocket())
+    )
+
+    assert (symbol, resolution, token) == ("HPG", 15, "")

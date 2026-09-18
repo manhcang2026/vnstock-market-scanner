@@ -1,44 +1,64 @@
-function SignalRailState({ ready, user, accessLoading, accessError, access }) {
-  if (!ready) return { tone: 'neutral', title: 'Đang kiểm tra phiên' }
-  if (!user) return { tone: 'locked', title: 'Đăng nhập để xem CCC Tech' }
-  if (accessLoading) return { tone: 'neutral', title: 'Đang kiểm tra quyền' }
-  if (accessError) return { tone: 'warning', title: 'Chưa xác thực được quyền', copy: accessError }
-  if (!access?.technical_allowed) {
-    return {
-      tone: 'locked',
-      title: 'Ngoài phạm vi technical',
-      copy: access?.reason || '',
-    }
-  }
-  return {
-    tone: 'pending',
-    title: 'Đang chờ Signal Engine V2',
-  }
+import { Link } from 'react-router-dom'
+
+const STATE_LABELS = {
+  WATCHING: 'Đang theo dõi',
+  FLOW_APPEARING: 'Dòng tiền xuất hiện',
+  FLOW_PRICE_CONFIRMED: 'Dòng tiền & giá xác nhận',
+  MOMENTUM_MAINTAINED: 'Xu hướng duy trì',
+  MOMENTUM_WEAKENING: 'Động lượng suy yếu',
+  SELLING_PRESSURE: 'Áp lực bán',
 }
 
-export default function StockDetailSignalRail({ symbol, ready, user, accessLoading, accessError, access }) {
-  const state = SignalRailState({ ready, user, accessLoading, accessError, access })
+function shortTime(value) {
+  if (!value) return '—'
+  const match = String(value).match(/T?(\d{2}:\d{2})/)
+  return match?.[1] || '—'
+}
+
+export default function StockDetailSignalRail({ radar, radarError }) {
+  const groups = Array.isArray(radar?.groups) ? radar.groups : []
+  const activeGroups = groups.filter(group => Number(group.total) > 0)
 
   return (
-    <aside className="stock-v3-signal-rail" aria-label="Tín hiệu CCC gần đây">
+    <aside className="stock-v3-signal-rail stock-v3-radar" aria-label="CCC Radar thị trường">
       <header>
-        <span className="stock-v3-section-kicker">Tín hiệu</span>
-        <strong>Gần đây</strong>
+        <span className="stock-v3-section-kicker">CCC Radar</span>
+        <strong>Tín hiệu thị trường</strong>
       </header>
-      <div className={`stock-v3-signal-item is-${state.tone}`}>
-        <div className="stock-v3-signal-item-topline">
-          <strong>{symbol}</strong>
-          <span aria-hidden="true">—</span>
-        </div>
-        <p>{state.title}</p>
-        {state.copy ? <small>{state.copy}</small> : null}
-        <div className="stock-v3-heat-pending" aria-label="Signal level chưa có dữ liệu">
-          <span />
-          <span />
-          <span />
-          <span />
-        </div>
+
+      {radarError && !radar ? (
+        <p className="stock-v3-radar-state is-error">{radarError}</p>
+      ) : null}
+      {!radar && !radarError ? (
+        <p className="stock-v3-radar-state">Đang tải trạng thái thị trường…</p>
+      ) : null}
+      {radar && !activeGroups.length ? (
+        <p className="stock-v3-radar-state">Chưa có tín hiệu hiện tại cần chú ý.</p>
+      ) : null}
+
+      <div className="stock-v3-radar-groups">
+        {activeGroups.map((group) => (
+          <section key={group.state} className={`stock-v3-radar-group is-${String(group.state).toLowerCase()}`}>
+            <div className="stock-v3-radar-group-title">
+              <strong>{STATE_LABELS[group.state] || group.state}</strong>
+              <b>{group.total}</b>
+            </div>
+            {(group.items || []).slice(0, 4).map((item) => (
+              <Link key={item.symbol} to={`/co-phieu/${item.symbol}`}>
+                <strong>{item.symbol}</strong>
+                <time>{shortTime(item.state_changed_at || item.event_at)}</time>
+              </Link>
+            ))}
+            {Number(group.hidden) > 0 ? <small>+{group.hidden} mã khác</small> : null}
+          </section>
+        ))}
       </div>
+
+      {radar?.identity_scope !== 'FULL_MARKET' ? (
+        <Link className="stock-v3-radar-cta" to="/danh-sach">
+          Quản lý phạm vi theo dõi
+        </Link>
+      ) : null}
     </aside>
   )
 }

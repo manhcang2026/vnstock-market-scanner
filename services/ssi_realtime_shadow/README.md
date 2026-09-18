@@ -118,3 +118,15 @@ python -m app.live_ready_check --trading-date 2026-09-21
 The `LiveRuntimeHarness` in `app.live_runtime_harness` drives fixture messages
 through the real collector normalization, volume engine, live projector,
 current-state table, and frontend serializer without a provider connection.
+
+## Public market data and protected CCC intelligence
+
+Stock Detail market data is public: quote, chart history, standard chart tools,
+MA context and the plain `channel=chart` WebSocket subscription do not require a
+Supabase token. These payloads contain no CCC RVOL, price-momentum, auction,
+signal, reason-code or threshold data.
+
+`/v1/access/<symbol>` and `/v1/ccc/<symbol>` remain authenticated and fail
+closed. Radar counts are public, while identities are filtered server-side from
+one authenticated technical-scope resolution; full-market plans and active VIP
+Day receive the complete current identity set.

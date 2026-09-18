@@ -20,6 +20,11 @@ from .access_control import (
     extract_bearer_token,
 )
 from .chart_data import ChartDataStore, SYMBOL_RE
+from .state_contract import (
+    build_radar_projection,
+    get_ccc_intelligence,
+    get_public_stock_detail,
+)
 
 
 QUOTE_COLUMNS = (
@@ -92,7 +97,7 @@ def _response(handler: BaseHTTPRequestHandler, status: int, payload: dict) -> No
 
 
 class ChartAPIHandler(BaseHTTPRequestHandler):
-    server_version = "CCCChartAPI/1.2"
+    server_version = "CCCChartAPI/1.3"
 
     @property
     def store(self) -> ChartDataStore:
@@ -101,6 +106,18 @@ class ChartAPIHandler(BaseHTTPRequestHandler):
     @property
     def access_client(self) -> SupabaseEntitlementClient:
         return self.server.access_client  # type: ignore[attr-defined]
+
+    @property
+    def state_path(self) -> Path:
+        return self.server.state_path  # type: ignore[attr-defined]
+
+    def _state_connection(self) -> sqlite3.Connection:
+        connection = sqlite3.connect(
+            f"file:{self.state_path.resolve()}?mode=ro", uri=True, timeout=5
+        )
+        connection.execute("PRAGMA query_only=ON")
+        connection.execute("PRAGMA busy_timeout=5000")
+        return connection
 
     def log_message(self, format: str, *args) -> None:
         # Standard access log only; Authorization header is never logged here.
@@ -211,8 +228,118 @@ class ChartAPIHandler(BaseHTTPRequestHandler):
             _response(self, HTTPStatus.OK, decision.to_public_payload())
             return
 
-        # Price/volume chart is treated as part of the authenticated technical
-        # workspace for V2. The backend enforces entitlement before touching chart data.
+        # Anonymous Stock Detail context: explicit public fields only.
+        public_detail_prefix = "/v1/stock-detail/"
+        if parsed.path.startswith(public_detail_prefix):
+            try:
+                symbol = _normalize_symbol(parsed.path[len(public_detail_prefix) :])
+                with self._state_connection() as connection:
+                    payload = get_public_stock_detail(connection, symbol)
+            except ValueError as exc:
+                _response(
+                    self,
+                    HTTPStatus.BAD_REQUEST,
+                    {"error": "INVALID_REQUEST", "message": str(exc)},
+                )
+                return
+            except (sqlite3.Error, OSError) as exc:
+                _response(
+                    self,
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                    {"error": "STATE_UNAVAILABLE", "message": type(exc).__name__},
+                )
+                return
+            if payload is None:
+                _response(
+                    self,
+                    HTTPStatus.NOT_FOUND,
+                    {"error": "STATE_NOT_FOUND", "symbol": symbol},
+                )
+                return
+            _response(self, HTTPStatus.OK, payload)
+            return
+
+        # Proprietary current-state projection: authorize before reading/returning.
+        ccc_prefix = "/v1/ccc/"
+        if parsed.path.startswith(ccc_prefix):
+            try:
+                symbol = _normalize_symbol(parsed.path[len(ccc_prefix) :])
+            except ValueError as exc:
+                _response(
+                    self,
+                    HTTPStatus.BAD_REQUEST,
+                    {"error": "INVALID_REQUEST", "message": str(exc)},
+                )
+                return
+            decision, authenticated = self._technical_access(symbol)
+            if not authenticated or decision is None:
+                return
+            if not decision.technical_allowed:
+                _response(
+                    self,
+                    HTTPStatus.FORBIDDEN,
+                    {
+                        "error": "CCC_ACCESS_DENIED",
+                        "symbol": symbol,
+                        "reason": decision.reason,
+                    },
+                )
+                return
+            try:
+                with self._state_connection() as connection:
+                    payload = get_ccc_intelligence(connection, symbol)
+            except (sqlite3.Error, OSError) as exc:
+                _response(
+                    self,
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                    {"error": "STATE_UNAVAILABLE", "message": type(exc).__name__},
+                )
+                return
+            if payload is None:
+                _response(
+                    self,
+                    HTTPStatus.NOT_FOUND,
+                    {"error": "STATE_NOT_FOUND", "symbol": symbol},
+                )
+                return
+            _response(self, HTTPStatus.OK, payload)
+            return
+
+        # Radar counts are public. Identities are added only after one
+        # server-side scope resolution; anonymous or failed scope checks receive
+        # aggregate counts with every identity omitted.
+        if parsed.path == "/v1/radar":
+            visible_symbols: set[str] = set()
+            full_market = False
+            identity_scope = "ANONYMOUS"
+            token = extract_bearer_token(self.headers.get("Authorization"))
+            if token:
+                try:
+                    scope = self.access_client.scope(token=token)
+                    visible_symbols = set(scope.allowed_symbols)
+                    full_market = scope.effective_full_market_access
+                    identity_scope = "FULL_MARKET" if full_market else "WATCHLIST"
+                except (AuthenticationRequired, EntitlementServiceUnavailable):
+                    identity_scope = "UNAVAILABLE"
+            try:
+                with self._state_connection() as connection:
+                    payload = build_radar_projection(
+                        connection,
+                        visible_symbols=visible_symbols,
+                        full_market=full_market,
+                    )
+            except (sqlite3.Error, OSError) as exc:
+                _response(
+                    self,
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                    {"error": "STATE_UNAVAILABLE", "message": type(exc).__name__},
+                )
+                return
+            payload["identity_scope"] = identity_scope
+            _response(self, HTTPStatus.OK, payload)
+            return
+
+        # Price/volume history contains market bars only and is public.
         chart_prefix = "/v1/chart/"
         if not parsed.path.startswith(chart_prefix):
             _response(self, HTTPStatus.NOT_FOUND, {"error": "NOT_FOUND"})
@@ -225,22 +352,6 @@ class ChartAPIHandler(BaseHTTPRequestHandler):
                 self,
                 HTTPStatus.BAD_REQUEST,
                 {"error": "INVALID_REQUEST", "message": str(exc)},
-            )
-            return
-
-        decision, authenticated = self._technical_access(symbol)
-        if not authenticated or decision is None:
-            return
-        if not decision.technical_allowed:
-            _response(
-                self,
-                HTTPStatus.FORBIDDEN,
-                {
-                    "error": "TECHNICAL_ACCESS_DENIED",
-                    "symbol": symbol,
-                    "reason": decision.reason,
-                    "plan_code": decision.plan_code,
-                },
             )
             return
 
@@ -296,9 +407,13 @@ class ChartHTTPServer(ThreadingHTTPServer):
         handler,
         store: ChartDataStore,
         access_client: SupabaseEntitlementClient | None = None,
+        state_path: Path | None = None,
     ):
         self.store = store
         self.access_client = access_client or SupabaseEntitlementClient()
+        self.state_path = Path(
+            state_path or os.getenv("MARKET_V2_DATABASE_PATH", "/app/data/ccc_market_v2.db")
+        )
         super().__init__(address, handler)
 
 
@@ -323,6 +438,13 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=int(os.getenv("CHART_API_PORT", "8787")),
     )
+    parser.add_argument(
+        "--state",
+        type=Path,
+        default=Path(
+            os.getenv("MARKET_V2_DATABASE_PATH", "/app/data/ccc_market_v2.db")
+        ),
+    )
     return parser
 
 
@@ -334,6 +456,7 @@ def main(argv: list[str] | None = None) -> int:
         ChartAPIHandler,
         store,
         SupabaseEntitlementClient(),
+        args.state,
     )
     print(
         f"CCC Chart API listening on {args.host}:{args.port} "
