@@ -3,6 +3,7 @@ services:
     build: .
     image: ccc-ssi-realtime:local
     container_name: ccc-ssi-shadow
+    user: "1001:1001"
     restart: unless-stopped
     env_file:
       - .env
@@ -29,4 +30,26 @@ services:
       - --port
       - "8787"
     ports:
-      - "127.0.0.1:8787:8787"
+      - "10.0.0.226:8787:8787"
+
+  live-ws:
+    image: ccc-ssi-realtime:local
+    container_name: ccc-live-ws
+    restart: unless-stopped
+    user: "1001:1001"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data:ro
+    command:
+      - python
+      - -m
+      - app.live_ws
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8790"
+      - --interval
+      - "3"
+    ports:
+      - "10.0.0.226:8790:8790"

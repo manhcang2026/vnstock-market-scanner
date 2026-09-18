@@ -17,6 +17,14 @@ RUN set -eux; \
     pip install --no-cache-dir "$pkg"; \
     rm -rf /tmp/ssi_vendor
 
+# VPS SSI SDK hardening:
+# - do not print HTTP headers/credentials
+# - require SSL certificate verification
+RUN sed -i 's/print(self.headers)/# print(self.headers)/' \
+      /usr/local/lib/python3.11/site-packages/ssi_fc_data/signalr/transports/_transport.py \
+    && sed -i 's/verify_ssl=False/verify_ssl=True/' \
+      /usr/local/lib/python3.11/site-packages/ssi_fc_data/signalr/transports/_transport.py
+
 COPY app/ ./app/
 RUN mkdir -p /app/data
 
