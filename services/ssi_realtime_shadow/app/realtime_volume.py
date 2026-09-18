@@ -67,6 +67,9 @@ class VolumeEvent:
     quality_status: str
     is_partial: bool = False
     has_gap: bool = False
+    provider_session: str = ""
+    provider_total_volume: int | None = None
+    data_source: str = "SSI_STREAM"
 
     def __post_init__(self) -> None:
         symbol = str(self.symbol or "").strip().upper()
@@ -107,11 +110,30 @@ class VolumeEvent:
                 raise ValueError("VolumeEvent total_volume must be an integer or None")
             if self.total_volume < 0:
                 raise ValueError("VolumeEvent total_volume must not be negative")
+        if self.provider_total_volume is not None:
+            if isinstance(self.provider_total_volume, bool) or not isinstance(
+                self.provider_total_volume, int
+            ):
+                raise ValueError(
+                    "VolumeEvent provider_total_volume must be an integer or None"
+                )
+            if self.provider_total_volume < 0:
+                raise ValueError(
+                    "VolumeEvent provider_total_volume must not be negative"
+                )
 
         quality_status = str(self.quality_status or "").strip().upper()
         if not quality_status:
             raise ValueError("VolumeEvent quality_status is required")
         object.__setattr__(self, "quality_status", quality_status)
+        object.__setattr__(
+            self,
+            "provider_session",
+            str(self.provider_session or "").strip().upper(),
+        )
+        object.__setattr__(
+            self, "data_source", str(self.data_source or "").strip().upper()
+        )
 
 
 @dataclass(frozen=True, slots=True)

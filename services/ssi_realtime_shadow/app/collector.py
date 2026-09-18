@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable, Iterable
 
+from .auction import AuctionEvent, AuctionSessionAccumulator
 from .market_session import (
     VN_TZ,
     market_day_feed_start,
@@ -157,6 +158,8 @@ class CollectorStats:
     volume_shadow_event_errors: int = 0
     volume_shadow_advance_errors: int = 0
     volume_shadow_snapshots: int = 0
+    auction_projection_events: int = 0
+    auction_projection_errors: int = 0
 
 
 class QuoteCollector:
@@ -176,6 +179,7 @@ class QuoteCollector:
         self._initialized_keys: set[tuple[str, str]] = set()
         self.last_event_at: datetime | None = None
         self.volume_event_handler = volume_event_handler
+        self.auction_accumulator = AuctionSessionAccumulator()
 
     def _can_seed_from_zero(self, event_at: datetime, exchange: str | None) -> bool:
         if exchange is None or not market_feed_expected(event_at, exchange):
@@ -232,6 +236,9 @@ class QuoteCollector:
             event_at = _event_datetime(trading_date, event_time)
             last_price = _to_float(_first(payload, "LastPrice", "Close"))
             total_volume = _to_int(_first(payload, "TotalVol", "TotalVolume"))
+            provider_session = str(
+                _first(payload, "TradingSession") or ""
+            ).strip().upper()
 
             if last_price is None or last_price <= 0:
                 self.stats.ignored_without_price += 1
@@ -350,15 +357,39 @@ class QuoteCollector:
                     "change": _to_float(_first(payload, "Change")),
                     "ratio_change": _to_float(_first(payload, "RatioChange")),
                     "exchange": exchange,
-                    "trading_session": str(
-                        _first(payload, "TradingSession") or ""
-                    ).strip().upper(),
+                    "trading_session": provider_session,
                     "trading_status": str(_first(payload, "TradingStatus") or ""),
                     "updated_at": updated_at,
                 }
             )
             self.stats.accepted_events += 1
             self.last_event_at = now
+            if exchange is not None:
+                try:
+                    auction_result = self.auction_accumulator.on_event(
+                        AuctionEvent(
+                            symbol=symbol,
+                            exchange=exchange,
+                            trading_date=trading_date,
+                            event_at=event_at,
+                            price=last_price,
+                            total_volume=total_volume,
+                            provider_session=provider_session,
+                            quality_status=quality_status,
+                            is_partial=is_partial,
+                            has_gap=has_gap,
+                        )
+                    )
+                    for bucket in auction_result.updated_buckets:
+                        self.store.upsert_auction_bucket(bucket.to_record())
+                    self.stats.auction_projection_events += 1
+                except Exception:
+                    self.stats.auction_projection_errors += 1
+                    LOG.exception(
+                        "CCC V2 auction projection failed: symbol=%s session=%s",
+                        symbol,
+                        provider_session,
+                    )
             if exchange is not None and self.volume_event_handler is not None:
                 self.stats.volume_shadow_events += 1
                 try:
@@ -373,6 +404,9 @@ class QuoteCollector:
                         quality_status=quality_status,
                         is_partial=is_partial,
                         has_gap=has_gap,
+                        provider_session=provider_session,
+                        provider_total_volume=total_volume,
+                        data_source="SSI_STREAM",
                     )
                     self.volume_event_handler(volume_event)
                 except Exception:
@@ -396,4 +430,6 @@ class QuoteCollector:
             "volume_shadow_event_errors": self.stats.volume_shadow_event_errors,
             "volume_shadow_advance_errors": self.stats.volume_shadow_advance_errors,
             "volume_shadow_snapshots": self.stats.volume_shadow_snapshots,
+            "auction_projection_events": self.stats.auction_projection_events,
+            "auction_projection_errors": self.stats.auction_projection_errors,
         }

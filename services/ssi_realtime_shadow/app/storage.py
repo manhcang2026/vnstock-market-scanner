@@ -76,6 +76,32 @@ CREATE TABLE IF NOT EXISTS historical_bootstrap_checkpoints (
     error TEXT,
     PRIMARY KEY (symbol, from_date, to_date, resolution)
 );
+
+CREATE TABLE IF NOT EXISTS auction_session_buckets (
+    symbol TEXT NOT NULL,
+    trading_date TEXT NOT NULL,
+    exchange TEXT NOT NULL,
+    auction_type TEXT NOT NULL CHECK (
+        auction_type IN ('OPEN_AUCTION', 'CLOSE_AUCTION')
+    ),
+    provider_session TEXT NOT NULL,
+    auction_price REAL,
+    pre_auction_price REAL,
+    auction_volume INTEGER NOT NULL CHECK (auction_volume >= 0),
+    start_total_volume INTEGER NOT NULL CHECK (start_total_volume >= 0),
+    end_total_volume INTEGER NOT NULL CHECK (end_total_volume >= 0),
+    event_count INTEGER NOT NULL CHECK (event_count >= 0),
+    out_of_order_events INTEGER NOT NULL CHECK (out_of_order_events >= 0),
+    first_event_at TEXT,
+    last_event_at TEXT,
+    quality_status TEXT NOT NULL,
+    finalized INTEGER NOT NULL CHECK (finalized IN (0, 1)),
+    data_source TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (symbol, trading_date, auction_type)
+);
+CREATE INDEX IF NOT EXISTS idx_auction_session_buckets_date
+    ON auction_session_buckets(trading_date, exchange, auction_type, symbol);
 """
 
 
@@ -309,6 +335,44 @@ class SQLiteStore:
                 INSERT INTO latest_quotes ({', '.join(columns)})
                 VALUES ({', '.join('?' for _ in columns)})
                 ON CONFLICT(symbol) DO UPDATE SET {assignments}
+                """,
+                values,
+            )
+            self._touch()
+
+    def upsert_auction_bucket(self, bucket: dict[str, Any]) -> None:
+        columns = [
+            "symbol",
+            "trading_date",
+            "exchange",
+            "auction_type",
+            "provider_session",
+            "auction_price",
+            "pre_auction_price",
+            "auction_volume",
+            "start_total_volume",
+            "end_total_volume",
+            "event_count",
+            "out_of_order_events",
+            "first_event_at",
+            "last_event_at",
+            "quality_status",
+            "finalized",
+            "data_source",
+            "updated_at",
+        ]
+        values = [bucket.get(column) for column in columns]
+        values[15] = 1 if values[15] else 0
+        assignments = ", ".join(
+            f"{column}=excluded.{column}" for column in columns[3:]
+        )
+        with self._lock:
+            self._conn.execute(
+                f"""
+                INSERT INTO auction_session_buckets ({', '.join(columns)})
+                VALUES ({', '.join('?' for _ in columns)})
+                ON CONFLICT(symbol, trading_date, auction_type)
+                DO UPDATE SET {assignments}
                 """,
                 values,
             )

@@ -554,7 +554,12 @@ def test_volume_callback_receives_exact_post_accounting_canonical_event(
         volume_event_handler=handler,
     )
     collector.on_message(
-        market_event(Market="HSX", Time="09:00:10", TotalVol=1_000)
+        market_event(
+            Market="HSX",
+            Time="09:00:10",
+            TotalVol=1_000,
+            TradingSession=" ato ",
+        )
     )
 
     assert len(received) == 1
@@ -566,11 +571,57 @@ def test_volume_callback_receives_exact_post_accounting_canonical_event(
     assert event.minute == "09:00"
     assert event.volume_delta == 1_000
     assert event.total_volume == 1_000
+    assert event.provider_total_volume == 1_000
+    assert event.provider_session == "ATO"
+    assert event.data_source == "SSI_STREAM"
     assert event.quality_status == "TRUSTED"
     assert not event.is_partial
     assert not event.has_gap
     assert collector.stats.volume_shadow_events == 1
     assert collector.stats.volume_shadow_event_errors == 0
+    store.close()
+
+
+def test_collector_persists_isolated_provider_session_auction_projection(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteStore(tmp_path / "test.db", commit_every_events=1)
+    collector = QuoteCollector({"HPG"}, store, started_at=started_at(8, 30))
+    collector.on_message(
+        market_event(Time="09:00:10", TotalVol=100, TradingSession="ATO")
+    )
+    collector.on_message(
+        market_event(Time="09:16:10", TotalVol=150, TradingSession="LO")
+    )
+    collector.on_message(
+        market_event(Time="14:29:10", TotalVol=1_000, TradingSession="LO")
+    )
+    collector.on_message(
+        market_event(Time="14:30:10", TotalVol=1_250, TradingSession="ATC")
+    )
+    collector.on_message(
+        market_event(Time="14:46:10", TotalVol=1_250, TradingSession="C")
+    )
+
+    rows = store._conn.execute(
+        """
+        SELECT auction_type,provider_session,auction_volume,finalized,
+               quality_status FROM auction_session_buckets ORDER BY auction_type
+        """
+    ).fetchall()
+    minute_pk = [
+        row["name"]
+        for row in store._conn.execute("PRAGMA table_info(minute_bars)")
+        if row["pk"]
+    ]
+    assert [tuple(row) for row in rows] == [
+        ("CLOSE_AUCTION", "ATC", 250, 1, "TRUSTED"),
+        ("OPEN_AUCTION", "ATO", 100, 1, "TRUSTED"),
+    ]
+    assert minute_pk == ["trading_date", "minute", "symbol"]
+    assert store._conn.execute(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='signal_events'"
+    ).fetchone()[0] == 0
     store.close()
 
 
