@@ -53,6 +53,8 @@ function daysBetween(fromDate, toDate) {
 
 const CHART_CACHE_TTL_MS = 30_000
 const CHART_CACHE_MAX = 100
+const BACKGROUND_REFRESH_MS = 30_000
+const LIVE_RECONNECT_DELAYS_MS = [2_000, 4_000, 8_000, 16_000, 30_000]
 const chartResponseCache = new Map()
 const chartRequestCache = new Map()
 
@@ -162,12 +164,13 @@ export default function StockDetailPage() {
   const { user, accessToken, ready } = useAuth()
 
   const [resolution, setResolution] = useState(5)
+  const [activeDetailTab, setActiveDetailTab] = useState('overview')
   const [metadataState, setMetadataState] = useState({ symbol: '', data: null })
   const [quoteState, setQuoteState] = useState({ symbol: '', data: null, error: '' })
   const [publicContextState, setPublicContextState] = useState({ symbol: '', data: null, error: '' })
-  const [accessState, setAccessState] = useState({ symbol: '', data: null, error: '' })
-  const [cccState, setCccState] = useState({ symbol: '', data: null, error: '' })
-  const [radarState, setRadarState] = useState({ data: null, error: '' })
+  const [accessState, setAccessState] = useState({ symbol: '', authToken: '', data: null, error: '' })
+  const [cccState, setCccState] = useState({ symbol: '', authToken: '', data: null, error: '' })
+  const [radarState, setRadarState] = useState({ authToken: '', data: null, error: '' })
   const [financialState, setFinancialState] = useState({ symbol: '', data: null, error: '' })
   const [quarterlyState, setQuarterlyState] = useState({ symbol: '', data: null, error: '' })
   const [chartState, setChartState] = useState({
@@ -267,11 +270,12 @@ export default function StockDetailPage() {
 
     const controller = new AbortController()
     fetchTechnicalAccess(symbol, { token: accessToken, signal: controller.signal })
-      .then((data) => setAccessState({ symbol, data, error: '' }))
+      .then((data) => setAccessState({ symbol, authToken: accessToken, data, error: '' }))
       .catch((error) => {
         if (abortError(error)) return
         setAccessState({
           symbol,
+          authToken: accessToken,
           data: null,
           error: FRIENDLY_ERRORS.access,
         })
@@ -284,8 +288,12 @@ export default function StockDetailPage() {
   const quoteError = quoteState.symbol === symbol ? quoteState.error : ''
   const metadata = metadataState.symbol === symbol ? metadataState.data : null
   const metadataLoading = metadataState.symbol !== symbol
-  const fetchedAccess = accessState.symbol === symbol ? accessState.data : null
-  const accessError = accessState.symbol === symbol ? accessState.error : ''
+  const accessStateIsCurrent = (
+    accessState.symbol === symbol
+    && accessState.authToken === accessToken
+  )
+  const fetchedAccess = accessStateIsCurrent ? accessState.data : null
+  const accessError = accessStateIsCurrent ? accessState.error : ''
 
   const access = useMemo(() => {
     if (!ready) return null
@@ -300,61 +308,128 @@ export default function StockDetailPage() {
   }, [ready, user, accessToken, fetchedAccess])
 
   useEffect(() => {
-    if (!validSymbol || !accessToken || !access?.technical_allowed) return undefined
+    if (
+      !validSymbol
+      || activeDetailTab !== 'technical'
+      || !accessToken
+      || !access?.technical_allowed
+    ) {
+      return undefined
+    }
+
     let active = true
     let controller
+    let timer
+
     const load = () => {
+      if (document.visibilityState !== 'visible') return
       controller?.abort()
       controller = new AbortController()
       fetchCccIntelligence(symbol, { token: accessToken, signal: controller.signal })
         .then((data) => {
-          if (active) setCccState({ symbol, data, error: '' })
+          if (active) setCccState({ symbol, authToken: accessToken, data, error: '' })
         })
         .catch((error) => {
           if (active && !abortError(error)) {
             setCccState((current) => ({
               symbol,
-              data: current.symbol === symbol ? current.data : null,
+              authToken: accessToken,
+              data: current.symbol === symbol && current.authToken === accessToken
+                ? current.data
+                : null,
               error: FRIENDLY_ERRORS.ccc,
             }))
           }
         })
     }
-    load()
-    const timer = window.setInterval(load, 10_000)
+
+    const stop = () => {
+      window.clearInterval(timer)
+      timer = undefined
+      controller?.abort()
+      controller = undefined
+    }
+
+    const start = () => {
+      if (document.visibilityState !== 'visible') return
+      window.clearInterval(timer)
+      load()
+      timer = window.setInterval(load, BACKGROUND_REFRESH_MS)
+    }
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') start()
+      else stop()
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    start()
+
     return () => {
       active = false
-      controller?.abort()
-      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      stop()
     }
-  }, [symbol, validSymbol, accessToken, access?.technical_allowed])
+  }, [
+    symbol,
+    validSymbol,
+    activeDetailTab,
+    accessToken,
+    access?.technical_allowed,
+  ])
 
   useEffect(() => {
     if (!ready) return undefined
+
     let active = true
     let controller
+    let timer
+
     const load = () => {
+      if (document.visibilityState !== 'visible') return
       controller?.abort()
       controller = new AbortController()
       fetchRadar({ token: accessToken || undefined, signal: controller.signal })
         .then((data) => {
-          if (active) setRadarState({ data, error: '' })
+          if (active) setRadarState({ authToken: accessToken, data, error: '' })
         })
         .catch((error) => {
           if (active && !abortError(error)) {
             setRadarState((current) => ({
-              data: current.data,
+              authToken: accessToken,
+              data: current.authToken === accessToken ? current.data : null,
               error: FRIENDLY_ERRORS.radar,
             }))
           }
         })
     }
-    load()
-    const timer = window.setInterval(load, 20_000)
+
+    const stop = () => {
+      window.clearInterval(timer)
+      timer = undefined
+      controller?.abort()
+      controller = undefined
+    }
+
+    const start = () => {
+      if (document.visibilityState !== 'visible') return
+      window.clearInterval(timer)
+      load()
+      timer = window.setInterval(load, BACKGROUND_REFRESH_MS)
+    }
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') start()
+      else stop()
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    start()
+
     return () => {
       active = false
-      controller?.abort()
-      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      stop()
     }
   }, [ready, accessToken])
 
@@ -368,15 +443,68 @@ export default function StockDetailPage() {
 
     let socket
     let reconnectTimer
+    let retryIndex = 0
+    let reconnectImmediately = false
     let closedByEffect = false
 
+    const canConnect = () => (
+      !closedByEffect
+      && document.visibilityState === 'visible'
+      && navigator.onLine !== false
+    )
+
+    const clearReconnectTimer = () => {
+      window.clearTimeout(reconnectTimer)
+      reconnectTimer = undefined
+    }
+
+    const markDisconnected = () => {
+      setLiveState((current) => (
+        current.symbol === symbol && current.resolution === resolution
+          ? { ...current, connected: false }
+          : current
+      ))
+    }
+
+    const scheduleReconnect = () => {
+      if (!canConnect() || reconnectTimer) return
+      const delay = LIVE_RECONNECT_DELAYS_MS[
+        Math.min(retryIndex, LIVE_RECONNECT_DELAYS_MS.length - 1)
+      ]
+      retryIndex += 1
+      reconnectTimer = window.setTimeout(() => {
+        reconnectTimer = undefined
+        connect()
+      }, delay)
+    }
+
     const connect = () => {
-      socket = new WebSocket(liveWebSocketUrl())
+      if (!canConnect()) return
+      if (
+        socket
+        && (
+          socket.readyState === WebSocket.CONNECTING
+          || socket.readyState === WebSocket.OPEN
+          || socket.readyState === WebSocket.CLOSING
+        )
+      ) {
+        return
+      }
 
-      socket.onopen = () => {
-        if (closedByEffect) return
+      clearReconnectTimer()
+      const currentSocket = new WebSocket(liveWebSocketUrl())
+      socket = currentSocket
 
-        socket.send(JSON.stringify({
+      currentSocket.onopen = () => {
+        if (socket !== currentSocket || !canConnect()) {
+          currentSocket.close(1000, 'connection paused')
+          return
+        }
+
+        retryIndex = 0
+        reconnectImmediately = false
+
+        currentSocket.send(JSON.stringify({
           type: 'subscribe',
           channel: 'chart',
           symbol,
@@ -391,8 +519,8 @@ export default function StockDetailPage() {
         })
       }
 
-      socket.onmessage = (event) => {
-        if (closedByEffect) return
+      currentSocket.onmessage = (event) => {
+        if (socket !== currentSocket || !canConnect()) return
 
         let snapshot
         try {
@@ -425,28 +553,67 @@ export default function StockDetailPage() {
         })
       }
 
-      socket.onclose = () => {
+      currentSocket.onclose = () => {
+        if (socket !== currentSocket) return
+        socket = undefined
+        markDisconnected()
         if (closedByEffect) return
 
-        setLiveState((current) => (
-          current.symbol === symbol && current.resolution === resolution
-            ? { ...current, connected: false }
-            : current
-        ))
-
-        reconnectTimer = window.setTimeout(connect, 2000)
+        if (reconnectImmediately && canConnect()) {
+          reconnectImmediately = false
+          connect()
+        } else {
+          scheduleReconnect()
+        }
       }
 
-      socket.onerror = () => {
+      currentSocket.onerror = () => {
         // onclose handles reconnects; keep console noise out of the product UI.
       }
     }
 
-    connect()
+    const pauseConnection = (reason) => {
+      reconnectImmediately = false
+      clearReconnectTimer()
+      markDisconnected()
+      if (
+        socket
+        && socket.readyState !== WebSocket.CLOSED
+        && socket.readyState !== WebSocket.CLOSING
+      ) {
+        socket.close(1000, reason)
+      }
+    }
+
+    const resumeConnection = () => {
+      if (!canConnect()) return
+      clearReconnectTimer()
+      if (socket?.readyState === WebSocket.CLOSING) {
+        reconnectImmediately = true
+        return
+      }
+      connect()
+    }
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') resumeConnection()
+      else pauseConnection('page hidden')
+    }
+
+    const handleOnline = () => resumeConnection()
+    const handleOffline = () => pauseConnection('browser offline')
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    window.addEventListener('online', handleOnline)
+    window.addEventListener('offline', handleOffline)
+    resumeConnection()
 
     return () => {
       closedByEffect = true
-      window.clearTimeout(reconnectTimer)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      window.removeEventListener('online', handleOnline)
+      window.removeEventListener('offline', handleOffline)
+      clearReconnectTimer()
       socket?.close(1000, 'route change')
     }
   }, [
@@ -522,30 +689,6 @@ export default function StockDetailPage() {
     resolution,
   ])
 
-  useEffect(() => {
-    if (!validSymbol || !chartDate) return undefined
-
-    const timer = window.setTimeout(() => {
-      for (const nextResolution of ALLOWED_RESOLUTIONS) {
-        if (nextResolution === resolution) continue
-        const next = chartRequestFor(symbol, chartDate, nextResolution)
-        if (getCachedChart(next.key)) continue
-        loadChartCached({
-          key: next.key,
-          symbol,
-          query: next.query,
-        }).catch(() => {})
-      }
-    }, 120)
-
-    return () => window.clearTimeout(timer)
-  }, [
-    symbol,
-    validSymbol,
-    chartDate,
-    resolution,
-  ])
-
   if (!validSymbol) {
     return (
       <div className="page">
@@ -606,6 +749,11 @@ export default function StockDetailPage() {
   }
 
   const accessLoading = ready && user && !fetchedAccess && !accessError
+  const cccStateIsCurrent = (
+    cccState.symbol === symbol
+    && cccState.authToken === accessToken
+  )
+  const radarStateIsCurrent = radarState.authToken === accessToken
 
   let chartContent
   if (chartError) {
@@ -644,6 +792,8 @@ export default function StockDetailPage() {
       formatPercent={formatPercent}
       chartContent={chartContent}
       liveConnected={liveConnected}
+      activeDetailTab={activeDetailTab}
+      onActiveDetailTabChange={setActiveDetailTab}
       ready={ready}
       user={user}
       accessLoading={accessLoading}
@@ -651,11 +801,15 @@ export default function StockDetailPage() {
       access={access}
       publicContext={publicContextState.symbol === symbol ? publicContextState.data : null}
       publicContextError={publicContextState.symbol === symbol ? publicContextState.error : ''}
-      ccc={cccState.symbol === symbol ? cccState.data : null}
-      cccError={cccState.symbol === symbol ? cccState.error : ''}
-      cccLoading={Boolean(access?.technical_allowed && cccState.symbol !== symbol)}
-      radar={radarState.data}
-      radarError={radarState.error}
+      ccc={cccStateIsCurrent && access?.technical_allowed ? cccState.data : null}
+      cccError={cccStateIsCurrent ? cccState.error : ''}
+      cccLoading={Boolean(
+        activeDetailTab === 'technical'
+        && access?.technical_allowed
+        && !cccStateIsCurrent
+      )}
+      radar={radarStateIsCurrent ? radarState.data : null}
+      radarError={radarStateIsCurrent ? radarState.error : ''}
       financial={financialState.symbol === symbol ? financialState.data : null}
       financialError={financialState.symbol === symbol ? financialState.error : ''}
       financialLoading={financialState.symbol !== symbol}

@@ -33,6 +33,8 @@ export default function StockDetailV3View({
   formatPercent,
   chartContent,
   liveConnected,
+  activeDetailTab,
+  onActiveDetailTabChange,
   ready,
   user,
   accessLoading,
@@ -134,6 +136,8 @@ export default function StockDetailV3View({
           quarterly={quarterly}
           quarterlyError={quarterlyError}
           quarterlyLoading={quarterlyLoading}
+          activeTab={activeDetailTab}
+          onActiveTabChange={onActiveDetailTabChange}
         />
       </div>
 

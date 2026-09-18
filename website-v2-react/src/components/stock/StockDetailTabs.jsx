@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { Link } from 'react-router-dom'
 
 const detailTabs = [
@@ -228,15 +227,16 @@ export default function StockDetailTabs({
   quarterly,
   quarterlyError,
   quarterlyLoading,
+  activeTab,
+  onActiveTabChange,
 }) {
-  const [activeTab, setActiveTab] = useState('overview')
   const unlocked = Boolean(access?.technical_allowed)
 
   return (
     <section className="stock-v3-detail-tabs">
       <div className="stock-v3-tab-list" role="tablist" aria-label="Thông tin chi tiết cổ phiếu">
         {detailTabs.map(tab => (
-          <button key={tab.id} id={`detail-tab-${tab.id}`} type="button" role="tab" aria-selected={activeTab === tab.id} aria-controls={`detail-panel-${tab.id}`} className={activeTab === tab.id ? 'is-active' : ''} onClick={() => setActiveTab(tab.id)}>
+          <button key={tab.id} id={`detail-tab-${tab.id}`} type="button" role="tab" aria-selected={activeTab === tab.id} aria-controls={`detail-panel-${tab.id}`} className={activeTab === tab.id ? 'is-active' : ''} onClick={() => onActiveTabChange(tab.id)}>
             {tab.label}{tab.locked && !unlocked ? ' 🔒' : ''}
           </button>
         ))}
