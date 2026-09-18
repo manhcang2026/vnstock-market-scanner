@@ -250,7 +250,9 @@ class LiveStateRuntime:
         try:
             if self.history_db_path.is_file():
                 self._history = sqlite3.connect(
-                    f"{self.history_db_path.resolve().as_uri()}?mode=ro", uri=True
+                    f"{self.history_db_path.resolve().as_uri()}?mode=ro",
+                    uri=True,
+                    check_same_thread=False,
                 )
                 self._history.row_factory = sqlite3.Row
                 self._history.execute("PRAGMA query_only=ON")
