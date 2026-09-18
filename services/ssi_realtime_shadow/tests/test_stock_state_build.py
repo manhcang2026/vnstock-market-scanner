@@ -11,7 +11,7 @@ from app.market_session import VN_TZ
 from app.market_storage_schema import ensure_market_storage_schema
 from app.stock_state_build import build_stock_state_current, main
 from app.storage import SCHEMA
-from app.volume_baseline import BASELINE_SCHEMA, volume_market_grid
+from app.volume_baseline import BASELINE_SCHEMA, COVERAGE_PROOF, volume_market_grid
 
 
 TRADING_DATE = "2026-09-18"  # Friday; the builder may be run on the weekend.
@@ -67,19 +67,31 @@ def _write_realtime(path: Path) -> None:
     connection.close()
 
 
-def _write_baseline(path: Path) -> None:
+def _write_baseline(
+    path: Path,
+    *,
+    proof: str | None = None,
+    as_of_date: str = TRADING_DATE,
+    sessions_used: int = 10,
+) -> None:
     connection = sqlite3.connect(path)
     connection.executescript(BASELINE_SCHEMA)
     connection.executemany(
         "INSERT INTO volume_baseline_metadata(key, value) VALUES (?, ?)",
         (("schema_version", "2"), ("lookback", "10")),
     )
+    if proof is not None:
+        connection.executemany(
+            "INSERT INTO volume_baseline_metadata(key, value) VALUES (?, ?)",
+            (("coverage_proof", proof), ("as_of_date", as_of_date)),
+        )
     connection.execute(
         """
         INSERT INTO volume_baseline_coverage VALUES (
-            'VGI', 'UPCOM', 10, 10, 10, 10, '2026-09-04', '2026-09-17'
+            'VGI', 'UPCOM', 10, ?, 10, ?, '2026-09-04', '2026-09-17'
         )
-        """
+        """,
+        (sessions_used, sessions_used),
     )
     for index, point in enumerate(volume_market_grid("UPCOM"), start=1):
         connection.execute(
@@ -88,11 +100,12 @@ def _write_baseline(path: Path) -> None:
                 symbol, exchange, minute, session_segment, historical_sessions,
                 avg_cumulative_volume, avg_volume_15, avg_volume_30,
                 avg_opening_volume
-            ) VALUES ('VGI', 'UPCOM', ?, ?, 10, ?, ?, ?, NULL)
+            ) VALUES ('VGI', 'UPCOM', ?, ?, ?, ?, ?, ?, NULL)
             """,
             (
                 point.minute,
                 point.session_segment,
+                sessions_used,
                 index * 5,
                 75 if point.rolling_15_ready else None,
                 150 if point.rolling_30_ready else None,
@@ -120,6 +133,16 @@ def _write_daily_history(path: Path) -> None:
             """,
             (trading_date, f"{trading_date}T15:01:00+07:00"),
         )
+    connection.execute(
+        """
+        INSERT INTO daily_bars (
+            symbol, trading_date, exchange, open, high, low, close,
+            volume, value, source, quality_status, finalized_at
+        ) VALUES ('VGI', ?, 'UPCOM', 100, 120, 99, 120,
+                  2700, NULL, 'SSI_DAILY_OHLC', 'TRUSTED', ?)
+        """,
+        (TRADING_DATE, f"{TRADING_DATE}T15:01:00+07:00"),
+    )
     connection.commit()
     connection.close()
 
@@ -153,6 +176,7 @@ def test_offline_builder_integrates_exact_ma_price_volume_and_is_idempotent(
     assert first["trusted_state_count"] == 0
     assert first["degraded_unavailable_state_count"] == 1
     assert first["baseline_coverage_proven"] is False
+    assert first["replay_day_audit"]["replay_day_completeness_proven"] is True
 
     connection = sqlite3.connect(market)
     connection.row_factory = sqlite3.Row
@@ -182,3 +206,48 @@ def test_offline_builder_integrates_exact_ma_price_volume_and_is_idempotent(
     cli_summary = json.loads(capsys.readouterr().out)
     assert cli_summary["latest_trading_date"] == TRADING_DATE
     assert cli_summary["sample"][0]["symbol"] == "VGI"
+
+
+@pytest.mark.parametrize(
+    ("proof", "as_of_date", "sessions_used", "expected_trusted"),
+    [
+        (COVERAGE_PROOF, TRADING_DATE, 10, 1),
+        (COVERAGE_PROOF, TRADING_DATE, 9, 0),
+        (None, TRADING_DATE, 10, 0),
+        (COVERAGE_PROOF, "2026-09-17", 10, 0),
+    ],
+)
+def test_baseline_proof_metadata_and_exact_coverage_gate_state_trust(
+    tmp_path: Path,
+    proof: str | None,
+    as_of_date: str,
+    sessions_used: int,
+    expected_trusted: int,
+) -> None:
+    realtime = tmp_path / "ssi_shadow.db"
+    baseline = tmp_path / "ccc_v2_baseline.db"
+    market = tmp_path / "ccc_market_v2.db"
+    _write_realtime(realtime)
+    _write_baseline(
+        baseline,
+        proof=proof,
+        as_of_date=as_of_date,
+        sessions_used=sessions_used,
+    )
+    _write_daily_history(market)
+
+    summary = build_stock_state_current(
+        realtime_db=realtime, baseline_db=baseline, market_db=market
+    )
+    connection = sqlite3.connect(market)
+    state = connection.execute(
+        "SELECT metrics_trusted,quality_status FROM stock_state_current WHERE symbol='VGI'"
+    ).fetchone()
+    connection.close()
+    assert state[0] == expected_trusted
+    assert summary["baseline_proven_symbol_count"] == expected_trusted
+    assert summary["replay_day_audit"]["replay_day_completeness_proven"] is True
+    if expected_trusted:
+        assert state[1] == "TRUSTED"
+    else:
+        assert state[1] == "DEGRADED"

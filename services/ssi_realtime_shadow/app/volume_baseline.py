@@ -1,18 +1,18 @@
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Any, Iterable, Sequence
 
-from .market_session import (
-    VN_TZ,
-    SessionType,
-    classify_market_session,
-    normalize_exchange,
-)
+from .market_session import VN_TZ, SessionType, classify_market_session, normalize_exchange
 
+
+COVERAGE_PROOF = "SSI_DAILY_VOLUME_RECONCILED_V1"
+TRUSTED_DAILY_SOURCE = "SSI_DAILY_OHLC"
+TRUSTED_INTRADAY_SOURCE = "SSI_REST"
+SAMPLE_SYMBOLS = ("HPG", "SHS", "VGI")
 
 BASELINE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS volume_baseline (
@@ -65,6 +65,34 @@ class RawVolumeBar:
     minute: str
     exchange: str
     volume: int
+    data_source: str = TRUSTED_INTRADAY_SOURCE
+    quality_status: str = "TRUSTED"
+    is_partial: bool = False
+    has_gap: bool = False
+
+
+@dataclass(frozen=True)
+class SessionProof:
+    symbol: str
+    trading_date: str
+    exchange: str | None
+    daily_volume: int | None
+    represented_intraday_volume: int
+    reason: str
+    bars: tuple[RawVolumeBar, ...] = ()
+
+    @property
+    def proven(self) -> bool:
+        return self.reason in {"PROVEN", "PROVEN_ZERO"}
+
+    def failure_sample(self) -> dict[str, Any]:
+        return {
+            "symbol": self.symbol,
+            "trading_date": self.trading_date,
+            "daily_volume": self.daily_volume,
+            "represented_intraday_volume": self.represented_intraday_volume,
+            "reason": self.reason,
+        }
 
 
 @dataclass(frozen=True)
@@ -94,10 +122,35 @@ class CoverageRow:
 
 @dataclass(frozen=True)
 class BaselineBuildSummary:
-    symbols: int
-    symbols_without_history: int
-    baseline_rows: int
+    as_of_date: str
+    candidate_market_sessions: int
     lookback: int
+    symbols_processed: int
+    symbols_10_10_proven: int
+    symbols_partial: int
+    symbols_zero_proven: int
+    sessions_proven: int
+    sessions_unproven: int
+    daily_missing_count: int
+    volume_mismatch_count: int
+    unsafe_intraday_count: int
+    exchange_mismatch_count: int
+    baseline_rows: int
+    coverage_proof: str
+    samples: tuple[dict[str, Any], ...]
+
+    @property
+    def symbols(self) -> int:
+        return self.symbols_processed
+
+    @property
+    def symbols_without_history(self) -> int:
+        return self.symbols_processed - self.symbols_10_10_proven - self.symbols_partial
+
+    def to_dict(self) -> dict[str, Any]:
+        value = asdict(self)
+        value["samples"] = list(self.samples)
+        return value
 
 
 @dataclass
@@ -111,23 +164,12 @@ class _PointSamples:
 _GRID_REFERENCE_DATE = date(2026, 9, 14)
 _OPENING_BUCKETS = {"HOSE": "09:15"}
 _CLOSING_BUCKETS = {"HOSE": "14:45", "HNX": "14:45"}
-_COVERAGE_MIGRATIONS = (
-    (
-        "active_sessions_available",
-        "active_sessions_available INTEGER NOT NULL DEFAULT 0",
-    ),
-    ("active_sessions_used", "active_sessions_used INTEGER NOT NULL DEFAULT 0"),
-)
 
 
 def volume_market_grid(exchange: str) -> tuple[VolumeGridPoint, ...]:
-    """Build the valid historical volume grid from the shared session engine."""
     canonical = normalize_exchange(exchange)
     points: list[VolumeGridPoint] = []
-    continuous_bar_counts = {
-        SessionType.AM_CONTINUOUS.value: 0,
-        SessionType.PM_CONTINUOUS.value: 0,
-    }
+    counts = {SessionType.AM_CONTINUOUS.value: 0, SessionType.PM_CONTINUOUS.value: 0}
     start = datetime.combine(_GRID_REFERENCE_DATE, datetime.min.time(), tzinfo=VN_TZ)
     moment = start.replace(hour=9)
     end = start.replace(hour=15)
@@ -135,44 +177,13 @@ def volume_market_grid(exchange: str) -> tuple[VolumeGridPoint, ...]:
         minute = moment.strftime("%H:%M")
         session = classify_market_session(canonical, moment)
         if _OPENING_BUCKETS.get(canonical) == minute:
-            points.append(
-                VolumeGridPoint(
-                    minute=minute,
-                    session_segment="OPENING_BUCKET",
-                    is_continuous=False,
-                    is_opening=True,
-                    is_closing=False,
-                    rolling_15_ready=False,
-                    rolling_30_ready=False,
-                )
-            )
+            points.append(VolumeGridPoint(minute, "OPENING_BUCKET", False, True, False, False, False))
         elif _CLOSING_BUCKETS.get(canonical) == minute:
-            points.append(
-                VolumeGridPoint(
-                    minute=minute,
-                    session_segment="CLOSE_BUCKET",
-                    is_continuous=False,
-                    is_opening=False,
-                    is_closing=True,
-                    rolling_15_ready=False,
-                    rolling_30_ready=False,
-                )
-            )
+            points.append(VolumeGridPoint(minute, "CLOSE_BUCKET", False, False, True, False, False))
         elif session.is_continuous:
             segment = session.session_type.value
-            continuous_bar_counts[segment] += 1
-            bar_count = continuous_bar_counts[segment]
-            points.append(
-                VolumeGridPoint(
-                    minute=minute,
-                    session_segment=segment,
-                    is_continuous=True,
-                    is_opening=False,
-                    is_closing=False,
-                    rolling_15_ready=bar_count >= 15,
-                    rolling_30_ready=bar_count >= 30,
-                )
-            )
+            counts[segment] += 1
+            points.append(VolumeGridPoint(minute, segment, True, False, False, counts[segment] >= 15, counts[segment] >= 30))
         moment += timedelta(minutes=1)
     return tuple(points)
 
@@ -183,330 +194,329 @@ def _average(values: Sequence[int]) -> float | None:
 
 def build_symbol_volume_baseline(
     symbol: str,
-    raw_bars: Iterable[RawVolumeBar],
+    proofs: Iterable[SessionProof],
     *,
     lookback: int,
-    trading_calendar: Sequence[str],
+    candidate_sessions: Sequence[str],
 ) -> tuple[CoverageRow, list[BaselineRow]]:
     if lookback < 1:
         raise ValueError("lookback must be positive")
-
-    bars = list(raw_bars)
-    exchanges = {normalize_exchange(bar.exchange) for bar in bars}
+    selected = [proof for proof in proofs if proof.proven]
+    exchanges = {proof.exchange for proof in selected if proof.exchange}
     if len(exchanges) > 1:
-        raise ValueError(f"Conflicting exchanges in history for {symbol}: {exchanges}")
+        selected = []
+        exchanges = set()
     exchange = next(iter(exchanges), None)
-    if exchange is None:
-        return (
-            CoverageRow(
-                symbol=symbol,
-                exchange=None,
-                available_sessions=0,
-                baseline_sessions_used=0,
-                active_sessions_available=0,
-                active_sessions_used=0,
-                first_history_date=None,
-                last_history_date=None,
-            ),
-            [],
-        )
-
-    grid = volume_market_grid(exchange)
-    valid_minutes = {point.minute for point in grid}
-    active_dates = sorted({bar.trading_date for bar in bars})
-    by_date: dict[str, dict[str, int]] = {}
-    for bar in bars:
-        if bar.minute not in valid_minutes:
-            continue
-        if bar.volume < 0:
-            raise ValueError(f"Negative historical volume for {symbol}")
-        by_date.setdefault(bar.trading_date, {})[bar.minute] = bar.volume
-
-    if not active_dates:
-        return (
-            CoverageRow(
-                symbol=symbol,
-                exchange=exchange,
-                available_sessions=0,
-                baseline_sessions_used=0,
-                active_sessions_available=0,
-                active_sessions_used=0,
-                first_history_date=None,
-                last_history_date=None,
-            ),
-            [],
-        )
-    first_observed_date = active_dates[0]
-    eligible_dates = [
-        trading_date
-        for trading_date in trading_calendar
-        if trading_date >= first_observed_date
-    ]
-    selected_dates = eligible_dates[-lookback:]
-    active_date_set = set(active_dates)
+    dates = [proof.trading_date for proof in selected]
     coverage = CoverageRow(
         symbol=symbol,
         exchange=exchange,
-        available_sessions=len(eligible_dates),
-        baseline_sessions_used=len(selected_dates),
-        active_sessions_available=sum(
-            trading_date in active_date_set for trading_date in eligible_dates
-        ),
-        active_sessions_used=sum(
-            trading_date in active_date_set for trading_date in selected_dates
-        ),
-        first_history_date=first_observed_date,
-        last_history_date=active_dates[-1],
+        available_sessions=len(candidate_sessions),
+        baseline_sessions_used=len(selected),
+        active_sessions_available=len(selected),
+        active_sessions_used=len(selected),
+        first_history_date=min(dates) if dates else None,
+        last_history_date=max(dates) if dates else None,
     )
-    if not selected_dates:
+    if not exchange or not selected:
         return coverage, []
 
-    samples = {
-        point.minute: _PointSamples([], [], [], [])
-        for point in grid
-    }
-    for trading_date in selected_dates:
-        day = by_date.get(trading_date, {})
+    grid = volume_market_grid(exchange)
+    samples = {point.minute: _PointSamples([], [], [], []) for point in grid}
+    for proof in selected:
+        day = {bar.minute: bar.volume for bar in proof.bars}
         cumulative = 0
         segment_volumes: dict[str, list[int]] = {
             SessionType.AM_CONTINUOUS.value: [],
             SessionType.PM_CONTINUOUS.value: [],
         }
         for point in grid:
+            # Missing is zero only here, after the whole session was proven by DailyOhlc.
+            volume = day.get(point.minute, 0)
+            cumulative += volume
+            point_samples = samples[point.minute]
+            point_samples.cumulative.append(cumulative)
             if point.is_continuous:
-                volume = day.get(point.minute, 0)
-                cumulative += volume
                 segment = segment_volumes[point.session_segment]
                 segment.append(volume)
-                point_samples = samples[point.minute]
-                point_samples.cumulative.append(cumulative)
                 if point.rolling_15_ready:
                     point_samples.rolling_15.append(sum(segment[-15:]))
                 if point.rolling_30_ready:
                     point_samples.rolling_30.append(sum(segment[-30:]))
-            else:
-                volume = day.get(point.minute, 0)
-                cumulative += volume
-                point_samples = samples[point.minute]
-                point_samples.cumulative.append(cumulative)
-                if point.is_opening:
-                    point_samples.opening.append(volume)
+            elif point.is_opening:
+                point_samples.opening.append(volume)
 
-    baseline_rows: list[BaselineRow] = []
+    rows: list[BaselineRow] = []
     for point in grid:
         point_samples = samples[point.minute]
         average_cumulative = _average(point_samples.cumulative)
-        if average_cumulative is None:
-            continue
-        baseline_rows.append(
-            BaselineRow(
-                symbol=symbol,
-                exchange=exchange,
-                minute=point.minute,
-                session_segment=point.session_segment,
-                historical_sessions=len(point_samples.cumulative),
-                avg_cumulative_volume=average_cumulative,
-                avg_volume_15=_average(point_samples.rolling_15),
-                avg_volume_30=_average(point_samples.rolling_30),
-                avg_opening_volume=_average(point_samples.opening),
-            )
-        )
-    return coverage, baseline_rows
+        if average_cumulative is not None:
+            rows.append(BaselineRow(
+                symbol, exchange, point.minute, point.session_segment,
+                len(point_samples.cumulative), average_cumulative,
+                _average(point_samples.rolling_15), _average(point_samples.rolling_30),
+                _average(point_samples.opening),
+            ))
+    return coverage, rows
 
 
-def _open_history_readonly(path: Path) -> sqlite3.Connection:
+def _open_readonly(path: Path, label: str) -> sqlite3.Connection:
     if not path.is_file():
-        raise FileNotFoundError(f"History database does not exist: {path}")
+        raise FileNotFoundError(f"{label} database does not exist: {path}")
     connection = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
     connection.row_factory = sqlite3.Row
     return connection
 
 
 def _table_exists(connection: sqlite3.Connection, table: str) -> bool:
-    row = connection.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
-        (table,),
-    ).fetchone()
-    return row is not None
+    return connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+    ).fetchone() is not None
 
 
-def _load_trading_calendar(connection: sqlite3.Connection) -> list[str]:
-    return [
-        str(row[0])
-        for row in connection.execute(
-            """
-            SELECT DISTINCT trading_date
-            FROM minute_bars
-            WHERE quality_status = 'TRUSTED'
-              AND data_source = 'SSI_REST'
-            ORDER BY trading_date
-            """
-        )
-    ]
-
-
-def _migrate_baseline_schema(connection: sqlite3.Connection) -> None:
+def _migrate_output_schema(connection: sqlite3.Connection) -> None:
     columns = {
-        row["name"]
-        for row in connection.execute(
-            "PRAGMA table_info(volume_baseline_coverage)"
-        ).fetchall()
+        str(row[1])
+        for row in connection.execute("PRAGMA table_info(volume_baseline_coverage)")
     }
-    for name, definition in _COVERAGE_MIGRATIONS:
+    for name in ("active_sessions_available", "active_sessions_used"):
         if name not in columns:
             connection.execute(
-                f"ALTER TABLE volume_baseline_coverage ADD COLUMN {definition}"
+                f"ALTER TABLE volume_baseline_coverage ADD COLUMN {name} "
+                "INTEGER NOT NULL DEFAULT 0"
             )
+
+
+def load_candidate_market_sessions(
+    daily: sqlite3.Connection, *, as_of_date: str, lookback: int
+) -> list[str]:
+    date.fromisoformat(as_of_date)
+    rows = daily.execute(
+        """
+        SELECT DISTINCT trading_date FROM daily_bars
+        WHERE source=? AND quality_status='TRUSTED' AND trading_date < ?
+        ORDER BY trading_date DESC LIMIT ?
+        """,
+        (TRUSTED_DAILY_SOURCE, as_of_date, lookback),
+    ).fetchall()
+    return sorted(str(row[0]) for row in rows)
+
+
+def prove_volume_session(
+    history: sqlite3.Connection,
+    daily: sqlite3.Connection,
+    *,
+    symbol: str,
+    trading_date: str,
+) -> SessionProof:
+    daily_row = daily.execute(
+        "SELECT exchange, volume, source, quality_status FROM daily_bars "
+        "WHERE symbol=? AND trading_date=?",
+        (symbol, trading_date),
+    ).fetchone()
+    if daily_row is None or str(daily_row["source"]) != TRUSTED_DAILY_SOURCE or str(daily_row["quality_status"]).upper() != "TRUSTED":
+        return SessionProof(symbol, trading_date, None, None, 0, "DAILY_MISSING")
+    try:
+        exchange = normalize_exchange(str(daily_row["exchange"] or ""))
+        daily_volume = int(daily_row["volume"])
+        if daily_volume < 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        return SessionProof(symbol, trading_date, None, None, 0, "DAILY_UNSAFE")
+
+    rows = history.execute(
+        """
+        SELECT trading_date, minute, exchange, volume, data_source,
+               quality_status, is_partial, has_gap
+        FROM minute_bars WHERE symbol=? AND trading_date=? ORDER BY minute
+        """,
+        (symbol, trading_date),
+    ).fetchall()
+    valid_minutes = {point.minute for point in volume_market_grid(exchange)}
+    bars: list[RawVolumeBar] = []
+    unsafe = False
+    mismatch = False
+    represented = 0
+    for row in rows:
+        raw_exchange = str(row["exchange"] or "")
+        try:
+            row_exchange = normalize_exchange(raw_exchange)
+        except ValueError:
+            unsafe = True
+            continue
+        volume = int(row["volume"])
+        minute = str(row["minute"] or "")
+        if row_exchange != exchange:
+            mismatch = True
+        if (
+            str(row["data_source"] or "") != TRUSTED_INTRADAY_SOURCE
+            or str(row["quality_status"] or "").upper() != "TRUSTED"
+            or bool(row["is_partial"])
+            or bool(row["has_gap"])
+            or minute not in valid_minutes
+            or volume < 0
+        ):
+            unsafe = True
+            continue
+        represented += volume
+        bars.append(RawVolumeBar(trading_date, minute, row_exchange, volume))
+    if mismatch:
+        return SessionProof(symbol, trading_date, exchange, daily_volume, represented, "EXCHANGE_MISMATCH")
+    if unsafe:
+        return SessionProof(symbol, trading_date, exchange, daily_volume, represented, "UNSAFE_INTRADAY")
+    if represented != daily_volume:
+        return SessionProof(symbol, trading_date, exchange, daily_volume, represented, "VOLUME_MISMATCH")
+    reason = "PROVEN_ZERO" if daily_volume == 0 and not bars else "PROVEN"
+    return SessionProof(symbol, trading_date, exchange, daily_volume, represented, reason, tuple(bars))
 
 
 def _source_symbols(
-    connection: sqlite3.Connection, requested: Iterable[str] | None
+    history: sqlite3.Connection,
+    daily: sqlite3.Connection,
+    candidate_sessions: Sequence[str],
+    requested: Iterable[str] | None,
 ) -> list[str]:
     if requested is not None:
-        return sorted(
-            {str(symbol).strip().upper() for symbol in requested if str(symbol).strip()}
-        )
+        return sorted({str(value).strip().upper() for value in requested if str(value).strip()})
     symbols = {
         str(row[0]).strip().upper()
-        for row in connection.execute(
-            "SELECT DISTINCT symbol FROM minute_bars WHERE symbol IS NOT NULL"
-        )
+        for row in history.execute("SELECT DISTINCT symbol FROM minute_bars WHERE symbol IS NOT NULL")
         if str(row[0]).strip()
     }
-    if _table_exists(connection, "historical_bootstrap_checkpoints"):
+    if candidate_sessions:
+        placeholders = ",".join("?" for _ in candidate_sessions)
         symbols.update(
             str(row[0]).strip().upper()
-            for row in connection.execute(
-                "SELECT DISTINCT symbol FROM historical_bootstrap_checkpoints "
-                "WHERE symbol IS NOT NULL"
+            for row in daily.execute(
+                f"SELECT DISTINCT symbol FROM daily_bars WHERE trading_date IN ({placeholders})",
+                tuple(candidate_sessions),
             )
+            if str(row[0]).strip()
+        )
+    if _table_exists(history, "historical_bootstrap_checkpoints"):
+        symbols.update(
+            str(row[0]).strip().upper()
+            for row in history.execute("SELECT DISTINCT symbol FROM historical_bootstrap_checkpoints WHERE symbol IS NOT NULL")
             if str(row[0]).strip()
         )
     return sorted(symbols)
 
 
-def _load_raw_bars(
-    connection: sqlite3.Connection, symbol: str
-) -> list[RawVolumeBar]:
-    rows = connection.execute(
-        """
-        SELECT trading_date, minute, exchange, volume
-        FROM minute_bars
-        WHERE symbol = ?
-          AND quality_status = 'TRUSTED'
-          AND data_source = 'SSI_REST'
-          AND is_partial = 0
-          AND has_gap = 0
-        ORDER BY trading_date, minute
-        """,
-        (symbol,),
-    )
-    return [
-        RawVolumeBar(
-            trading_date=str(row["trading_date"]),
-            minute=str(row["minute"]),
-            exchange=str(row["exchange"] or ""),
-            volume=int(row["volume"]),
-        )
-        for row in rows
-    ]
-
-
 def build_volume_baseline(
     *,
     history_db: Path,
+    daily_db: Path,
     output_db: Path,
+    as_of_date: str,
     lookback: int = 10,
     symbols: Iterable[str] | None = None,
 ) -> BaselineBuildSummary:
-    """Rebuild deterministic volume-derived tables without mutating raw history."""
     if lookback < 1:
         raise ValueError("lookback must be positive")
-    if history_db.resolve() == output_db.resolve():
-        raise ValueError("output_db must be different from history_db")
+    parsed_as_of = date.fromisoformat(as_of_date)
+    if parsed_as_of.isoformat() != as_of_date:
+        raise ValueError("as_of_date must be canonical YYYY-MM-DD")
+    resolved = [Path(value).resolve() for value in (history_db, daily_db, output_db)]
+    if resolved[2] in resolved[:2]:
+        raise ValueError("output_db must be different from both source databases")
 
-    history = _open_history_readonly(history_db)
-    output_db.parent.mkdir(parents=True, exist_ok=True)
-    output = sqlite3.connect(output_db)
+    history = _open_readonly(resolved[0], "History")
+    daily = _open_readonly(resolved[1], "Daily")
+    output: sqlite3.Connection | None = None
     try:
-        selected_symbols = _source_symbols(history, symbols)
-        trading_calendar = _load_trading_calendar(history)
+        if not _table_exists(history, "minute_bars"):
+            raise ValueError("History database has no minute_bars table")
+        if not _table_exists(daily, "daily_bars"):
+            raise ValueError("Daily database has no daily_bars table")
+        candidates = load_candidate_market_sessions(daily, as_of_date=as_of_date, lookback=lookback)
+        selected_symbols = _source_symbols(history, daily, candidates, symbols)
+        all_proofs: dict[str, list[SessionProof]] = {
+            symbol: [
+                prove_volume_session(history, daily, symbol=symbol, trading_date=session)
+                for session in candidates
+            ]
+            for symbol in selected_symbols
+        }
+
+        output_db.parent.mkdir(parents=True, exist_ok=True)
+        output = sqlite3.connect(output_db)
         output.executescript(BASELINE_SCHEMA)
-        output.row_factory = sqlite3.Row
-        _migrate_baseline_schema(output)
+        _migrate_output_schema(output)
         output.execute("BEGIN IMMEDIATE")
         output.execute("DELETE FROM volume_baseline")
         output.execute("DELETE FROM volume_baseline_coverage")
         output.execute("DELETE FROM volume_baseline_metadata")
         output.executemany(
-            "INSERT INTO volume_baseline_metadata(key, value) VALUES (?, ?)",
-            (("schema_version", "2"), ("lookback", str(lookback))),
+            "INSERT INTO volume_baseline_metadata(key,value) VALUES (?,?)",
+            (("schema_version", "2"), ("lookback", str(lookback)), ("coverage_proof", COVERAGE_PROOF), ("as_of_date", as_of_date)),
         )
 
         baseline_row_count = 0
-        symbols_without_history = 0
+        coverages: dict[str, CoverageRow] = {}
         for symbol in selected_symbols:
             coverage, rows = build_symbol_volume_baseline(
-                symbol,
-                _load_raw_bars(history, symbol),
-                lookback=lookback,
-                trading_calendar=trading_calendar,
+                symbol, all_proofs[symbol], lookback=lookback, candidate_sessions=candidates
             )
+            coverages[symbol] = coverage
             output.execute(
-                """
-                INSERT INTO volume_baseline_coverage (
+                """INSERT INTO volume_baseline_coverage (
                     symbol, exchange, available_sessions, baseline_sessions_used,
                     active_sessions_available, active_sessions_used,
                     first_history_date, last_history_date
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    coverage.symbol,
-                    coverage.exchange,
-                    coverage.available_sessions,
-                    coverage.baseline_sessions_used,
-                    coverage.active_sessions_available,
-                    coverage.active_sessions_used,
-                    coverage.first_history_date,
-                    coverage.last_history_date,
-                ),
+                ) VALUES (?,?,?,?,?,?,?,?)""",
+                (coverage.symbol, coverage.exchange, coverage.available_sessions,
+                 coverage.baseline_sessions_used, coverage.active_sessions_available,
+                 coverage.active_sessions_used, coverage.first_history_date,
+                 coverage.last_history_date),
             )
-            if coverage.available_sessions == 0:
-                symbols_without_history += 1
             output.executemany(
-                """
-                INSERT INTO volume_baseline (
-                    symbol, exchange, minute, session_segment,
-                    historical_sessions, avg_cumulative_volume,
-                    avg_volume_15, avg_volume_30, avg_opening_volume
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                [
-                    (
-                        row.symbol,
-                        row.exchange,
-                        row.minute,
-                        row.session_segment,
-                        row.historical_sessions,
-                        row.avg_cumulative_volume,
-                        row.avg_volume_15,
-                        row.avg_volume_30,
-                        row.avg_opening_volume,
-                    )
-                    for row in rows
-                ],
+                "INSERT INTO volume_baseline VALUES (?,?,?,?,?,?,?,?,?)",
+                [(row.symbol, row.exchange, row.minute, row.session_segment,
+                  row.historical_sessions, row.avg_cumulative_volume,
+                  row.avg_volume_15, row.avg_volume_30, row.avg_opening_volume)
+                 for row in rows],
             )
             baseline_row_count += len(rows)
         output.commit()
+
+        flattened = [proof for values in all_proofs.values() for proof in values]
+        samples: list[dict[str, Any]] = []
+        for symbol in SAMPLE_SYMBOLS:
+            if symbol not in all_proofs:
+                continue
+            failed = [proof.failure_sample() for proof in all_proofs[symbol] if not proof.proven]
+            coverage = coverages[symbol]
+            samples.append({
+                "symbol": symbol,
+                "candidate_sessions": len(candidates),
+                "sessions_proven": coverage.baseline_sessions_used,
+                "failures": failed[:3],
+            })
+        proven = [proof for proof in flattened if proof.proven]
         return BaselineBuildSummary(
-            symbols=len(selected_symbols),
-            symbols_without_history=symbols_without_history,
-            baseline_rows=baseline_row_count,
+            as_of_date=as_of_date,
+            candidate_market_sessions=len(candidates),
             lookback=lookback,
+            symbols_processed=len(selected_symbols),
+            symbols_10_10_proven=sum(len(candidates) == lookback and row.baseline_sessions_used == lookback for row in coverages.values()),
+            symbols_partial=sum(0 < row.baseline_sessions_used < lookback for row in coverages.values()),
+            symbols_zero_proven=sum(any(proof.reason == "PROVEN_ZERO" for proof in proofs) for proofs in all_proofs.values()),
+            sessions_proven=len(proven),
+            sessions_unproven=len(flattened) - len(proven),
+            daily_missing_count=sum(proof.reason == "DAILY_MISSING" for proof in flattened),
+            volume_mismatch_count=sum(proof.reason == "VOLUME_MISMATCH" for proof in flattened),
+            unsafe_intraday_count=sum(proof.reason in {"UNSAFE_INTRADAY", "DAILY_UNSAFE"} for proof in flattened),
+            exchange_mismatch_count=sum(proof.reason == "EXCHANGE_MISMATCH" for proof in flattened),
+            baseline_rows=baseline_row_count,
+            coverage_proof=COVERAGE_PROOF,
+            samples=tuple(samples),
         )
     except Exception:
-        output.rollback()
+        if output is not None:
+            output.rollback()
         raise
     finally:
-        output.close()
+        if output is not None:
+            output.close()
+        daily.close()
         history.close()

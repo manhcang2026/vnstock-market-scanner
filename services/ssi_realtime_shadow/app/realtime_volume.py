@@ -47,6 +47,8 @@ class VolumeBaselineSnapshot:
     source_path: Path
     schema_version: int
     lookback: int
+    coverage_proof: str | None
+    as_of_date: str | None
     coverage: Mapping[str, BaselineCoverage]
     points: Mapping[tuple[str, str], BaselinePoint]
 
@@ -269,7 +271,9 @@ def _validate_columns(connection: sqlite3.Connection) -> None:
             )
 
 
-def _load_metadata(connection: sqlite3.Connection) -> tuple[int, int]:
+def _load_metadata(
+    connection: sqlite3.Connection,
+) -> tuple[int, int, str | None, str | None]:
     metadata: dict[str, str] = {}
     for row in connection.execute("SELECT key, value FROM volume_baseline_metadata"):
         key = str(row["key"])
@@ -287,7 +291,11 @@ def _load_metadata(connection: sqlite3.Connection) -> tuple[int, int]:
         )
     if lookback < 1:
         raise BaselineValidationError("Baseline lookback must be positive")
-    return schema_version, lookback
+    coverage_proof = metadata.get("coverage_proof")
+    as_of_date = metadata.get("as_of_date")
+    if as_of_date is not None:
+        as_of_date = _valid_iso_date(as_of_date, "baseline as_of_date")
+    return schema_version, lookback, coverage_proof, as_of_date
 
 
 def _load_coverage(
@@ -350,11 +358,11 @@ def _load_coverage(
         )
         if (first_history_date is None) != (last_history_date is None):
             raise BaselineValidationError(f"Incomplete history dates for {symbol}")
-        if available > 0 and first_history_date is None:
+        if used > 0 and first_history_date is None:
             raise BaselineValidationError(f"Missing history dates for {symbol}")
-        if available == 0 and first_history_date is not None:
+        if used == 0 and first_history_date is not None:
             raise BaselineValidationError(
-                f"No-history coverage symbol {symbol} unexpectedly has history dates"
+                f"No-proven-session symbol {symbol} unexpectedly has history dates"
             )
         if first_history_date and first_history_date > last_history_date:
             raise BaselineValidationError(f"Reversed history dates for {symbol}")
@@ -485,7 +493,9 @@ def load_volume_baseline(path: Path) -> VolumeBaselineSnapshot:
     try:
         connection.execute("BEGIN")
         _validate_columns(connection)
-        schema_version, lookback = _load_metadata(connection)
+        schema_version, lookback, coverage_proof, as_of_date = _load_metadata(
+            connection
+        )
         coverage = _load_coverage(connection)
         points = _load_points(connection, coverage)
     except sqlite3.DatabaseError as exc:
@@ -496,6 +506,8 @@ def load_volume_baseline(path: Path) -> VolumeBaselineSnapshot:
         source_path=source_path.resolve(),
         schema_version=schema_version,
         lookback=lookback,
+        coverage_proof=coverage_proof,
+        as_of_date=as_of_date,
         coverage=MappingProxyType(coverage),
         points=MappingProxyType(points),
     )
