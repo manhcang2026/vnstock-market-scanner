@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 from dataclasses import replace
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -546,6 +547,86 @@ def test_candidate_sessions_are_shared_per_date_and_reloaded_on_rollover(
     assert loader_calls == 2
     assert len(candidate_tuples) == 2 * len(symbols)
     assert all(item is candidate_tuples[0] for item in candidate_tuples)
+    runtime.close()
+    store.close()
+
+
+def test_history_reads_work_from_callback_thread_under_runtime_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    baseline = tmp_path / "baseline.db"
+    market = tmp_path / "market.db"
+    history_path = tmp_path / "history.db"
+    _baseline(baseline)
+    _market(market)
+    history = SQLiteStore(history_path)
+    history.close()
+    store = SQLiteStore(tmp_path / "hot.db")
+    _hot(store)
+
+    creator_thread = threading.get_ident()
+    loader_calls = 0
+    history_read_threads: list[int] = []
+    real_loader = live_module.load_candidate_market_sessions
+    real_ato = live_module.read_ato_exact10
+    real_atc = live_module.read_atc_exact10
+
+    def counted_loader(*args, **kwargs):
+        nonlocal loader_calls
+        loader_calls += 1
+        return real_loader(*args, **kwargs)
+
+    def locked_ato(*args, **kwargs):
+        assert runtime._lock._is_owned()
+        history_read_threads.append(threading.get_ident())
+        return real_ato(*args, **kwargs)
+
+    def locked_atc(*args, **kwargs):
+        assert runtime._lock._is_owned()
+        history_read_threads.append(threading.get_ident())
+        return real_atc(*args, **kwargs)
+
+    monkeypatch.setattr(
+        live_module, "load_candidate_market_sessions", counted_loader
+    )
+    monkeypatch.setattr(live_module, "read_ato_exact10", locked_ato)
+    monkeypatch.setattr(live_module, "read_atc_exact10", locked_atc)
+
+    engine = RealtimeVolumeEngine(baseline)
+    runtime = LiveStateRuntime(
+        volume_engine=engine,
+        hot_store=store,
+        market_db_path=market,
+        history_db_path=history_path,
+        active_at=_at("09:31"),
+    )
+    snapshot = engine.get_snapshot("SHS")
+    assert snapshot is not None
+
+    outcomes: list[bool] = []
+    errors: list[BaseException] = []
+    callback_threads: list[int] = []
+
+    def project_from_callback_thread() -> None:
+        callback_threads.append(threading.get_ident())
+        try:
+            outcomes.append(
+                runtime.handle_snapshot(snapshot, observed_at=_at("09:31"))
+            )
+        except BaseException as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    worker = threading.Thread(target=project_from_callback_thread)
+    worker.start()
+    worker.join()
+
+    assert errors == []
+    assert outcomes == [True]
+    assert callback_threads and callback_threads[0] != creator_thread
+    assert history_read_threads == [callback_threads[0], callback_threads[0]]
+    assert loader_calls == 1
+    assert runtime.last_error is None
+    assert runtime._candidate_dates_trading_date == DAY
     runtime.close()
     store.close()
 
