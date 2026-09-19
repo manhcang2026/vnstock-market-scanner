@@ -58,6 +58,10 @@ const LIVE_RECONNECT_DELAYS_MS = [2_000, 4_000, 8_000, 16_000, 30_000]
 const chartResponseCache = new Map()
 const chartRequestCache = new Map()
 let nextChartAuthScope = 0
+let guestChartUnauthorized = false
+// A route remount or auth transition must not probe a known-missing endpoint again.
+// This is intentionally browser-memory only; a reload starts a fresh capability check.
+const unavailableCapabilities = { stockDetail: false, ccc: false, radar: false }
 
 function getCachedChart(key) {
   const item = chartResponseCache.get(key)
@@ -186,7 +190,11 @@ export default function StockDetailPage() {
   const [metadataState, setMetadataState] = useState({ symbol: '', data: null })
   const [quoteState, setQuoteState] = useState({ symbol: '', data: null, error: '' })
   const [publicContextState, setPublicContextState] = useState({ symbol: '', data: null, error: '' })
-  const [capabilityUnavailable, setCapabilityUnavailable] = useState({ stockDetail: false, ccc: false, radar: false })
+  const [capabilityUnavailable, setCapabilityUnavailable] = useState(() => ({ ...unavailableCapabilities }))
+  const markCapabilityUnavailable = (capability) => {
+    unavailableCapabilities[capability] = true
+    setCapabilityUnavailable((current) => ({ ...current, [capability]: true }))
+  }
   const [accessState, setAccessState] = useState({ symbol: '', authToken: '', data: null, error: '' })
   const [cccState, setCccState] = useState({ symbol: '', authToken: '', data: null, error: '', status: 0 })
   const [radarState, setRadarState] = useState({ authToken: '', data: null, error: '', status: 0 })
@@ -246,14 +254,14 @@ export default function StockDetailPage() {
   }, [symbol, validSymbol])
 
   useEffect(() => {
-    if (!validSymbol || capabilityUnavailable.stockDetail) return undefined
+    if (!validSymbol || unavailableCapabilities.stockDetail) return undefined
     const controller = new AbortController()
     fetchPublicStockContext(symbol, { signal: controller.signal })
       .then((data) => setPublicContextState({ symbol, data, error: '' }))
       .catch((error) => {
         if (abortError(error)) return
         if (error?.status === 404) {
-          setCapabilityUnavailable((current) => ({ ...current, stockDetail: true }))
+          markCapabilityUnavailable('stockDetail')
           setPublicContextState({ symbol, data: null, error: '' })
           return
         }
@@ -345,7 +353,7 @@ export default function StockDetailPage() {
       || activeDetailTab !== 'technical'
       || !accessToken
       || !access?.technical_allowed
-      || capabilityUnavailable.ccc
+      || unavailableCapabilities.ccc
       || cccBlockedStatus
     ) {
       return undefined
@@ -366,7 +374,7 @@ export default function StockDetailPage() {
         .catch((error) => {
           if (active && !abortError(error)) {
             if (error?.status === 404) {
-              setCapabilityUnavailable((current) => ({ ...current, ccc: true }))
+              markCapabilityUnavailable('ccc')
               setCccState({ symbol, authToken: accessToken, data: null, error: '', status: 404 })
               stop()
               return
@@ -428,7 +436,7 @@ export default function StockDetailPage() {
   ])
 
   useEffect(() => {
-    if (!ready || capabilityUnavailable.radar || radarBlockedStatus) return undefined
+    if (!ready || unavailableCapabilities.radar || radarBlockedStatus) return undefined
 
     let active = true
     let controller
@@ -445,7 +453,7 @@ export default function StockDetailPage() {
         .catch((error) => {
           if (active && !abortError(error)) {
             if (error?.status === 404) {
-              setCapabilityUnavailable((current) => ({ ...current, radar: true }))
+              markCapabilityUnavailable('radar')
               setRadarState({ authToken: accessToken, data: null, error: '', status: 404 })
               stop()
               return
@@ -719,6 +727,8 @@ export default function StockDetailPage() {
     if (!validSymbol || !chartDate) return undefined
     if (!ALLOWED_RESOLUTIONS.has(resolution)) return undefined
 
+    if (!accessToken && guestChartUnauthorized) return undefined
+
     let active = true
     loadChartCached({
       key: chartKey,
@@ -740,6 +750,7 @@ export default function StockDetailPage() {
         }
       })
       .catch((error) => {
+        if (!accessToken && error?.status === 401) guestChartUnauthorized = true
         if (!active) return
         const failure = chartFailure(error, accessToken)
         setChartState((current) => ({
@@ -791,6 +802,7 @@ export default function StockDetailPage() {
       : ''
 
   const chartStateIsCurrent = chartState.authScope === chartAuthScope
+  const guestChartBlocked = !accessToken && guestChartUnauthorized
   const exactChart = chartStateIsCurrent && chartState.key === chartKey ? chartState.data : null
   const reusableChart = (
     chartStateIsCurrent
@@ -798,10 +810,12 @@ export default function StockDetailPage() {
     chartState.symbol === symbol
     && chartState.resolution === resolution
   ) ? chartState.data : null
-  const chart = exactChart || reusableChart
-  const chartError = chartStateIsCurrent && chartState.key === chartKey && !chartState.data
-    ? chartState.error
-    : ''
+  const chart = guestChartBlocked ? null : exactChart || reusableChart
+  const chartError = guestChartBlocked
+    ? chartFailure({ status: 401 }, null).message
+    : chartStateIsCurrent && chartState.key === chartKey && !chartState.data
+      ? chartState.error
+      : ''
   const bars = Array.isArray(chart?.bars) ? chart.bars : []
   const chartLoading = !chart && !chartError
   const loadingOlderHistory = Boolean(
@@ -842,7 +856,7 @@ export default function StockDetailPage() {
 
   let chartContent
   if (chartError) {
-    chartContent = <div className={`detail-state${chartState.errorKind === 'neutral' ? '' : ' is-error'}`}>{chartError}</div>
+    chartContent = <div className={`detail-state${guestChartBlocked || chartState.errorKind === 'neutral' ? '' : ' is-error'}`}>{chartError}</div>
   } else if (chartLoading) {
     chartContent = <div className="detail-state">Đang tải biểu đồ kỹ thuật…</div>
   } else {

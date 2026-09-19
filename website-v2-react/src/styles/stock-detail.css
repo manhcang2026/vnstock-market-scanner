@@ -3,7 +3,7 @@
   max-width: none;
   min-width: 0;
   display: grid;
-  grid-template-columns: var(--ccc-signal-rail-width, 176px) minmax(0, 1fr) var(--ccc-context-width, 288px);
+  grid-template-columns: var(--ccc-side-rail-width) minmax(0, 1fr) var(--ccc-side-rail-width);
   align-items: start;
   gap: 12px;
   margin: 0;
@@ -1180,7 +1180,7 @@
 /* FE-02: keep the chart workspace dominant across desktop and small screens. */
 .stock-v3-page {
   grid-template-areas: 'radar workspace context';
-  grid-template-columns: var(--ccc-signal-rail-width) minmax(0, 1fr) var(--ccc-context-width);
+  grid-template-columns: var(--ccc-side-rail-width) minmax(0, 1fr) var(--ccc-side-rail-width);
   gap: 10px;
 }
 
@@ -1271,7 +1271,7 @@
 .stock-v3-tab-list button.is-active::after { inset-inline: 12px; height: 3px; background: var(--accent); }
 
 .stock-v3-overview,
-.stock-v3-fundamental { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding: 12px; }
+.stock-v3-fundamental { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 10px; }
 .stock-v3-metric-group {
   min-width: 0;
   overflow: hidden;
@@ -1281,7 +1281,7 @@
 }
 .stock-v3-metric-group h3 {
   margin: 0;
-  padding: 9px 11px;
+  padding: 7px 10px;
   border-bottom: 1px solid var(--border);
   color: var(--muted);
   font-size: 11px;
@@ -1291,8 +1291,8 @@
 }
 .stock-v3-metric-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .stock-v3-metric-grid .stock-v3-metric {
-  min-height: 75px;
-  padding: 10px 11px;
+  min-height: 62px;
+  padding: 7px 10px;
   border-right: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
 }
@@ -1346,7 +1346,7 @@
 .stock-v3-bctc-link a { color: var(--accent); }
 
 @media (min-width: 1200px) {
-  .stock-v3-page { align-items: stretch; }
+  .stock-v3-page { min-height: calc(100dvh - var(--stock-header-height)); align-items: stretch; }
   .stock-v3-radar { position: static; min-height: 100%; max-height: none; overflow: visible; }
   .stock-v3-context-panel { position: static; min-height: 100%; }
 }

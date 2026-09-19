@@ -379,23 +379,39 @@ html[data-theme="light"] .trading-terminal {
 @media (max-width: 460px) {
   .terminal-toolbar {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
   }
 
-  .timeframe-group {
-    justify-content: flex-start;
-  }
-
+  .timeframe-group,
   .indicator-group {
-    max-width: 122px;
-    justify-content: flex-start;
-    overflow-x: auto;
+    width: 100%;
+    max-width: none;
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 4px;
+    overflow: visible;
+  }
+
+  .ma-control,
+  .terminal-toolbar button {
+    width: 100%;
   }
 
   .terminal-toolbar button {
-    min-width: 36px;
-    height: 36px;
-    padding-inline: 6px;
+    min-width: 0;
+    height: 40px;
+    padding-inline: 3px;
+  }
+
+  .terminal-toolbar .ma-menu button {
+    min-width: 0;
+    height: 40px;
+  }
+
+  .fullscreen-button {
+    min-width: 0 !important;
+    gap: 3px;
   }
 
   .terminal-readout {

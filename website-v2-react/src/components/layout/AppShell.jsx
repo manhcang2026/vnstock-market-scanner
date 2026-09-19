@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../auth/AuthContext'
-import { findUniqueStockByName } from '../../lib/stockSearch'
+import { findStockMetadataBySymbol, findUniqueStockByName } from '../../lib/stockSearch'
 import StockDetailShell from './StockDetailShell'
 
 const navItems = [
@@ -41,25 +41,24 @@ export default function AppShell() {
       return
     }
 
-    if (SYMBOL_RE.test(tickerQuery)) {
-      navigate(`/co-phieu/${encodeURIComponent(tickerQuery)}`)
-      return
-    }
-
     setSearchBusy(true)
     try {
-      const match = await findUniqueStockByName(rawQuery)
+      const exactTicker = SYMBOL_RE.test(tickerQuery)
+        ? await findStockMetadataBySymbol(tickerQuery)
+        : null
+      const match = exactTicker || await findUniqueStockByName(rawQuery)
       if (match?.symbol) {
         navigate(`/co-phieu/${encodeURIComponent(match.symbol)}`)
         return
       }
     } catch {
-      // Fall through to Scanner search when metadata lookup is unavailable.
+      navigate(`/danh-sach?q=${encodeURIComponent(rawQuery)}&lookup=unavailable`)
+      return
     } finally {
       setSearchBusy(false)
     }
 
-    navigate(`/danh-sach?q=${encodeURIComponent(tickerQuery)}`)
+    navigate(`/danh-sach?q=${encodeURIComponent(rawQuery)}`)
   }
 
   if (isStockDetail) {
