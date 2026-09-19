@@ -30,7 +30,7 @@ export default function StockDetailContextPanel({
       <header className="stock-v3-context-title">Dữ liệu</header>
       <div className="stock-v3-context-body">
         <div className="stock-v3-context-heading">
-          <span className={`stock-v3-status-dot${healthy ? ' is-live' : ''}`} />
+          <span className={`stock-v3-status-dot${healthy ? ' is-live' : ''}`} aria-hidden="true" />
           <div>
             <strong>{healthy ? 'Dữ liệu đang hoạt động' : 'Dữ liệu có thể chậm'}</strong>
             <small>{liveConnected ? 'Nến hiện tại đang được cập nhật.' : 'Đang hiển thị bản ghi gần nhất.'}</small>

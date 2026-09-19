@@ -71,6 +71,15 @@ function Metric({ label, value, supporting }) {
   )
 }
 
+function MetricGroup({ title, children, className = '' }) {
+  return (
+    <section className={`stock-v3-metric-group ${className}`}>
+      <h3>{title}</h3>
+      <div className="stock-v3-metric-grid">{children}</div>
+    </section>
+  )
+}
+
 function formatValue(value, digits = 2, suffix = '') {
   if (value === null || value === undefined || Number.isNaN(Number(value))) return '—'
   return `${new Intl.NumberFormat('vi-VN', { maximumFractionDigits: digits }).format(Number(value))}${suffix}`
@@ -162,19 +171,27 @@ function FundamentalPanel({ financial, financialLoading, financialError }) {
         <strong>{score?.label || 'Chưa đủ dữ liệu'}</strong>
         <small>Chấm được {score?.available || 0}/100 điểm tối đa · độ phủ {score?.coverage || 0}%</small>
       </section>
-      <div className="stock-v3-fundamental-grid">
-        <Metric label="Ngành" value={row.website_group || '—'} />
-        <Metric label="P/E" value={formatValue(row.pe, 2, 'x')} />
-        <Metric label="P/B" value={formatValue(row.pb, 2, 'x')} />
-        <Metric label="ROE" value={formatPercent(row.roea_pct)} />
-        <Metric label="ROA" value={formatPercent(row.roaa_pct)} />
+      <MetricGroup title="Tăng trưởng" className="is-growth">
         <Metric label="LNST YoY" value={formatPercent(row.profit_yoy_pct)} />
         <Metric label="Doanh thu / thu nhập YoY" value={formatPercent(row.income_yoy_pct)} />
         <Metric label="LNST QoQ" value={formatPercent(row.profit_qoq_pct)} />
+      </MetricGroup>
+      <MetricGroup title="Sinh lời" className="is-profitability">
+        <Metric label="ROE" value={formatPercent(row.roea_pct)} />
+        <Metric label="ROA" value={formatPercent(row.roaa_pct)} />
+      </MetricGroup>
+      <MetricGroup title="Đòn bẩy" className="is-leverage">
         <Metric label="Nợ / vốn chủ" value={formatPercent(row.debt_equity_pct)} />
         <Metric label="Nợ / tài sản" value={formatPercent(row.debt_assets_pct)} />
+      </MetricGroup>
+      <MetricGroup title="Định giá" className="is-valuation">
+        <Metric label="P/E" value={formatValue(row.pe, 2, 'x')} />
+        <Metric label="P/B" value={formatValue(row.pb, 2, 'x')} />
+      </MetricGroup>
+      <MetricGroup title="Hồ sơ & độ mới" className="is-freshness">
+        <Metric label="Ngành" value={row.website_group || '—'} />
         <Metric label="Độ mới" value={FRESHNESS_LABELS[row.freshness_status] || row.freshness_status || row.data_status || '—'} />
-      </div>
+      </MetricGroup>
       {score?.parts?.length ? (
         <details className="stock-v3-score-details">
           <summary>Xem cấu phần điểm</summary>
@@ -197,7 +214,7 @@ function ReportsPanel({ symbol, quarterly, quarterlyLoading, quarterlyError }) {
         <div className="stock-v3-tab-message is-neutral"><strong>financial_quarterly chưa có bản ghi cho mã này.</strong></div>
       ) : null}
       {(quarterly || []).length ? (
-        <div className="stock-v3-quarter-table"><table><thead><tr><th>Kỳ</th><th>Doanh thu / thu nhập</th><th>LNST</th><th>YoY</th><th>ROE</th></tr></thead><tbody>
+        <div className="stock-v3-quarter-table"><table><caption className="sr-only">Lịch sử tài chính theo quý của {symbol}</caption><thead><tr><th scope="col">Kỳ</th><th scope="col">Doanh thu / thu nhập</th><th scope="col">LNST</th><th scope="col">YoY</th><th scope="col">ROE</th></tr></thead><tbody>
           {quarterly.map((row, index) => <tr key={`${row.period || `${row.year}-Q${row.quarter}`}-${index}`}><td>{row.period || `${row.year} Q${row.quarter}`}</td><td>{moneyBillions(row.income_bil_vnd)}</td><td>{moneyBillions(row.parent_net_profit_bil_vnd ?? row.net_profit_bil_vnd)}</td><td>{formatPercent(row.profit_yoy_pct)}</td><td>{formatPercent(row.roea_pct)}</td></tr>)}
         </tbody></table></div>
       ) : null}
@@ -244,17 +261,23 @@ export default function StockDetailTabs({
 
       <div id={`detail-panel-${activeTab}`} className="stock-v3-tab-panel" role="tabpanel" aria-labelledby={`detail-tab-${activeTab}`}>
         {activeTab === 'overview' ? (
-          <div className="stock-v3-overview-grid" aria-busy={quoteLoading}>
-            <Metric label="Tham chiếu" value={quoteLoading ? '…' : formatNumber(quote?.ref_price)} />
-            <Metric label="Mở cửa" value={quoteLoading ? '…' : formatNumber(quote?.open)} />
-            <Metric label="Cao nhất" value={quoteLoading ? '…' : formatNumber(quote?.high)} />
-            <Metric label="Thấp nhất" value={quoteLoading ? '…' : formatNumber(quote?.low)} />
-            <Metric label="Giá hiện tại" value={quoteLoading ? '…' : formatNumber(quote?.last_price)} />
-            <Metric label="KL lũy kế" value={quoteLoading ? '…' : formatNumber(quote?.total_volume)} />
-            <Metric label="MA10" value={formatNumber(publicContext?.ma10)} supporting={`Cách ${formatPercent(publicContext?.distance_ma10_pct)}`} />
-            <Metric label="MA200" value={formatNumber(publicContext?.ma200)} supporting={`Cách ${formatPercent(publicContext?.distance_ma200_pct)}`} />
-            <Metric label="Sàn" value={quote?.exchange || metadata?.exchange || '—'} />
-            <Metric label="Ngành" value={financial?.financial?.website_group || metadata?.website_group || '—'} />
+          <div className="stock-v3-overview" aria-busy={quoteLoading}>
+            <MetricGroup title="Thị trường" className="is-market">
+              <Metric label="Tham chiếu" value={quoteLoading ? '…' : formatNumber(quote?.ref_price)} />
+              <Metric label="Mở cửa" value={quoteLoading ? '…' : formatNumber(quote?.open)} />
+              <Metric label="Cao nhất" value={quoteLoading ? '…' : formatNumber(quote?.high)} />
+              <Metric label="Thấp nhất" value={quoteLoading ? '…' : formatNumber(quote?.low)} />
+              <Metric label="Giá hiện tại" value={quoteLoading ? '…' : formatNumber(quote?.last_price)} />
+              <Metric label="KL lũy kế" value={quoteLoading ? '…' : formatNumber(quote?.total_volume)} />
+            </MetricGroup>
+            <MetricGroup title="Bối cảnh kỹ thuật" className="is-technical-context">
+              <Metric label="MA10" value={formatNumber(publicContext?.ma10)} supporting={`Cách ${formatPercent(publicContext?.distance_ma10_pct)}`} />
+              <Metric label="MA200" value={formatNumber(publicContext?.ma200)} supporting={`Cách ${formatPercent(publicContext?.distance_ma200_pct)}`} />
+            </MetricGroup>
+            <MetricGroup title="Doanh nghiệp" className="is-identity">
+              <Metric label="Sàn" value={quote?.exchange || metadata?.exchange || '—'} />
+              <Metric label="Ngành" value={financial?.financial?.website_group || metadata?.website_group || '—'} />
+            </MetricGroup>
           </div>
         ) : null}
         {activeTab === 'technical' ? <CccPanel {...{ ready, user, accessLoading, accessError, access, ccc, cccError, cccLoading }} /> : null}

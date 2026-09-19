@@ -29,6 +29,9 @@ export default function StockDetailSignalRail({ radar, radarError }) {
       {radarError && !radar ? (
         <p className="stock-v3-radar-state is-error">{radarError}</p>
       ) : null}
+      {radarError && radar ? (
+        <p className="stock-v3-radar-state is-warning">Đang giữ trạng thái gần nhất · {radarError}</p>
+      ) : null}
       {!radar && !radarError ? (
         <p className="stock-v3-radar-state">Đang tải trạng thái thị trường…</p>
       ) : null}

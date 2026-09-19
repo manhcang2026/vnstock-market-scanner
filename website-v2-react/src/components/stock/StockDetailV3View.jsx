@@ -62,11 +62,6 @@ export default function StockDetailV3View({
 
   return (
     <div className="stock-v3-page">
-      <StockDetailSignalRail
-        radar={radar}
-        radarError={radarError}
-      />
-
       <div className="stock-v3-workspace">
         <section className="stock-v3-identity" aria-labelledby="stock-v3-title">
           <div className="stock-v3-identity-copy">
@@ -140,6 +135,11 @@ export default function StockDetailV3View({
           onActiveTabChange={onActiveDetailTabChange}
         />
       </div>
+
+      <StockDetailSignalRail
+        radar={radar}
+        radarError={radarError}
+      />
 
       <StockDetailContextPanel
         quote={quote}
