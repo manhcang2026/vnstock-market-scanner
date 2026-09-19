@@ -1227,6 +1227,7 @@
   border-bottom: 1px solid color-mix(in oklab, var(--warning) 32%, var(--border));
   color: var(--warning);
 }
+.stock-v3-radar-state.is-secondary { padding-block: 7px; border-bottom: 1px solid var(--border); }
 
 .stock-v3-context-title { min-height: 34px; padding-inline: 10px; font-size: 10px; }
 .stock-v3-context-heading {
@@ -1245,6 +1246,15 @@
 .stock-v3-context-row dt,
 .stock-v3-context-row dd { font-size: 12px; line-height: 1.35; }
 .stock-v3-context-row dd { max-width: 60%; }
+.stock-v3-context-heading .stock-v3-live-indicator { color: var(--positive); font-size: 10px; }
+.stock-v3-context-note {
+  margin: 0 10px 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
 
 .stock-v3-tab-list { display: flex; overflow-x: auto; scrollbar-width: thin; }
 .stock-v3-tab-list button {
@@ -1294,6 +1304,7 @@
 .stock-v3-fundamental .stock-v3-score-card,
 .stock-v3-fundamental .is-growth,
 .stock-v3-fundamental .stock-v3-score-details { grid-column: 1 / -1; }
+.stock-v3-fundamental > .stock-v3-inline-warning { grid-column: 1 / -1; margin: 0; }
 .stock-v3-overview .is-market .stock-v3-metric-grid,
 .stock-v3-fundamental .is-growth .stock-v3-metric-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .stock-v3-overview .is-market .stock-v3-metric:nth-child(3n),
@@ -1331,6 +1342,15 @@
 .stock-v3-quarter-table tbody tr:nth-child(even) { background: var(--surface-2); }
 .stock-v3-bctc-link { background: var(--surface); }
 .stock-v3-bctc-link a { color: var(--accent); }
+
+@media (min-width: 1150px) {
+  .stock-v3-page { align-items: stretch; }
+  .stock-v3-radar { position: static; min-height: 100%; max-height: none; overflow: visible; }
+}
+
+@media (min-width: 1400px) {
+  .stock-v3-context-panel { position: static; min-height: 100%; }
+}
 
 @media (max-width: 1399px) {
   .stock-v3-page {

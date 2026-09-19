@@ -110,15 +110,17 @@ function CccPanel({ ready, user, accessLoading, accessError, access, ccc, cccErr
   }
   if (cccLoading || !ccc) return <div className="stock-v3-tab-message"><strong>Đang tải CCC Intelligence…</strong></div>
 
-  const reasons = (ccc.reason_codes || []).map(code => REASON_LABELS[code] || 'Có thêm điều kiện kỹ thuật từ CCC Engine')
-  const showAuction = [ccc.ato_rvol, ccc.atc_rvol, ccc.atc_price_impact_pct].some(value => value !== null && value !== undefined)
+  const reasons = (ccc.reason_codes || []).map(code => REASON_LABELS[code] || code)
+  const baseline = ccc.baseline_sessions_used == null && ccc.baseline_target_sessions == null
+    ? '—'
+    : `${ccc.baseline_sessions_used ?? '—'}/${ccc.baseline_target_sessions ?? '—'} phiên`
   return (
     <div className="stock-v3-ccc-panel">
       {cccError ? <p className="stock-v3-inline-warning">Đang giữ trạng thái gần nhất · {cccError}</p> : null}
       <section className={`stock-v3-ccc-state is-${String(ccc.signal_direction || 'neutral').toLowerCase()}`}>
         <span>CCC Current State</span>
         <h3>{SIGNAL_LABELS[ccc.signal_state] || ccc.signal_state || '—'}</h3>
-        <div><b>{ccc.signal_direction || 'NEUTRAL'}</b><strong>Mức {ccc.signal_level ?? '—'}</strong></div>
+        <div><b>{ccc.signal_direction || '—'}</b><strong>Mức {ccc.signal_level ?? '—'}</strong></div>
         {ccc.signal_summary_vi ? <p>{ccc.signal_summary_vi}</p> : null}
         {ccc.state_changed_at ? <small>Đổi trạng thái: {new Date(ccc.state_changed_at).toLocaleString('vi-VN')}</small> : null}
       </section>
@@ -128,7 +130,7 @@ function CccPanel({ ready, user, accessLoading, accessError, access, ccc, cccErr
           <Metric label="DayRVOL" value={formatValue(ccc.day_rvol, 2, 'x')} />
           <Metric label="RVOL15" value={formatValue(ccc.rvol15, 2, 'x')} />
           <Metric label="RVOL30" value={formatValue(ccc.rvol30, 2, 'x')} />
-          <Metric label="Baseline" value={`${ccc.baseline_sessions_used ?? '—'}/${ccc.baseline_target_sessions ?? '—'} phiên`} supporting={ccc.metrics_trusted ? 'Dữ liệu tin cậy' : ccc.quality_status || 'Đang đánh giá'} />
+          <Metric label="Baseline" value={baseline} supporting={ccc.metrics_trusted ? 'Dữ liệu tin cậy' : ccc.quality_status || '—'} />
         </div>
       </section>
       <section>
@@ -138,22 +140,20 @@ function CccPanel({ ready, user, accessLoading, accessError, access, ccc, cccErr
           <Metric label="Price15" value={formatPercent(ccc.price15_pct)} />
         </div>
       </section>
-      {showAuction ? (
-        <section>
-          <h3>Auction Intelligence</h3>
-          <div className="stock-v3-intel-grid">
-            <Metric label="ATO RVOL" value={formatValue(ccc.ato_rvol, 2, 'x')} supporting={ccc.ato_baseline_quality} />
-            <Metric label="ATC RVOL" value={formatValue(ccc.atc_rvol, 2, 'x')} supporting={ccc.atc_baseline_quality} />
-            <Metric label="Tác động giá ATC" value={formatPercent(ccc.atc_price_impact_pct)} />
-          </div>
-        </section>
-      ) : null}
-      {reasons.length ? (
-        <section className="stock-v3-reasons">
-          <h3>Vì sao CCC đang đánh giá như vậy?</h3>
-          <ul>{reasons.map((reason, index) => <li key={`${reason}-${index}`}>{reason}</li>)}</ul>
-        </section>
-      ) : null}
+      <section>
+        <h3>Auction Intelligence</h3>
+        <div className="stock-v3-intel-grid">
+          <Metric label="ATO RVOL" value={formatValue(ccc.ato_rvol, 2, 'x')} supporting={ccc.ato_baseline_quality} />
+          <Metric label="ATC RVOL" value={formatValue(ccc.atc_rvol, 2, 'x')} supporting={ccc.atc_baseline_quality} />
+          <Metric label="Tác động giá ATC" value={formatPercent(ccc.atc_price_impact_pct)} />
+        </div>
+      </section>
+      <section className="stock-v3-reasons">
+        <h3>Vì sao CCC đang đánh giá như vậy?</h3>
+        {reasons.length
+          ? <ul>{reasons.map((reason, index) => <li key={`${reason}-${index}`}>{reason}</li>)}</ul>
+          : <p>Chưa có giải thích chi tiết.</p>}
+      </section>
     </div>
   )
 }
@@ -171,6 +171,7 @@ function FundamentalPanel({ financial, financialLoading, financialError }) {
         <strong>{score?.label || 'Chưa đủ dữ liệu'}</strong>
         <small>Chấm được {score?.available || 0}/100 điểm tối đa · độ phủ {score?.coverage || 0}%</small>
       </section>
+      {financial.peerUnavailable ? <p className="stock-v3-inline-warning">Đối chiếu cùng ngành chưa sẵn sàng; phần điểm định giá chưa được chấm.</p> : null}
       <MetricGroup title="Tăng trưởng" className="is-growth">
         <Metric label="LNST YoY" value={formatPercent(row.profit_yoy_pct)} />
         <Metric label="Doanh thu / thu nhập YoY" value={formatPercent(row.income_yoy_pct)} />

@@ -1,4 +1,4 @@
-const API_BASE = import.meta.env.VITE_CCC_API_BASE || '/api/v2'
+const API_BASE = '/api/v2'
 
 async function requestJson(path, { token, signal } = {}) {
   const headers = {}

@@ -169,7 +169,7 @@ export default function StockDetailShell({
           ref={menuButtonRef}
           type="button"
           className="stock-header-button stock-menu-button"
-          aria-label="Mở menu chính"
+          aria-label={drawerOpen ? 'Đóng menu chính' : 'Mở menu chính'}
           aria-expanded={drawerOpen}
           aria-controls="stock-v3-drawer"
           onClick={() => setDrawerOpen((value) => !value)}

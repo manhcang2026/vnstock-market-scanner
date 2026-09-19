@@ -18,6 +18,10 @@ function shortTime(value) {
 export default function StockDetailSignalRail({ radar, radarError }) {
   const groups = Array.isArray(radar?.groups) ? radar.groups : []
   const activeGroups = groups.filter(group => Number(group.total) > 0)
+  const hasVisibleItems = activeGroups.some(group => (group.items || []).length > 0)
+  const identityMessage = radar?.identity_scope === 'UNAVAILABLE'
+    ? 'Danh sách mã chi tiết chưa sẵn sàng.'
+    : !hasVisibleItems ? 'Chưa có mã chi tiết trong phạm vi đang xem.' : ''
 
   return (
     <aside className="stock-v3-signal-rail stock-v3-radar" aria-label="CCC Radar thị trường">
@@ -37,6 +41,9 @@ export default function StockDetailSignalRail({ radar, radarError }) {
       ) : null}
       {radar && !activeGroups.length ? (
         <p className="stock-v3-radar-state">Chưa có tín hiệu hiện tại cần chú ý.</p>
+      ) : null}
+      {radar && activeGroups.length > 0 && identityMessage ? (
+        <p className="stock-v3-radar-state is-secondary">{identityMessage}</p>
       ) : null}
 
       <div className="stock-v3-radar-groups">

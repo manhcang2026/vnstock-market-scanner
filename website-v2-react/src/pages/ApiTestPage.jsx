@@ -95,7 +95,7 @@ export default function ApiTestPage() {
       <PageHeader
         eyebrow="DEV CHECKPOINT · không phải UI production"
         title="HPG API bridge test"
-        description="Kiểm tra React localhost → Vite proxy → chuyenchochung.com/api/v2 → Nginx → CCC realtime API → Supabase entitlement."
+        description="Kiểm tra React → /api/v2 cùng origin → dev proxy hoặc Nginx → CCC realtime API → Supabase entitlement."
       />
 
       <section className="api-test-summary">

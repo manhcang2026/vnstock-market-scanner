@@ -1,25 +1,9 @@
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { describeMarketSession } from '../../lib/marketSession'
 import StockDetailContextPanel from './StockDetailContextPanel'
 import StockDetailSignalRail from './StockDetailSignalRail'
 import StockDetailTabs from './StockDetailTabs'
-
-const SESSION_LABELS = {
-  OPEN_AUCTION: 'ATO',
-  AM_CONTINUOUS: 'Đang giao dịch',
-  PM_CONTINUOUS: 'Đang giao dịch',
-  CONTINUOUS: 'Đang giao dịch',
-  LUNCH_BREAK: 'Nghỉ trưa',
-  CLOSE_AUCTION: 'ATC',
-  POST_TRADING: 'Sau phiên',
-  CLOSED: 'Đóng cửa',
-}
-
-function describeMarketSession(quote, publicContext) {
-  const raw = String(publicContext?.session_type || quote?.trading_session || '').trim().toUpperCase()
-  if (!raw) return { label: 'Phiên chưa xác định', raw: '', semantic: false }
-  if (SESSION_LABELS[raw]) return { label: SESSION_LABELS[raw], raw, semantic: true }
-  return { label: 'Phiên chưa xác định', raw, semantic: false }
-}
 
 export default function StockDetailV3View({
   symbol,
@@ -54,11 +38,18 @@ export default function StockDetailV3View({
   quarterlyError,
   quarterlyLoading,
 }) {
+  const [now, setNow] = useState(() => new Date())
+  useEffect(() => {
+    // Refresh only presentation of session/freshness; no data request is started here.
+    const timer = window.setInterval(() => setNow(new Date()), 60_000)
+    return () => window.clearInterval(timer)
+  }, [])
+
   const companyName = metadataLoading
     ? 'Đang tải thông tin doanh nghiệp…'
     : metadata?.display_name || metadata?.company_name || 'Thông tin doanh nghiệp chưa có'
   const exchange = quote?.exchange || metadata?.exchange || '—'
-  const marketSession = describeMarketSession(quote, publicContext)
+  const marketSession = describeMarketSession(quote, publicContext, now)
 
   return (
     <div className="stock-v3-page">
@@ -93,13 +84,6 @@ export default function StockDetailV3View({
           <section className="stock-v3-error" role="alert">
             <strong>Không tải được Public Market Quote</strong>
             <p>{quoteError}</p>
-          </section>
-        ) : null}
-
-        {publicContextError ? (
-          <section className="stock-v3-error" role="status">
-            <strong>Chưa tải được bối cảnh MA</strong>
-            <p>{publicContextError}</p>
           </section>
         ) : null}
 
@@ -144,8 +128,10 @@ export default function StockDetailV3View({
       <StockDetailContextPanel
         quote={quote}
         publicContext={publicContext}
+        publicContextError={publicContextError}
         liveConnected={liveConnected}
         marketSession={marketSession}
+        now={now}
       />
     </div>
   )

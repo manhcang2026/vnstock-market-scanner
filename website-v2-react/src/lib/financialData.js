@@ -1,4 +1,4 @@
-import { supabase } from './supabase'
+import { publicSupabase } from './publicSupabase'
 
 function numberOrNull(value) {
   if (value === null || value === undefined || value === '') return null
@@ -81,8 +81,8 @@ export function calculateFinancialScore(row, peers = []) {
 }
 
 export async function fetchFinancialContext(symbol) {
-  if (!supabase) throw new Error('Supabase chưa được cấu hình.')
-  const { data: financial, error } = await supabase
+  if (!publicSupabase) throw new Error('Supabase chưa được cấu hình.')
+  const { data: financial, error } = await publicSupabase
     .from('financial_latest')
     .select('*')
     .eq('symbol', symbol)
@@ -91,20 +91,21 @@ export async function fetchFinancialContext(symbol) {
   if (!financial) return { financial: null, peers: [], score: calculateFinancialScore(null) }
 
   let peers = []
+  let peerUnavailable = false
   if (financial.website_group) {
-    const { data, error: peerError } = await supabase
+    const { data, error: peerError } = await publicSupabase
       .from('financial_latest')
       .select('pe,pb,website_group')
       .eq('website_group', financial.website_group)
-    if (peerError) throw peerError
-    peers = data || []
+    if (peerError) peerUnavailable = true
+    else peers = data || []
   }
-  return { financial, peers, score: calculateFinancialScore(financial, peers) }
+  return { financial, peers, score: calculateFinancialScore(financial, peers), peerUnavailable }
 }
 
 export async function fetchQuarterlyFinancials(symbol) {
-  if (!supabase) throw new Error('Supabase chưa được cấu hình.')
-  const { data, error } = await supabase
+  if (!publicSupabase) throw new Error('Supabase chưa được cấu hình.')
+  const { data, error } = await publicSupabase
     .from('financial_quarterly')
     .select('*')
     .eq('symbol', symbol)

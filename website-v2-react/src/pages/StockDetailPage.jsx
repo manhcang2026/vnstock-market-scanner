@@ -146,13 +146,6 @@ function liveWebSocketUrl() {
   const configured = import.meta.env.VITE_CCC_WS_URL
   if (configured) return configured
 
-  if (
-    window.location.hostname === 'localhost'
-    || window.location.hostname === '127.0.0.1'
-  ) {
-    return 'wss://chuyenchochung.com/api/v2/live'
-  }
-
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
   return `${protocol}//${window.location.host}/api/v2/live`
 }
