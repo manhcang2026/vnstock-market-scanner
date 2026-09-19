@@ -28,9 +28,13 @@ export default function StockDetailV3View({
   publicContextError,
   ccc,
   cccError,
+  cccUnavailable,
+  cccBlockedStatus,
   cccLoading,
   radar,
   radarError,
+  radarUnavailable,
+  radarBlockedStatus,
   financial,
   financialError,
   financialLoading,
@@ -108,6 +112,8 @@ export default function StockDetailV3View({
           access={access}
           ccc={ccc}
           cccError={cccError}
+          cccUnavailable={cccUnavailable}
+          cccBlockedStatus={cccBlockedStatus}
           cccLoading={cccLoading}
           financial={financial}
           financialError={financialError}
@@ -123,6 +129,8 @@ export default function StockDetailV3View({
       <StockDetailSignalRail
         radar={radar}
         radarError={radarError}
+        radarUnavailable={radarUnavailable}
+        radarBlockedStatus={radarBlockedStatus}
       />
 
       <StockDetailContextPanel

@@ -15,7 +15,7 @@ function shortTime(value) {
   return match?.[1] || '—'
 }
 
-export default function StockDetailSignalRail({ radar, radarError }) {
+export default function StockDetailSignalRail({ radar, radarError, radarUnavailable, radarBlockedStatus }) {
   const groups = Array.isArray(radar?.groups) ? radar.groups : []
   const activeGroups = groups.filter(group => Number(group.total) > 0)
   const hasVisibleItems = activeGroups.some(group => (group.items || []).length > 0)
@@ -30,13 +30,19 @@ export default function StockDetailSignalRail({ radar, radarError }) {
         <strong>Tín hiệu thị trường</strong>
       </header>
 
-      {radarError && !radar ? (
+      {radarUnavailable ? (
+        <p className="stock-v3-radar-state is-secondary">CCC Radar chưa có trên API hiện tại.</p>
+      ) : null}
+      {!radarUnavailable && radarBlockedStatus ? (
+        <p className="stock-v3-radar-state is-secondary">{radarBlockedStatus === 401 ? 'Đăng nhập lại để xem phạm vi Radar.' : 'Danh sách mã Radar ngoài phạm vi được cấp quyền.'}</p>
+      ) : null}
+      {!radarUnavailable && !radarBlockedStatus && radarError && !radar ? (
         <p className="stock-v3-radar-state is-error">{radarError}</p>
       ) : null}
-      {radarError && radar ? (
+      {!radarUnavailable && !radarBlockedStatus && radarError && radar ? (
         <p className="stock-v3-radar-state is-warning">Đang giữ trạng thái gần nhất · {radarError}</p>
       ) : null}
-      {!radar && !radarError ? (
+      {!radarUnavailable && !radarBlockedStatus && !radar && !radarError ? (
         <p className="stock-v3-radar-state">Đang tải trạng thái thị trường…</p>
       ) : null}
       {radar && !activeGroups.length ? (
@@ -64,7 +70,7 @@ export default function StockDetailSignalRail({ radar, radarError }) {
         ))}
       </div>
 
-      {radar?.identity_scope !== 'FULL_MARKET' ? (
+      {!radarUnavailable && radar?.identity_scope !== 'FULL_MARKET' ? (
         <Link className="stock-v3-radar-cta" to="/danh-sach">
           Quản lý phạm vi theo dõi
         </Link>

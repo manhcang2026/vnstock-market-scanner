@@ -95,9 +95,9 @@ function moneyBillions(value) {
   return value === null || value === undefined ? '—' : `${formatValue(value, 0)} tỷ`
 }
 
-function CccPanel({ ready, user, accessLoading, accessError, access, ccc, cccError, cccLoading }) {
+function CccPanel({ ready, user, accessLoading, accessError, access, ccc, cccError, cccUnavailable, cccBlockedStatus, cccLoading }) {
   if (!ready || accessLoading) return <div className="stock-v3-tab-message"><strong>Đang kiểm tra phạm vi CCC…</strong></div>
-  if (accessError || (cccError && !ccc)) return <div className="stock-v3-tab-message"><strong className="is-error">{accessError || cccError}</strong></div>
+  if (accessError) return <div className="stock-v3-tab-message"><strong className="is-error">{accessError}</strong></div>
   if (!user || !access?.technical_allowed) {
     return (
       <div className="stock-v3-ccc-lock">
@@ -108,51 +108,55 @@ function CccPanel({ ready, user, accessLoading, accessError, access, ccc, cccErr
       </div>
     )
   }
-  if (cccLoading || !ccc) return <div className="stock-v3-tab-message"><strong>Đang tải CCC Intelligence…</strong></div>
+  if (cccBlockedStatus) return <div className="stock-v3-tab-message is-neutral"><strong>{cccError}</strong></div>
+  if (cccError && !ccc) return <div className="stock-v3-tab-message"><strong className="is-error">{cccError}</strong></div>
+  if (cccLoading || (!ccc && !cccUnavailable)) return <div className="stock-v3-tab-message"><strong>Đang tải CCC Intelligence…</strong></div>
 
-  const reasons = (ccc.reason_codes || []).map(code => REASON_LABELS[code] || code)
-  const baseline = ccc.baseline_sessions_used == null && ccc.baseline_target_sessions == null
+  const metrics = ccc || {}
+  const reasons = (metrics.reason_codes || []).map(code => REASON_LABELS[code] || code)
+  const baseline = metrics.baseline_sessions_used == null && metrics.baseline_target_sessions == null
     ? '—'
-    : `${ccc.baseline_sessions_used ?? '—'}/${ccc.baseline_target_sessions ?? '—'} phiên`
+    : `${metrics.baseline_sessions_used ?? '—'}/${metrics.baseline_target_sessions ?? '—'} phiên`
   return (
     <div className="stock-v3-ccc-panel">
       {cccError ? <p className="stock-v3-inline-warning">Đang giữ trạng thái gần nhất · {cccError}</p> : null}
-      <section className={`stock-v3-ccc-state is-${String(ccc.signal_direction || 'neutral').toLowerCase()}`}>
+      {cccUnavailable ? <p className="stock-v3-capability-note">CCC Intelligence chưa có trên API hiện tại. Các chỉ số sẽ hiển thị khi endpoint sẵn sàng.</p> : null}
+      <section className={`stock-v3-ccc-state is-${String(metrics.signal_direction || 'neutral').toLowerCase()}`}>
         <span>CCC Current State</span>
-        <h3>{SIGNAL_LABELS[ccc.signal_state] || ccc.signal_state || '—'}</h3>
-        <div><b>{ccc.signal_direction || '—'}</b><strong>Mức {ccc.signal_level ?? '—'}</strong></div>
-        {ccc.signal_summary_vi ? <p>{ccc.signal_summary_vi}</p> : null}
-        {ccc.state_changed_at ? <small>Đổi trạng thái: {new Date(ccc.state_changed_at).toLocaleString('vi-VN')}</small> : null}
+        <h3>{SIGNAL_LABELS[metrics.signal_state] || metrics.signal_state || '—'}</h3>
+        <div><b>{metrics.signal_direction || '—'}</b><strong>Mức {metrics.signal_level ?? '—'}</strong></div>
+        {metrics.signal_summary_vi ? <p>{metrics.signal_summary_vi}</p> : null}
+        {metrics.state_changed_at ? <small>Đổi trạng thái: {new Date(metrics.state_changed_at).toLocaleString('vi-VN')}</small> : null}
       </section>
       <section>
         <h3>Dòng tiền</h3>
         <div className="stock-v3-intel-grid">
-          <Metric label="DayRVOL" value={formatValue(ccc.day_rvol, 2, 'x')} />
-          <Metric label="RVOL15" value={formatValue(ccc.rvol15, 2, 'x')} />
-          <Metric label="RVOL30" value={formatValue(ccc.rvol30, 2, 'x')} />
-          <Metric label="Baseline" value={baseline} supporting={ccc.metrics_trusted ? 'Dữ liệu tin cậy' : ccc.quality_status || '—'} />
+          <Metric label="DayRVOL" value={formatValue(metrics.day_rvol, 2, 'x')} />
+          <Metric label="RVOL15" value={formatValue(metrics.rvol15, 2, 'x')} />
+          <Metric label="RVOL30" value={formatValue(metrics.rvol30, 2, 'x')} />
+          <Metric label="Baseline" value={baseline} supporting={metrics.metrics_trusted ? 'Dữ liệu tin cậy' : metrics.quality_status || '—'} />
         </div>
       </section>
       <section>
         <h3>Động lượng</h3>
         <div className="stock-v3-intel-grid is-two">
-          <Metric label="Price5" value={formatPercent(ccc.price5_pct)} />
-          <Metric label="Price15" value={formatPercent(ccc.price15_pct)} />
+          <Metric label="Price5" value={formatPercent(metrics.price5_pct)} />
+          <Metric label="Price15" value={formatPercent(metrics.price15_pct)} />
         </div>
       </section>
       <section>
         <h3>Auction Intelligence</h3>
         <div className="stock-v3-intel-grid">
-          <Metric label="ATO RVOL" value={formatValue(ccc.ato_rvol, 2, 'x')} supporting={ccc.ato_baseline_quality} />
-          <Metric label="ATC RVOL" value={formatValue(ccc.atc_rvol, 2, 'x')} supporting={ccc.atc_baseline_quality} />
-          <Metric label="Tác động giá ATC" value={formatPercent(ccc.atc_price_impact_pct)} />
+          <Metric label="ATO RVOL" value={formatValue(metrics.ato_rvol, 2, 'x')} supporting={metrics.ato_baseline_quality} />
+          <Metric label="ATC RVOL" value={formatValue(metrics.atc_rvol, 2, 'x')} supporting={metrics.atc_baseline_quality} />
+          <Metric label="Tác động giá ATC" value={formatPercent(metrics.atc_price_impact_pct)} />
         </div>
       </section>
       <section className="stock-v3-reasons">
         <h3>Vì sao CCC đang đánh giá như vậy?</h3>
         {reasons.length
           ? <ul>{reasons.map((reason, index) => <li key={`${reason}-${index}`}>{reason}</li>)}</ul>
-          : <p>Chưa có giải thích chi tiết.</p>}
+          : <p>{cccUnavailable ? '—' : 'Chưa có giải thích chi tiết.'}</p>}
       </section>
     </div>
   )
@@ -238,6 +242,8 @@ export default function StockDetailTabs({
   access,
   ccc,
   cccError,
+  cccUnavailable,
+  cccBlockedStatus,
   cccLoading,
   financial,
   financialError,
@@ -281,7 +287,7 @@ export default function StockDetailTabs({
             </MetricGroup>
           </div>
         ) : null}
-        {activeTab === 'technical' ? <CccPanel {...{ ready, user, accessLoading, accessError, access, ccc, cccError, cccLoading }} /> : null}
+        {activeTab === 'technical' ? <CccPanel {...{ ready, user, accessLoading, accessError, access, ccc, cccError, cccUnavailable, cccBlockedStatus, cccLoading }} /> : null}
         {activeTab === 'fundamental' ? <FundamentalPanel {...{ financial, financialLoading, financialError }} /> : null}
         {activeTab === 'reports' ? <ReportsPanel {...{ symbol, quarterly, quarterlyLoading, quarterlyError }} /> : null}
       </div>

@@ -163,7 +163,7 @@ export default function StockDetailShell({
   }
 
   return (
-    <div className="stock-v3-shell">
+    <div className={`stock-v3-shell${drawerOpen ? ' is-drawer-open' : ''}`}>
       <header className="stock-v3-header">
         <button
           ref={menuButtonRef}

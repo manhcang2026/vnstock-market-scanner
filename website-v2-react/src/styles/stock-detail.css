@@ -1,11 +1,12 @@
 .stock-v3-page {
-  width: min(100%, 1720px);
+  width: 100%;
+  max-width: none;
   min-width: 0;
   display: grid;
   grid-template-columns: var(--ccc-signal-rail-width, 176px) minmax(0, 1fr) var(--ccc-context-width, 288px);
   align-items: start;
   gap: 12px;
-  margin: 0 auto;
+  margin: 0;
   padding: 12px 14px;
 }
 
@@ -1179,7 +1180,7 @@
 /* FE-02: keep the chart workspace dominant across desktop and small screens. */
 .stock-v3-page {
   grid-template-areas: 'radar workspace context';
-  grid-template-columns: 166px minmax(0, 1fr) 210px;
+  grid-template-columns: var(--ccc-signal-rail-width) minmax(0, 1fr) var(--ccc-context-width);
   gap: 10px;
 }
 
@@ -1315,6 +1316,7 @@
 .stock-v3-tab-message { min-height: 112px; padding: 22px 16px; }
 .stock-v3-tab-message.is-neutral strong { color: var(--muted); font-weight: 650; }
 .stock-v3-ccc-lock { min-height: 180px; border: 1px dashed var(--border-strong); border-radius: 8px; margin: 12px; }
+.stock-v3-capability-note { margin: 0; padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 12px; }
 .stock-v3-ccc-lock strong { font-size: 14px; }
 .stock-v3-ccc-panel > section { padding: 14px; }
 .stock-v3-ccc-panel > .stock-v3-ccc-state {
@@ -1343,16 +1345,13 @@
 .stock-v3-bctc-link { background: var(--surface); }
 .stock-v3-bctc-link a { color: var(--accent); }
 
-@media (min-width: 1150px) {
+@media (min-width: 1200px) {
   .stock-v3-page { align-items: stretch; }
   .stock-v3-radar { position: static; min-height: 100%; max-height: none; overflow: visible; }
-}
-
-@media (min-width: 1400px) {
   .stock-v3-context-panel { position: static; min-height: 100%; }
 }
 
-@media (max-width: 1399px) {
+@media (max-width: 1199px) {
   .stock-v3-page {
     grid-template-areas: 'radar workspace' 'context context';
     grid-template-columns: 166px minmax(0, 1fr);

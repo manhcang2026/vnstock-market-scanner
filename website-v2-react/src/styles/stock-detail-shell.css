@@ -14,8 +14,8 @@
   --ccc-font-ui: "Inter", ui-sans-serif, system-ui, sans-serif;
   --ccc-header-height: 52px;
   --ccc-nav-width: 48px;
-  --ccc-signal-rail-width: 176px;
-  --ccc-context-width: 288px;
+  --ccc-signal-rail-width: 166px;
+  --ccc-context-width: 210px;
   --ccc-type-body: 13px;
   --ccc-type-secondary: 12px;
   --ccc-type-micro: 11px;
@@ -275,6 +275,10 @@ button.stock-shell-nav-link {
   display: grid;
   gap: 4px;
   padding: 10px 0;
+}
+
+.stock-v3-shell.is-drawer-open .stock-v3-nav-rail {
+  visibility: hidden;
 }
 
 .stock-v3-drawer .stock-shell-nav-link { padding-inline: 9px; }

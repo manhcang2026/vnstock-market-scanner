@@ -1,4 +1,4 @@
-import { supabase } from './supabase'
+import { publicSupabase } from './publicSupabase'
 
 let metadataPromise = null
 
@@ -15,10 +15,10 @@ function normalizeSearchText(value) {
 }
 
 async function loadStockMetadata() {
-  if (!supabase) return []
+  if (!publicSupabase) return []
 
   if (!metadataPromise) {
-    metadataPromise = supabase
+    metadataPromise = publicSupabase
       .from('stock_metadata')
       .select('symbol,display_name,company_name,exchange')
       .order('symbol')
