@@ -1,257 +1,148 @@
 # AGENTS.md — Chuyện Chợ Chứng repository instructions
 
-These rules apply to all coding/design agents working in this repository.
+These rules apply to coding/design agents working in this repository.
 
-## 1. Production frontend source of truth
+## 1. Read this first
 
-The current production frontend is:
+Use a cost-conscious workflow.
+
+Before coding, read:
+
+- `docs/workflow/CODEX_BUDGET_MODE.md`
+
+Then read only the project documents directly relevant to the current task.
+
+Do not scan the whole repository just to rebuild context that is already provided in the task.
+
+## 2. Current frontend source for V3 work
+
+For Stock Detail V3 and the current React frontend work, use:
 
 ```text
-website/
+website-v2-react/
 ```
 
-It is a static HawkHost frontend.
+Do not treat the older `website/` tree as the source of truth for V3 tasks unless the task explicitly says to work there.
 
-Do **not** assume the old React/Lovable `dashboard/` project exists or is production.
+For V3 dev/VPS proxy and deployment behavior, use:
 
-The obsolete `dashboard/` frontend was intentionally removed on 2026-08-20.
+- `website-v2-react/DEPLOY_VPS.md`
 
-Before any frontend task, inspect:
+For UI work, consult only the relevant files under:
 
-- `website/index.html`
-- `website/VERSION.txt`
-- current versioned JS in `website/assets/`
-- current versioned CSS in `website/assets/`
+- `docs/ui-ux/`
 
-## 2. UI/UX standard
+Common references:
+- `docs/ui-ux/CCC_UIUX_MASTER.md`
+- `docs/ui-ux/CCC_COMPONENT_RULES.md`
+- `docs/ui-ux/CCC_PAGE_PATTERNS.md`
 
-Before modifying user-facing UI, read:
+Do not automatically read every UI/UX document for a small scoped task.
 
-1. `docs/ui-ux/CCC_UIUX_MASTER.md`
-2. `docs/ui-ux/CCC_COMPONENT_RULES.md`
-3. relevant section in `docs/ui-ux/CCC_PAGE_PATTERNS.md`
-4. before completion: `docs/ui-ux/CCC_UIUX_QA_CHECKLIST.md`
+## 3. Product and permission boundary
 
-CCC UI/UX Design System is authoritative.
+For Stock Detail V3 permissions, use:
 
-For the approved Phase 1 implementation, also read:
+- `docs/product/CCC_STOCK_DETAIL_V3_PERMISSION_AMENDMENT_v1.0.md`
 
-- `docs/ui-ux/CCC_LOVABLE_PHASE1_DESIGN_REFERENCE_v1.0.md`
-- `docs/ui-ux/CCC_PHASE1_DESIGN_PORT_CONTRACT_v1.0.md`
+Public/free includes chart/quote/live market display and the public indicators described there.
 
-## 3. Current production routes
+CCC entitlement-protected data includes CCC-specific RVOL, price-engine, auction intelligence, signal state/reasons, protected radar identities, alerts and automation.
 
-- `/`
-- `/danh-sach`
-- `/so-sanh-theo-nganh`
-- `/sang-loc-co-ban`
+Do not move protected engine logic or raw thresholds into browser code.
 
-Do not delete or silently replace a production route during visual redesign.
+## 4. Market-data ownership
 
-## 4. Real frontend data
+SSI is the canonical market-data source for the current V2/V3 market pipeline.
 
-Current website uses Supabase frontend data including:
+Do not silently mix market-data providers or add a Supabase market-data fallback.
 
-- `stock_snapshot`
-- `financial_latest`
-- `stock_metadata`
-- `financial_quarterly`
+Missing data is missing/NULL; missing data is not zero.
 
-Do not fabricate production fields.
+Supabase remains appropriate for areas such as Auth, Watchlist, Package/VIP, metadata and fundamentals according to the current product/data contracts.
 
-## 5. Scanner core logic
+For changes involving data ownership or canonical history, read the relevant files under `docs/architecture/`, especially:
 
-Current four scanner signals:
+- `docs/architecture/CCC_DATA_SOURCE_OWNERSHIP.md`
+- `docs/architecture/CCC_MARKET_STORAGE_SCHEMA_V2.md`
 
-- Giá tăng ≥ 3%
-- KL ngày ≥ 200% KLTB10
-- Trên MA200
-- RVOL30 ≥ 200%
+## 5. Scanner/core logic
 
-MA10 is reference/sort data, not a fifth signal.
+Do not change scanner thresholds, RVOL definitions, MA logic, auction logic, baseline math, entitlement semantics or scanner-universe behavior unless the current task explicitly requests that change.
 
-A visual redesign must not modify this logic.
+Frontend filter/hide/watchlist behavior must not remove symbols from backend collection.
 
-## 6. Scanner universe
+For core/backend changes, use appropriate targeted tests. Do not reduce validation merely to save Codex usage when data integrity, auth, permissions or calculations are involved.
 
-Frontend actions must never remove a symbol from or stop collection in the backend scanner universe.
+## 6. Scope lock
 
-Filter/hide/watchlist operations are display/personalization only.
+When a task supplies a repository, branch, HEAD/base commit, folder or file allowlist:
 
-## 7. Fundamental score
+- trust and use that scope;
+- start from the listed files;
+- do not rediscover the entire repository;
+- do not inspect Git history deeply unless required;
+- do not edit outside the allowlist unless a direct dependency makes it necessary.
 
-Do not normalize an incomplete score to 100 unless the approved business rule explicitly changes.
+If an out-of-scope file must be changed, state why in the final report.
 
-Show score coverage / points available clearly.
+Do not perform unrelated refactors.
 
-## 8. Light and Dark
+## 7. Runtime and testing defaults
 
-Both are production features.
+For visual-only frontend work such as CSS, spacing, responsive sizing, themes or layout:
 
-All major UI changes must support and QA both themes.
+- do not start the local/dev server by default;
+- do not run browser/UI/screenshot tests by default;
+- do not run the full test suite or full production build by default;
+- use lightweight validation such as `git diff --check` when useful;
+- leave real visual/runtime verification to the Product Owner unless the task explicitly requests otherwise.
 
-## 9. Mockup approval gate
+For frontend logic, run focused validation when available.
 
-For a major visual redesign:
+For backend/realtime/auth/database/entitlement/scanner work, run the targeted tests needed for safety.
 
-- create PC mockup;
-- create mobile mockup;
-- include Light/Dark direction;
-- obtain Product Owner approval before implementing the major visual change.
+Run full test/build only when justified by blast radius, release/merge readiness, shared configuration/dependency changes, or an explicit task instruction.
 
-## 10. Lovable gate
+## 8. Git and deployment
 
-Lovable is optional.
+Unless explicitly requested, do not:
 
-Lovable Phase 1 is a design reference only, not production/runtime source or implementation architecture.
+- commit;
+- push;
+- merge;
+- rebase;
+- change branches;
+- deploy;
+- modify production/VPS state.
 
-Never call/use Lovable without explicit Product Owner approval.
+Do not rewrite migration history.
 
-A reserve of up to 50 credits exists but is not permission to spend it.
+## 9. Lovable and external mutation
 
-Before using Lovable:
+Lovable is a design/reference tool unless the Product Owner explicitly approves a specific write action.
 
-1. propose exact task;
-2. explain advantage;
-3. estimate credits;
-4. wait for approval.
+Do not spend Lovable credits, mutate a Lovable project, publish, deploy or change external state without explicit approval for that action.
 
-## LOVABLE ACCESS POLICY — HARD GATE
+## 10. Secrets
 
-For this repository, Lovable is an external DESIGN REFERENCE.
+Never place privileged secrets in public frontend source, including:
 
-DEFAULT POLICY:
+- Supabase service-role keys;
+- database passwords;
+- private API credentials.
 
-Lovable access is READ-ONLY unless the Product Owner explicitly approves a specific write action in the current conversation.
+## 11. Completion report
 
-### READ-ONLY ALLOWED WITHOUT NEW APPROVAL
+Keep completion reports concise.
 
-Only for inspecting the already-approved Phase 1 reference:
+Report only:
 
-- `get_project`
-- `list_files`
-- `read_file`
-- `list_messages`
-- `get_message`
-- `list_edits`
-- `get_diff`
-- `get_project_knowledge`
-- `get_workspace_knowledge`
+1. files changed;
+2. main changes;
+3. validation run;
+4. what was intentionally not tested and should be tested by the Product Owner;
+5. `git diff --stat`;
+6. any necessary out-of-scope file and the reason.
 
-These actions may only be used to extract/reference existing Lovable data.
-
-### FORBIDDEN WITHOUT EXPLICIT PRODUCT OWNER APPROVAL
-
-Never perform any Lovable action that can create, edit, mutate, publish, deploy, configure, upload, delete, connect, provision or otherwise change Lovable state unless the Product Owner explicitly approves THAT action.
-
-This includes, but is not limited to:
-
-- `send_message`
-- `create_project`
-- deploy / publish actions
-- `set_project_knowledge`
-- `set_workspace_knowledge`
-- `enable_database`
-- database `INSERT` / `UPDATE` / `DELETE` / DDL
-- project visibility changes
-- connector changes
-- workspace/project skill updates
-- uploads
-- edits
-- deletes
-- any future Lovable tool with write/mutation semantics
-
-IMPORTANT:
-
-- Plugin presence is NOT permission to write.
-- Previous approval for a different Lovable action is NOT reusable.
-- Previous Phase 1 approval is NOT permission for future writes.
-- Available Lovable credits are NOT permission to spend them.
-- Plan mode is NOT automatically read-only if the action can modify Lovable.
-- Never use `send_message` merely to inspect or analyze the project.
-- Never ask Lovable itself to perform extraction when read tools can retrieve the data.
-- If uncertain whether an action is read-only, treat it as WRITE and STOP.
-
-### REQUIRED WRITE APPROVAL
-
-Before any Lovable write action:
-
-1. Explain exactly what Lovable action is proposed.
-2. Explain what it will change.
-3. Wait for explicit Product Owner approval in the current conversation.
-4. Perform only the specifically approved action.
-
-If approval is absent:
-
-STOP and do not call the write action.
-
-### PHASE 1 EXTRACTION SPECIAL RULE
-
-For Lovable Phase 1 extraction:
-
-READ existing source/files/messages only.
-
-Do NOT:
-
-- send prompts/messages to Lovable
-- request Lovable to redesign anything
-- modify code
-- modify knowledge
-- deploy
-- publish
-- connect backend
-- use Lovable credits
-
-The extraction exists only to transfer the already-approved Phase 1 design reference into this repository.
-
-## UI/UX PRO MAX SKILL — SUPPORTING REFERENCE ONLY
-
-This repository may use the local UI/UX Pro Max skill under `.agent/`.
-
-The skill is a supporting design-intelligence tool only.
-
-It MUST NOT override:
-
-1. explicit Product Owner decisions;
-2. `CCC_PHASE1_DESIGN_PORT_CONTRACT_v1.0.md`;
-3. `CCC_LOVABLE_PHASE1_DESIGN_REFERENCE_v1.0.md`;
-4. `CCC_UIUX_MASTER.md`;
-5. `CCC_COMPONENT_RULES.md`;
-6. `CCC_PAGE_PATTERNS.md`.
-
-Use the skill to improve implementation quality, accessibility, responsive behavior, spacing, typography, usability and visual polish.
-
-Do NOT use the skill to reinterpret locked product rules, change the approved Phase 1 design direction, introduce a new design language, or redesign pages from personal preference.
-
-When the skill conflicts with a locked CCC rule:
-
-CCC rules win.
-
-## 11. Secrets
-
-Never place:
-
-- Supabase service-role key;
-- database password;
-- secret API credentials
-
-inside public frontend source.
-
-Do not replace a publishable frontend key with a privileged secret.
-
-## 12. Deployment/versioning
-
-For a production website release:
-
-- update `website/VERSION.txt`;
-- use explicit JS/CSS asset versioning/cache busting;
-- commit source to Git before/with deployment;
-- keep rollback possible.
-
-Do not make permanent HawkHost-only changes that are absent from Git.
-
-## 13. Completion
-
-A UI task is not complete because it looks good in one screenshot.
-
-Run the relevant items in `docs/ui-ux/CCC_UIUX_QA_CHECKLIST.md`.
+Stop when the requested task is complete.
