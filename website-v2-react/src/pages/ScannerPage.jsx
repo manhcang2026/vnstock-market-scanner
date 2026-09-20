@@ -5,7 +5,9 @@ import ScannerResults from '../components/scanner/ScannerResults'
 import ScannerShell from '../components/scanner/ScannerShell'
 import ScannerTabs from '../components/scanner/ScannerTabs'
 import { publicSupabase } from '../lib/publicSupabase'
+import { fetchScanner } from '../lib/cccApi'
 import { activeConditions, applyScannerFilters, categoryOptions, describeCondition, fieldAvailability } from '../lib/scannerFilters'
+import { mergeScannerRows, normalizeScannerResponse } from '../lib/scannerData'
 import { activeSortRules, describeSortRule, sortScannerRows } from '../lib/scannerSort'
 import { loadStockMetadata, normalizeSearchText } from '../lib/stockSearch'
 import { loadMyWatchlist } from '../lib/watchlistData'
@@ -13,6 +15,9 @@ import { mergeWatchlistWithMetadata } from '../lib/watchlistMerge'
 import '../styles/scanner.css'
 
 const PAGE_SIZE = 50
+const SCANNER_REFRESH_MS = 60_000
+// Browser-memory capability check; a reload permits a fresh probe of a newer VPS.
+let scannerCapabilityUnavailable = false
 
 export default function ScannerPage() {
   const auth = useAuth()
@@ -30,11 +35,12 @@ function ScannerPageContent({ auth }) {
   const page = pageState.query === q ? pageState.value : 1
   const [metadata, setMetadata] = useState(() => ({ status: publicSupabase ? 'loading' : 'error', rows: [] }))
   const [watchlist, setWatchlist] = useState(() => ({ status: auth.ready && auth.user ? 'loading' : 'idle', rows: [] }))
+  const [scanner, setScanner] = useState(() => ({ status: scannerCapabilityUnavailable ? 'unavailable' : 'idle', technicalScope: null, rows: [] }))
   const [conditions, setConditions] = useState([])
   const [sortRules, setSortRules] = useState([])
   const [utilityTab, setUtilityTab] = useState('ai')
   const nextRuleId = useRef(0)
-  const { user, ready } = auth
+  const { user, ready, accessToken } = auth
 
   useEffect(() => {
     let active = true
@@ -56,16 +62,86 @@ function ScannerPageContent({ auth }) {
     return () => { active = false }
   }, [ready, user?.id])
 
+  useEffect(() => {
+    if (!ready || (user && !accessToken) || scannerCapabilityUnavailable) return undefined
+    let active = true
+    let inFlight = false
+    let rerun = false
+    let controller = null
+    let timer = null
+    const canLoad = () => document.visibilityState === 'visible' && navigator.onLine
+    const clearTimer = () => { if (timer !== null) clearTimeout(timer); timer = null }
+    const run = () => {
+      clearTimer()
+      if (!active || scannerCapabilityUnavailable || !canLoad()) return
+      if (inFlight) {
+        rerun = true
+        controller?.abort()
+        return
+      }
+      inFlight = true
+      controller = new AbortController()
+      fetchScanner({ token: accessToken || undefined, signal: controller.signal })
+        .then((response) => {
+          if (!active || controller?.signal.aborted) return
+          const data = normalizeScannerResponse(response)
+          setScanner({ status: 'ready', ...data })
+        })
+        .catch((error) => {
+          if (!active || controller?.signal.aborted) return
+          if (error?.status === 404) {
+            scannerCapabilityUnavailable = true
+            setScanner({ status: 'unavailable', technicalScope: null, rows: [] })
+          } else if (error?.status === 401 || error?.status === 403) {
+            setScanner({ status: 'error', technicalScope: null, rows: [] })
+          } else {
+            setScanner((current) => ({ ...current, status: 'error' }))
+          }
+        })
+        .finally(() => {
+          inFlight = false
+          controller = null
+          if (!active || scannerCapabilityUnavailable || !canLoad()) return
+          if (rerun) {
+            rerun = false
+            run()
+          } else {
+            timer = setTimeout(run, SCANNER_REFRESH_MS)
+          }
+        })
+    }
+    const onActivity = () => {
+      clearTimer()
+      if (canLoad()) run()
+      else controller?.abort()
+    }
+    document.addEventListener('visibilitychange', onActivity)
+    window.addEventListener('online', onActivity)
+    window.addEventListener('offline', onActivity)
+    run()
+    return () => {
+      active = false
+      clearTimer()
+      controller?.abort()
+      document.removeEventListener('visibilitychange', onActivity)
+      window.removeEventListener('online', onActivity)
+      window.removeEventListener('offline', onActivity)
+    }
+  }, [ready, user, accessToken])
+
+  const directoryRows = useMemo(() => mergeScannerRows(metadata.rows, scanner.rows), [metadata.rows, scanner.rows])
+  const directoryStatus = directoryRows.length ? 'ready' : metadata.status
+
   const matchingRows = useMemo(() => {
-    if (!q) return metadata.rows
+    if (!q) return directoryRows
     const query = normalizeSearchText(q)
-    return metadata.rows.filter((stock) => [stock.symbol, stock.display_name, stock.company_name]
+    return directoryRows.filter((stock) => [stock.symbol, stock.display_name, stock.company_name]
       .some((value) => normalizeSearchText(value).includes(query)))
-  }, [metadata.rows, q])
-  const watchlistRows = useMemo(() => mergeWatchlistWithMetadata(watchlist.rows, metadata.rows), [watchlist.rows, metadata.rows])
+  }, [directoryRows, q])
+  const watchlistRows = useMemo(() => mergeScannerRows(mergeWatchlistWithMetadata(watchlist.rows, metadata.rows), scanner.rows, { includeScannerOnly: false }), [watchlist.rows, metadata.rows, scanner.rows])
   const sourceRows = activeTab === 'watchlist' ? watchlistRows : matchingRows
-  const availability = useMemo(() => fieldAvailability(activeTab === 'watchlist' ? watchlistRows : metadata.rows), [activeTab, watchlistRows, metadata.rows])
-  const options = useMemo(() => categoryOptions(activeTab === 'watchlist' ? watchlistRows : metadata.rows), [activeTab, watchlistRows, metadata.rows])
+  const availability = useMemo(() => fieldAvailability(activeTab === 'watchlist' ? watchlistRows : directoryRows), [activeTab, watchlistRows, directoryRows])
+  const options = useMemo(() => categoryOptions(activeTab === 'watchlist' ? watchlistRows : directoryRows), [activeTab, watchlistRows, directoryRows])
   const appliedConditions = activeConditions(conditions, availability)
   const appliedSorts = activeSortRules(sortRules, availability)
   const resultRows = sortScannerRows(applyScannerFilters(sourceRows, conditions, availability), sortRules, availability)
@@ -77,8 +153,8 @@ function ScannerPageContent({ auth }) {
     ? watchlist.status === 'ready'
       ? `${appliedConditions.length ? `${resultRows.length} / ${watchlistRows.length} mã phù hợp` : `${watchlistRows.length} mã theo dõi`} · ${filterSummary}`
       : `${!ready ? 'Đang kiểm tra tài khoản' : !user ? 'Đăng nhập để xem danh sách theo dõi' : watchlist.status === 'loading' ? 'Đang tải danh sách theo dõi' : 'Danh sách theo dõi chưa sẵn sàng'} · ${filterSummary}`
-    : metadata.status !== 'ready'
-      ? `${metadata.status === 'loading' ? 'Đang tải danh mục' : 'Danh mục chưa sẵn sàng'} · ${filterSummary}`
+    : directoryStatus !== 'ready'
+      ? `${directoryStatus === 'loading' ? 'Đang tải danh mục' : 'Danh mục chưa sẵn sàng'} · ${filterSummary}`
       : `${resultRows.length} mã${appliedConditions.length ? ' phù hợp' : ''} · ${filterSummary} · ${pageRows.length} mã trên trang này`
   const sortSummary = appliedSorts.map(describeSortRule).join(' → ')
 
@@ -154,7 +230,7 @@ function ScannerPageContent({ auth }) {
 
       <ScannerResults
         mode={activeTab} rows={pageRows} total={matchingRows.length} summary={summary} sortSummary={sortSummary}
-        metadataStatus={metadata.status} q={q} lookupUnavailable={lookupUnavailable}
+        metadataStatus={directoryStatus} q={q} lookupUnavailable={lookupUnavailable}
         watchlistMessage={watchlistMessage} watchlistStatus={watchlist.status} signedOut={!user && ready}
         page={currentPage} pageCount={pageCount} onPage={(value) => setPageState({ query: q, value })}
         filterBuilder={filterBuilder} sortBuilder={sortBuilder} activeCount={appliedConditions.length + appliedSorts.length} utility={utility}

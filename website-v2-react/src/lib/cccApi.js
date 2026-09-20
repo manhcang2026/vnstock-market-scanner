@@ -43,6 +43,10 @@ export function fetchRadar(options) {
   return requestJson('/radar', options)
 }
 
+export function fetchScanner(options) {
+  return requestJson('/scanner', options)
+}
+
 export function fetchChart(symbol, query = '', options) {
   const suffix = query ? `?${query}` : ''
   return requestJson(`/chart/${encodeURIComponent(symbol)}${suffix}`, options)

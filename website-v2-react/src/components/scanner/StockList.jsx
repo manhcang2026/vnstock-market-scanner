@@ -1,12 +1,55 @@
 import { Link } from 'react-router-dom'
 import StockLogo from '../stock/StockLogo'
-import { finiteNumber, formatSignedPct, signedDistanceForRow } from '../../lib/scannerFilters'
+import { finiteNumber, signedDistanceForRow } from '../../lib/scannerFilters'
+import { scannerSignalCue, scannerStateCue } from '../../lib/scannerData'
 
 const MISSING = '—'
 
 function formatNumber(value) {
   const number = finiteNumber(value)
   return number === null ? MISSING : new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 2 }).format(number)
+}
+
+function formatSignedPercent(value, decimals = 2) {
+  const number = finiteNumber(value)
+  if (number === null) return MISSING
+  return `${number > 0 ? '+' : ''}${new Intl.NumberFormat('vi-VN', { minimumFractionDigits: decimals, maximumFractionDigits: decimals }).format(number)}%`
+}
+
+function formatVolume(value) {
+  const number = finiteNumber(value)
+  if (number === null) return MISSING
+  const magnitude = Math.abs(number)
+  if (magnitude < 1000) return formatNumber(number)
+  const unit = magnitude >= 1_000_000 ? 'M' : 'K'
+  const scaled = number / (unit === 'M' ? 1_000_000 : 1000)
+  const decimals = Math.abs(scaled) < 10 ? 2 : 1
+  return `${new Intl.NumberFormat('vi-VN', { maximumFractionDigits: decimals }).format(scaled)}${unit}`
+}
+
+function formatRvol(value) {
+  const number = finiteNumber(value)
+  return number === null ? MISSING : `${new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 1 }).format(number)}x`
+}
+
+function QuickMetrics({ stock }) {
+  if (!stock.ccc) return MISSING
+  const first = [
+    finiteNumber(stock.rvol30) === null ? null : `RVOL30 ${formatRvol(stock.rvol30)}`,
+    finiteNumber(stock.price15) === null ? null : `Price15 ${formatSignedPercent(stock.price15, 1)}`,
+  ].filter(Boolean).join(' · ')
+  const atc = [
+    finiteNumber(stock.atcRvol) > 0 ? `ATC ${formatRvol(stock.atcRvol)}` : null,
+    finiteNumber(stock.atcPriceImpactPct) ? formatSignedPercent(stock.atcPriceImpactPct, 1) : null,
+  ].filter(Boolean).join(' · ')
+  const second = atc || scannerStateCue(stock) || scannerSignalCue(stock)
+  if (!first && !second) return MISSING
+  return <span className="scanner-quick-metrics"><span>{first || second}</span>{first && second ? <small>{second}</small> : null}</span>
+}
+
+function SignalCue({ stock }) {
+  const cue = scannerSignalCue(stock)
+  return cue ? <span className="scanner-signal-cue" title={cue}>{cue}</span> : MISSING
 }
 
 function StockIdentity({ stock }) {
@@ -27,13 +70,13 @@ function StockListCard({ stock, mode }) {
     <Link className="scanner-stock-card" to={`/co-phieu/${encodeURIComponent(stock.symbol)}`} aria-label={`Xem cổ phiếu ${stock.symbol}`}>
       <span className="scanner-card-top">
         <StockIdentity stock={stock} />
-        <span className="scanner-card-price"><strong>{formatNumber(stock.price)}</strong><small>{formatSignedPct(stock.changePct)}</small></span>
+        <span className="scanner-card-price"><strong>{formatNumber(stock.price)}</strong><small>{formatSignedPercent(stock.changePct)}</small></span>
       </span>
       <span className="scanner-card-grid">
-        <span><small>Khối lượng</small><strong>{formatNumber(stock.volume)}</strong></span>
-        <span><small>Cách MA200</small><strong>{formatSignedPct(signedDistanceForRow(stock, 200))}</strong></span>
-        <span><small>{watchlist ? 'RVOL30' : 'Cách MA10'}</small><strong>{watchlist ? formatNumber(stock.rvol30) : formatSignedPct(signedDistanceForRow(stock, 10))}</strong></span>
-        <span><small>Tín hiệu</small><strong>{MISSING}</strong></span>
+        <span><small>Khối lượng</small><strong>{formatVolume(stock.volume)}</strong></span>
+        <span><small>Cách MA200</small><strong>{formatSignedPercent(signedDistanceForRow(stock, 200), 1)}</strong></span>
+        <span><small>{watchlist ? 'RVOL30' : 'Cách MA10'}</small><strong>{watchlist && stock.ccc ? formatRvol(stock.rvol30) : watchlist ? MISSING : formatSignedPercent(signedDistanceForRow(stock, 10), 1)}</strong></span>
+        <span><small>Tín hiệu</small><strong><SignalCue stock={stock} /></strong></span>
       </span>
     </Link>
   )
@@ -58,9 +101,9 @@ export default function StockList({ rows, mode, emptyMessage }) {
             {rows.length ? rows.map((stock) => (
               <tr key={stock.symbol}>
                 <td><Link className="scanner-company-link" to={`/co-phieu/${encodeURIComponent(stock.symbol)}`} aria-label={`Xem cổ phiếu ${stock.symbol}`}><StockIdentity stock={stock} /></Link></td>
-                <td>{formatNumber(stock.price)}</td><td>{formatSignedPct(stock.changePct)}</td><td>{formatNumber(stock.volume)}</td><td>{formatSignedPct(signedDistanceForRow(stock, 200))}</td>
-                <td>{watchlist ? <span className="scanner-quick-metrics"><span>RVOL30 {formatNumber(stock.rvol30)} · Price15 {formatNumber(stock.price15)}</span><small>Current State / ATC {MISSING}</small></span> : formatSignedPct(signedDistanceForRow(stock, 10))}</td>
-                <td>{MISSING}</td>
+                <td>{formatNumber(stock.price)}</td><td>{formatSignedPercent(stock.changePct)}</td><td>{formatVolume(stock.volume)}</td><td>{formatSignedPercent(signedDistanceForRow(stock, 200), 1)}</td>
+                <td>{watchlist ? <QuickMetrics stock={stock} /> : formatSignedPercent(signedDistanceForRow(stock, 10), 1)}</td>
+                <td><SignalCue stock={stock} /></td>
               </tr>
             )) : <tr><td colSpan={7} className="scanner-table-empty">{emptyMessage}</td></tr>}
           </tbody>

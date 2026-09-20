@@ -87,6 +87,7 @@
 .scanner-company-name { max-width: 220px; overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .scanner-quick-metrics span, .scanner-quick-metrics small { display: block; }
 .scanner-quick-metrics small { margin-top: 3px; color: var(--muted); font-size: 10px; }
+.scanner-signal-cue { display: inline-block; max-width: 150px; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; white-space: nowrap; }
 .scanner-table .scanner-table-empty { height: 100px; padding: 22px; color: var(--muted); text-align: center; white-space: normal; }
 .scanner-cards { display: none; }
 .scanner-pagination { display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding: 10px 14px; border-top: 1px solid var(--border); color: var(--muted); font-size: 11px; }
