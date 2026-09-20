@@ -11,7 +11,7 @@ export default function ScannerLeftRail({ mode, filterBuilder, sortBuilder }) {
         <h2>{watchlist ? 'Danh sách của tôi' : 'Bộ lọc'}</h2>
       </header>
       <div className="scanner-rail-body">
-        {watchlist ? <p>Danh sách theo dõi sẽ xuất hiện khi nguồn dữ liệu tài khoản được kết nối.</p> : null}
+        {watchlist ? <p>Các mã đang theo dõi trong tài khoản của bạn.</p> : null}
         <ScannerFilterBuilder {...filterBuilder} />
         <div className="scanner-rail-divider" />
         <strong>Sắp xếp</strong>

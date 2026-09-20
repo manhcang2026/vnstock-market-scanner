@@ -3,7 +3,7 @@ import ScannerMobileFilters from './ScannerMobileFilters'
 import ScannerRightRail from './ScannerRightRail'
 import StockList from './StockList'
 
-export default function ScannerResults({ mode, rows, total, summary, sortSummary, metadataStatus, q, lookupUnavailable, watchlistMessage, signedOut, page, pageCount, onPage, filterBuilder, sortBuilder, activeCount, utility }) {
+export default function ScannerResults({ mode, rows, total, summary, sortSummary, metadataStatus, q, lookupUnavailable, watchlistMessage, watchlistStatus, signedOut, page, pageCount, onPage, filterBuilder, sortBuilder, activeCount, utility }) {
   const watchlist = mode === 'watchlist'
   const advanced = mode === 'advanced'
   let emptyMessage = 'Chưa có mã cổ phiếu trong danh mục.'
@@ -26,7 +26,7 @@ export default function ScannerResults({ mode, rows, total, summary, sortSummary
       <div className="scanner-mobile-utility"><ScannerRightRail active={utility.active} onChange={utility.onChange} idPrefix="scanner-mobile-utility" /></div>
       {watchlist && signedOut ? <div className="scanner-state-action"><Link to="/dang-nhap">Đăng nhập</Link></div> : null}
       <StockList rows={rows} mode={watchlist ? 'watchlist' : 'market'} emptyMessage={watchlist ? watchlistMessage : emptyMessage} />
-      {!watchlist && metadataStatus === 'ready' && pageCount > 1 ? (
+      {(watchlist ? watchlistStatus === 'ready' : metadataStatus === 'ready') && pageCount > 1 ? (
         <nav className="scanner-pagination" aria-label="Phân trang kết quả">
           <button type="button" onClick={() => onPage(Math.max(1, page - 1))} disabled={page === 1}>Trước</button>
           <span>Trang {page} / {pageCount}</span>

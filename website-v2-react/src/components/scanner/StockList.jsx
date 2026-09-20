@@ -15,7 +15,7 @@ function StockIdentity({ stock }) {
       <StockLogo symbol={stock.symbol} />
       <span className="scanner-identity-copy">
         <span><strong>{stock.symbol}</strong><small>{stock.exchange || MISSING}</small></span>
-        <span className="scanner-company-name">{stock.display_name || stock.company_name || stock.symbol}</span>
+        <span className="scanner-company-name">{stock.display_name || stock.company_name || MISSING}</span>
       </span>
     </span>
   )
