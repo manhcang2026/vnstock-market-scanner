@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | VPS / SSI market stack | Current quote, OHLC, volume, bid/ask, chart/history, MA and standard technical indicators, RVOL, Price5/Price15, ATO/ATC, Current State, signals/reasons, Radar, proprietary CCC metrics | Authoritative. Read through same-origin `/api/v2/*` HTTP and `/api/v2/live` WebSocket. Never substitute Supabase values when an endpoint is unavailable. |
 | Supabase | Auth, profiles/users, Watchlist, plans/packages, subscriptions, VIP Day, future payments/billing, the approximately 800-symbol directory, company name, exchange, industry/metadata, `financial_latest`, `financial_quarterly`, BCTC/public fundamental research | Keep the signed-in client for identity/account features and a separate anonymous public-read client for public metadata and financial research. No market/CCC feed comes from this client. |
-| Static host | CCC logo, favicon, stock logos, static application assets | Asset delivery only; not market data or authorization. |
+| ccc-webhosting-01 static host | CCC brand assets, favicon, stock logos, React static build | Stock logos resolve at `/stock-logos/{UPPERCASE_SYMBOL}.webp`; local development may set `VITE_CCC_STATIC_ORIGIN` to the public static origin. Asset delivery only; not market data or authorization. |
 
 The legacy production `website/` may still read `stock_snapshot`; it is **not** a fallback for F3 Stock Detail market data. A missing VPS market/technical endpoint must produce an honest unavailable or `—` state, not a reconstructed quote, MA, RVOL, signal, or Radar identity from Supabase.
 

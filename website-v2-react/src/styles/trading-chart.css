@@ -380,7 +380,8 @@ html[data-theme="light"] .trading-terminal {
   .terminal-toolbar {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
-    gap: 4px;
+    gap: 3px;
+    padding: 4px 5px;
   }
 
   .timeframe-group,
@@ -389,7 +390,7 @@ html[data-theme="light"] .trading-terminal {
     max-width: none;
     display: grid;
     grid-template-columns: repeat(5, minmax(0, 1fr));
-    gap: 4px;
+    gap: 3px;
     overflow: visible;
   }
 
@@ -400,13 +401,14 @@ html[data-theme="light"] .trading-terminal {
 
   .terminal-toolbar button {
     min-width: 0;
-    height: 40px;
-    padding-inline: 3px;
+    height: 34px;
+    padding-inline: 2px;
+    font-size: 10px;
   }
 
   .terminal-toolbar .ma-menu button {
     min-width: 0;
-    height: 40px;
+    height: 38px;
   }
 
   .fullscreen-button {

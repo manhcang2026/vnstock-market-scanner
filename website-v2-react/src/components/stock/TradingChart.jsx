@@ -7,6 +7,7 @@ import {
   LineSeries,
   createChart,
 } from 'lightweight-charts'
+import { compactVolume } from '../../lib/chartFormat'
 import '../../styles/trading-chart.css'
 
 const TIMEFRAMES = [
@@ -29,14 +30,6 @@ function toTimestamp(bar) {
 function priceFormat(value) {
   if (value === null || value === undefined || Number.isNaN(Number(value))) return '—'
   return new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 2 }).format(Number(value))
-}
-
-function compactVolume(value) {
-  const n = Number(value || 0)
-  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(2)}B`
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
-  return String(n)
 }
 
 // CCC_CHART_TOOLS_V2
@@ -336,20 +329,22 @@ export default function TradingChart({
       height: chartHeightFor(container, document.fullscreenElement === wrapRef.current),
       layout: {
         ...themeOptions.layout,
-        fontSize: 11,
+        fontSize: container.clientWidth <= 440 ? 10 : 11,
         attributionLogo: false,
       },
       grid: themeOptions.grid,
       crosshair: themeOptions.crosshair,
       rightPriceScale: {
         ...themeOptions.rightPriceScale,
-        scaleMargins: { top: 0.08, bottom: 0.08 },
+        scaleMargins: container.clientWidth <= 440
+          ? { top: 0.06, bottom: 0.06 }
+          : { top: 0.08, bottom: 0.08 },
       },
       timeScale: {
         ...themeOptions.timeScale,
         timeVisible: true,
         secondsVisible: false,
-        rightOffset: 6,
+        rightOffset: container.clientWidth <= 440 ? 2 : 6,
         tickMarkFormatter: (time) => {
           const date = new Date(Number(time) * 1000)
           const dd = String(date.getUTCDate()).padStart(2, '0')
@@ -373,7 +368,6 @@ export default function TradingChart({
         pinch: true,
       },
       localization: {
-        priceFormatter: (value) => priceFormat(value),
         timeFormatter: (time) => {
           const date = new Date(Number(time) * 1000)
           const dd = String(date.getUTCDate()).padStart(2, '0')
@@ -398,6 +392,7 @@ export default function TradingChart({
         borderVisible: false,
         priceLineVisible: true,
         lastValueVisible: true,
+        priceFormat: { type: 'custom', formatter: priceFormat, minMove: 0.01 },
       },
       0,
     )
@@ -420,6 +415,7 @@ export default function TradingChart({
           priceLineVisible: false,
           lastValueVisible: false,
           crosshairMarkerVisible: false,
+          priceFormat: { type: 'custom', formatter: priceFormat, minMove: 0.01 },
         },
         0,
       )
@@ -442,6 +438,7 @@ export default function TradingChart({
           priceLineVisible: false,
           lastValueVisible: false,
           crosshairMarkerVisible: false,
+          priceFormat: { type: 'custom', formatter: priceFormat, minMove: 0.01 },
         },
         0,
       )
@@ -451,7 +448,7 @@ export default function TradingChart({
     const volumeSeries = chart.addSeries(
       HistogramSeries,
       {
-        priceFormat: { type: 'volume' },
+        priceFormat: { type: 'custom', formatter: compactVolume, minMove: 1 },
         priceLineVisible: false,
         lastValueVisible: false,
       },
@@ -578,6 +575,7 @@ export default function TradingChart({
       chart.applyOptions({
         width: entry.contentRect.width,
         height: chartHeightFor(container, document.fullscreenElement === wrapRef.current),
+        layout: { fontSize: entry.contentRect.width <= 440 ? 10 : 11 },
       })
     })
     observer.observe(container)
@@ -712,6 +710,7 @@ export default function TradingChart({
           priceLineVisible: false,
           lastValueVisible: true,
           crosshairMarkerVisible: false,
+          priceFormat: { type: 'custom', formatter: priceFormat, minMove: 0.01 },
         },
         2,
       )
@@ -722,7 +721,11 @@ export default function TradingChart({
       const paneIndex = showRsi ? 3 : 2
       refs.macd.histogram = chart.addSeries(
         HistogramSeries,
-        { priceLineVisible: false, lastValueVisible: false },
+        {
+          priceLineVisible: false,
+          lastValueVisible: false,
+          priceFormat: { type: 'custom', formatter: priceFormat, minMove: 0.01 },
+        },
         paneIndex,
       )
       refs.macd.histogram.setData(
@@ -744,6 +747,7 @@ export default function TradingChart({
           priceLineVisible: false,
           lastValueVisible: false,
           crosshairMarkerVisible: false,
+          priceFormat: { type: 'custom', formatter: priceFormat, minMove: 0.01 },
         },
         paneIndex,
       )
@@ -756,6 +760,7 @@ export default function TradingChart({
           priceLineVisible: false,
           lastValueVisible: false,
           crosshairMarkerVisible: false,
+          priceFormat: { type: 'custom', formatter: priceFormat, minMove: 0.01 },
         },
         paneIndex,
       )
@@ -1017,7 +1022,7 @@ export default function TradingChart({
         )}
         {loading ? <em>Đang đổi khung…</em> : null}
         {!loading && loadingOlder ? <em>Đang tải thêm lịch sử…</em> : null}
-        {liveConnected ? <em title="WebSocket cập nhật mỗi ~3 giây">● LIVE 3s</em> : null}
+        {liveConnected ? <em title="WebSocket cập nhật mỗi ~3 giây">● LIVE</em> : null}
       </div>
 
       {(Object.values(maVisibility).some(Boolean) || showBollinger) ? (

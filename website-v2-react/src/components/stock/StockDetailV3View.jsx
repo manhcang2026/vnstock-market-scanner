@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { describeMarketSession } from '../../lib/marketSession'
+import StockLogo from './StockLogo'
 import StockDetailContextPanel from './StockDetailContextPanel'
 import StockDetailSignalRail from './StockDetailSignalRail'
 import StockDetailTabs from './StockDetailTabs'
@@ -59,18 +60,19 @@ export default function StockDetailV3View({
     <div className="stock-v3-page">
       <div className="stock-v3-workspace">
         <section className="stock-v3-identity" aria-labelledby="stock-v3-title">
-          <div className="stock-v3-identity-copy">
-            <div className="stock-v3-symbol-line">
-              <h1 id="stock-v3-title">{symbol}</h1>
-              <span>{exchange}</span>
-              <span className={`stock-v3-session-badge${marketSession.semantic ? ' is-semantic' : ''}`}>
-                {marketSession.label}
-              </span>
+          <div className="stock-v3-identity-main">
+            <StockLogo symbol={symbol} />
+            <div className="stock-v3-identity-copy">
+              <div className="stock-v3-symbol-line">
+                <h1 id="stock-v3-title">{symbol}</h1>
+                <span>{exchange}</span>
+                <span className={`stock-v3-session-badge${marketSession.semantic ? ' is-semantic' : ''}`}>
+                  {marketSession.label}
+                </span>
+              </div>
+              <p title={companyName}>{companyName}</p>
+              <small>Cập nhật {quote?.event_time || '—'}</small>
             </div>
-            <p>{companyName}</p>
-            <small>
-              Cập nhật {quote?.event_time || '—'}
-            </small>
           </div>
 
           <div className="stock-v3-price-block" aria-busy={quoteLoading}>
@@ -92,9 +94,6 @@ export default function StockDetailV3View({
         ) : null}
 
         <section className="stock-v3-chart-card" aria-label={`Biểu đồ kỹ thuật ${symbol}`}>
-          <header className="stock-v3-chart-header">
-            <h2>Diễn biến giá</h2>
-          </header>
           {chartContent}
         </section>
 
