@@ -1,7 +1,13 @@
 import { Link } from 'react-router-dom'
 import StockLogo from '../stock/StockLogo'
+import { finiteNumber, formatSignedPct, signedDistanceForRow } from '../../lib/scannerFilters'
 
 const MISSING = '—'
+
+function formatNumber(value) {
+  const number = finiteNumber(value)
+  return number === null ? MISSING : new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 2 }).format(number)
+}
 
 function StockIdentity({ stock }) {
   return (
@@ -21,12 +27,12 @@ function StockListCard({ stock, mode }) {
     <Link className="scanner-stock-card" to={`/co-phieu/${encodeURIComponent(stock.symbol)}`} aria-label={`Xem cổ phiếu ${stock.symbol}`}>
       <span className="scanner-card-top">
         <StockIdentity stock={stock} />
-        <span className="scanner-card-price"><strong>{MISSING}</strong><small>{MISSING}</small></span>
+        <span className="scanner-card-price"><strong>{formatNumber(stock.price)}</strong><small>{formatSignedPct(stock.changePct)}</small></span>
       </span>
       <span className="scanner-card-grid">
-        <span><small>Khối lượng</small><strong>{MISSING}</strong></span>
-        <span><small>Cách MA200</small><strong>{MISSING}</strong></span>
-        <span><small>{watchlist ? 'RVOL30' : 'Cách MA10'}</small><strong>{MISSING}</strong></span>
+        <span><small>Khối lượng</small><strong>{formatNumber(stock.volume)}</strong></span>
+        <span><small>Cách MA200</small><strong>{formatSignedPct(signedDistanceForRow(stock, 200))}</strong></span>
+        <span><small>{watchlist ? 'RVOL30' : 'Cách MA10'}</small><strong>{watchlist ? formatNumber(stock.rvol30) : formatSignedPct(signedDistanceForRow(stock, 10))}</strong></span>
         <span><small>Tín hiệu</small><strong>{MISSING}</strong></span>
       </span>
     </Link>
@@ -52,8 +58,8 @@ export default function StockList({ rows, mode, emptyMessage }) {
             {rows.length ? rows.map((stock) => (
               <tr key={stock.symbol}>
                 <td><Link className="scanner-company-link" to={`/co-phieu/${encodeURIComponent(stock.symbol)}`} aria-label={`Xem cổ phiếu ${stock.symbol}`}><StockIdentity stock={stock} /></Link></td>
-                <td>{MISSING}</td><td>{MISSING}</td><td>{MISSING}</td><td>{MISSING}</td>
-                <td>{watchlist ? <span className="scanner-quick-metrics"><span>RVOL30 {MISSING} · Price15 {MISSING}</span><small>Current State / ATC {MISSING}</small></span> : MISSING}</td>
+                <td>{formatNumber(stock.price)}</td><td>{formatSignedPct(stock.changePct)}</td><td>{formatNumber(stock.volume)}</td><td>{formatSignedPct(signedDistanceForRow(stock, 200))}</td>
+                <td>{watchlist ? <span className="scanner-quick-metrics"><span>RVOL30 {formatNumber(stock.rvol30)} · Price15 {formatNumber(stock.price15)}</span><small>Current State / ATC {MISSING}</small></span> : formatSignedPct(signedDistanceForRow(stock, 10))}</td>
                 <td>{MISSING}</td>
               </tr>
             )) : <tr><td colSpan={7} className="scanner-table-empty">{emptyMessage}</td></tr>}

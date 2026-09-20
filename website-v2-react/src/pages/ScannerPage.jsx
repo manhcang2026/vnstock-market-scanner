@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
+import ScannerResults from '../components/scanner/ScannerResults'
 import ScannerShell from '../components/scanner/ScannerShell'
 import ScannerTabs from '../components/scanner/ScannerTabs'
-import StockList from '../components/scanner/StockList'
 import { publicSupabase } from '../lib/publicSupabase'
+import { activeConditions, applyScannerFilters, categoryOptions, describeCondition, fieldAvailability } from '../lib/scannerFilters'
+import { activeSortRules, describeSortRule, sortScannerRows } from '../lib/scannerSort'
 import { loadStockMetadata, normalizeSearchText } from '../lib/stockSearch'
 import '../styles/scanner.css'
 
@@ -19,6 +21,10 @@ export default function ScannerPage() {
   const [pageState, setPageState] = useState(() => ({ query: q, value: 1 }))
   const page = pageState.query === q ? pageState.value : 1
   const [metadata, setMetadata] = useState(() => ({ status: publicSupabase ? 'loading' : 'error', rows: [] }))
+  const [conditions, setConditions] = useState([])
+  const [sortRules, setSortRules] = useState([])
+  const [utilityTab, setUtilityTab] = useState('ai')
+  const nextRuleId = useRef(0)
   const { user, ready } = useAuth()
 
   useEffect(() => {
@@ -36,18 +42,71 @@ export default function ScannerPage() {
     return metadata.rows.filter((stock) => [stock.symbol, stock.display_name, stock.company_name]
       .some((value) => normalizeSearchText(value).includes(query)))
   }, [metadata.rows, q])
-  const pageCount = Math.max(1, Math.ceil(matchingRows.length / PAGE_SIZE))
-  const pageRows = matchingRows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+  const sourceRows = activeTab === 'watchlist' ? [] : matchingRows
+  const availability = useMemo(() => fieldAvailability(activeTab === 'watchlist' ? [] : metadata.rows), [activeTab, metadata.rows])
+  const options = useMemo(() => categoryOptions(activeTab === 'watchlist' ? [] : metadata.rows), [activeTab, metadata.rows])
+  const appliedConditions = activeConditions(conditions, availability)
+  const appliedSorts = activeSortRules(sortRules, availability)
+  const resultRows = sortScannerRows(applyScannerFilters(sourceRows, conditions, availability), sortRules, availability)
+  const pageCount = Math.max(1, Math.ceil(resultRows.length / PAGE_SIZE))
+  const pageRows = resultRows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+  const filterSummary = appliedConditions.length ? appliedConditions.map(describeCondition).join(' · ') : 'Chưa áp dụng bộ lọc'
+  const summary = activeTab === 'watchlist'
+    ? `Danh sách theo dõi chưa kết nối · ${filterSummary}`
+    : metadata.status !== 'ready'
+      ? `${metadata.status === 'loading' ? 'Đang tải danh mục' : 'Danh mục chưa sẵn sàng'} · ${filterSummary}`
+      : `${resultRows.length} mã${appliedConditions.length ? ' phù hợp' : ''} · ${filterSummary} · ${pageRows.length} mã trên trang này`
+  const sortSummary = appliedSorts.map(describeSortRule).join(' → ')
+
+  function resetPage() { setPageState({ query: q, value: 1 }) }
 
   function changeTab(tab) {
     setTabState({ query: q, value: tab })
-    setPageState({ query: q, value: 1 })
+    resetPage()
   }
 
-  let marketEmpty = 'Chưa có mã cổ phiếu trong danh mục.'
-  if (metadata.status === 'loading') marketEmpty = 'Đang tải danh mục cổ phiếu…'
-  if (metadata.status === 'error') marketEmpty = 'Không thể tải danh mục cổ phiếu. Hãy thử lại sau.'
-  if (metadata.status === 'ready' && q && !matchingRows.length) marketEmpty = `Không có mã phù hợp với “${q}”.`
+  function addCondition() {
+    nextRuleId.current += 1
+    setConditions((items) => [...items, { id: nextRuleId.current, field: 'exchange', values: [], operator: 'lte', value: '', valueTo: '' }])
+    resetPage()
+  }
+  function updateCondition(id, patch) {
+    setConditions((items) => items.map((item) => item.id === id ? { ...item, ...patch } : item))
+    resetPage()
+  }
+  function removeCondition(id) {
+    setConditions((items) => items.filter((item) => item.id !== id))
+    resetPage()
+  }
+  function addSort() {
+    nextRuleId.current += 1
+    setSortRules((items) => [...items, { id: nextRuleId.current, field: 'symbol', direction: 'asc' }])
+    resetPage()
+  }
+  function updateSort(id, patch) {
+    setSortRules((items) => items.map((item) => item.id === id ? { ...item, ...patch } : item))
+    resetPage()
+  }
+  function removeSort(id) {
+    setSortRules((items) => items.filter((item) => item.id !== id))
+    resetPage()
+  }
+  function moveSort(index, direction) {
+    setSortRules((items) => {
+      const next = [...items]
+      const other = index + direction
+      if (other < 0 || other >= next.length) return items
+      const current = next[index]
+      next[index] = next[other]
+      next[other] = current
+      return next
+    })
+    resetPage()
+  }
+
+  const filterBuilder = { conditions, availability, options, onAdd: addCondition, onUpdate: updateCondition, onRemove: removeCondition }
+  const sortBuilder = { rules: sortRules, availability, onAdd: addSort, onUpdate: updateSort, onRemove: removeSort, onMove: moveSort }
+  const utility = { active: utilityTab, onChange: setUtilityTab }
 
   const watchlistMessage = !ready
     ? 'Đang kiểm tra tài khoản…'
@@ -56,47 +115,20 @@ export default function ScannerPage() {
       : 'Đăng nhập để xem danh sách cổ phiếu đã theo dõi.'
 
   return (
-    <ScannerShell mode={activeTab}>
+    <ScannerShell mode={activeTab} filterBuilder={filterBuilder} sortBuilder={sortBuilder} utility={utility}>
       <div className="scanner-heading">
         <span className="scanner-kicker">SCANNER / DANH SÁCH</span>
         <h1>Danh sách cổ phiếu</h1>
       </div>
       <ScannerTabs activeTab={activeTab} onChange={changeTab} />
 
-      {activeTab === 'watchlist' ? (
-        <div id="scanner-panel-watchlist" role="tabpanel" aria-labelledby="scanner-tab-watchlist" className="scanner-result-panel">
-          <header className="scanner-result-header">
-            <div><span className="scanner-kicker">ĐÃ THEO DÕI</span><h2>Danh sách của tôi</h2><p>Các mã bạn theo dõi sẽ hiển thị tại đây khi nguồn Watchlist được kết nối.</p></div>
-          </header>
-          {!user && ready ? <div className="scanner-state-action"><Link to="/dang-nhap">Đăng nhập</Link></div> : null}
-          <StockList rows={[]} mode="watchlist" emptyMessage={watchlistMessage} />
-        </div>
-      ) : null}
-
-      {activeTab === 'market' ? (
-        <div id="scanner-panel-market" role="tabpanel" aria-labelledby="scanner-tab-market" className="scanner-result-panel">
-          <header className="scanner-result-header">
-            <div><span className="scanner-kicker">TOÀN THỊ TRƯỜNG</span><h2>Kết quả toàn thị trường</h2><p>{metadata.status === 'ready' ? `Tổng ${matchingRows.length} mã phù hợp · ${pageRows.length} mã trên trang này` : 'Danh mục mã cổ phiếu từ stock_metadata'}</p></div>
-          </header>
-          {q ? <p className="scanner-query-message">{lookupUnavailable ? <>Chưa thể kiểm tra chính xác mã <strong>{q}</strong> khi tìm kiếm. {metadata.status === 'ready' ? 'Các kết quả danh mục phù hợp hiển thị bên dưới.' : 'Hãy thử lại sau.'}</> : <>Không tìm thấy mã duy nhất cho <strong>{q}</strong>. {metadata.status === 'ready' ? 'Các kết quả danh mục phù hợp hiển thị bên dưới.' : 'Hãy thử lại sau.'}</>}</p> : null}
-          <StockList rows={pageRows} mode="market" emptyMessage={marketEmpty} />
-          {metadata.status === 'ready' && pageCount > 1 ? (
-            <nav className="scanner-pagination" aria-label="Phân trang toàn thị trường">
-              <button type="button" onClick={() => setPageState({ query: q, value: Math.max(1, page - 1) })} disabled={page === 1}>Trước</button>
-              <span>Trang {page} / {pageCount}</span>
-              <button type="button" onClick={() => setPageState({ query: q, value: Math.min(pageCount, page + 1) })} disabled={page === pageCount}>Sau</button>
-            </nav>
-          ) : null}
-        </div>
-      ) : null}
-
-      {activeTab === 'advanced' ? (
-        <div id="scanner-panel-advanced" role="tabpanel" aria-labelledby="scanner-tab-advanced" className="scanner-result-panel scanner-advanced-state">
-          <span className="scanner-kicker">TÌM KIẾM NÂNG CAO</span>
-          <h2>Một nơi cho nhiều cách tìm cổ phiếu</h2>
-          <p>Bộ lọc nhiều điều kiện, sắp xếp nhiều tiêu chí và bộ lọc tạo bằng AI sẽ cùng dùng một công cụ kết quả ở bước tiếp theo.</p>
-        </div>
-      ) : null}
+      <ScannerResults
+        mode={activeTab} rows={pageRows} total={matchingRows.length} summary={summary} sortSummary={sortSummary}
+        metadataStatus={metadata.status} q={q} lookupUnavailable={lookupUnavailable}
+        watchlistMessage={watchlistMessage} signedOut={!user && ready}
+        page={page} pageCount={pageCount} onPage={(value) => setPageState({ query: q, value })}
+        filterBuilder={filterBuilder} sortBuilder={sortBuilder} activeCount={appliedConditions.length + appliedSorts.length} utility={utility}
+      />
     </ScannerShell>
   )
 }
