@@ -24,6 +24,7 @@ export default function AppShell() {
   const location = useLocation()
   const { user, ready } = useAuth()
   const isStockDetail = /^\/co-phieu\/[^/]+\/?$/.test(location.pathname)
+  const isScanner = /^\/danh-sach\/?$/.test(location.pathname)
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -61,7 +62,7 @@ export default function AppShell() {
     navigate(`/danh-sach?q=${encodeURIComponent(rawQuery)}`)
   }
 
-  if (isStockDetail) {
+  if (isStockDetail || isScanner) {
     return (
       <StockDetailShell
         theme={theme}

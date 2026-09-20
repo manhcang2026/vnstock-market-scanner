@@ -3,7 +3,7 @@ import { publicSupabase } from './publicSupabase'
 let metadataPromise = null
 const METADATA_PAGE_SIZE = 1000
 
-function normalizeSearchText(value) {
+export function normalizeSearchText(value) {
   return String(value || '')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
@@ -15,7 +15,7 @@ function normalizeSearchText(value) {
     .toUpperCase()
 }
 
-async function loadStockMetadata() {
+export async function loadStockMetadata() {
   if (!publicSupabase) return []
 
   if (!metadataPromise) {
