@@ -53,6 +53,30 @@ PROTECTED_CCC_INTELLIGENCE_KEYS = (
     "engine_version", "config_version",
 )
 
+SCANNER_PUBLIC_KEYS = (
+    "symbol", "exchange", "trading_date", "event_at",
+    "last_price", "ref_price", "change_pct", "total_volume",
+    "session_type", "ma10", "ma200", "distance_ma10_pct",
+    "distance_ma200_pct", "feed_status", "quality_status",
+)
+
+SCANNER_CCC_KEYS = (
+    "day_rvol", "rvol15", "rvol30", "price5_pct", "price15_pct",
+    "ato_volume", "ato_avg_volume_10", "ato_rvol",
+    "ato_baseline_sessions_used", "ato_baseline_quality",
+    "atc_volume", "atc_avg_volume_10", "atc_rvol",
+    "atc_baseline_sessions_used", "atc_baseline_quality", "atc_price_impact_pct",
+    "baseline_sessions_used", "baseline_target_sessions", "baseline_coverage_pct",
+    "signal_state", "signal_level", "signal_direction", "reason_codes",
+    "signal_summary_vi", "previous_signal_state", "state_changed_at",
+    "metrics_trusted", "engine_version", "config_version",
+)
+
+_SCANNER_CCC_DB_COLUMNS = tuple(
+    "reason_codes_json" if key == "reason_codes" else key
+    for key in SCANNER_CCC_KEYS
+)
+
 RADAR_STATES = (
     "WATCHING",
     "FLOW_APPEARING",
@@ -159,6 +183,47 @@ def get_ccc_intelligence(
     )
     row = _fetch_mapping(cursor)
     return None if row is None else serialize_ccc_intelligence(row, config=config)
+
+
+def build_scanner_projection(
+    connection: sqlite3.Connection,
+    *,
+    visible_symbols: set[str] | frozenset[str] | None = None,
+    full_market: bool = False,
+) -> dict[str, Any]:
+    """Read current state once and construct only authorized scanner fields."""
+    visible = {str(symbol).strip().upper() for symbol in (visible_symbols or ())}
+    include_ccc_columns = full_market or bool(visible)
+    columns = SCANNER_PUBLIC_KEYS + (_SCANNER_CCC_DB_COLUMNS if include_ccc_columns else ())
+    cursor = connection.execute(
+        f"SELECT {', '.join(columns)} FROM stock_state_current ORDER BY symbol"
+    )
+    names = [item[0] for item in cursor.description or ()]
+    positions = {name: index for index, name in enumerate(names)}
+    rows: list[dict[str, Any]] = []
+    for raw_row in cursor.fetchall():
+        row = OrderedDict((key, raw_row[positions[key]]) for key in SCANNER_PUBLIC_KEYS)
+        entitled = full_market or row["symbol"] in visible
+        if entitled:
+            source = dict(zip(names, raw_row))
+            try:
+                reasons = json.loads(source.get("reason_codes_json") or "[]")
+            except (TypeError, json.JSONDecodeError) as exc:
+                raise ValueError("reason_codes_json must contain valid JSON") from exc
+            if not isinstance(reasons, list) or not all(isinstance(item, str) for item in reasons):
+                raise ValueError("reason_codes_json must contain an array of strings")
+            ccc = OrderedDict((key, source.get(key)) for key in SCANNER_CCC_KEYS)
+            ccc["reason_codes"] = reasons
+            ccc["metrics_trusted"] = bool(source.get("metrics_trusted"))
+            row["ccc"] = ccc
+        else:
+            row["ccc"] = None
+        rows.append(row)
+    return {
+        "contract_version": "ccc-scanner-v1",
+        "count": len(rows),
+        "rows": rows,
+    }
 
 
 def build_radar_projection(

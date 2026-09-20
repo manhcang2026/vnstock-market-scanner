@@ -22,6 +22,7 @@ from .access_control import (
 from .chart_data import ChartDataStore, SYMBOL_RE
 from .state_contract import (
     build_radar_projection,
+    build_scanner_projection,
     get_ccc_intelligence,
     get_public_stock_detail,
 )
@@ -336,6 +337,46 @@ class ChartAPIHandler(BaseHTTPRequestHandler):
                 )
                 return
             payload["identity_scope"] = identity_scope
+            _response(self, HTTPStatus.OK, payload)
+            return
+
+        # Public scanner fields come from one read-only current-state query.
+        # Resolve optional technical scope once; failed authorization enriches nothing.
+        if parsed.path == "/v1/scanner":
+            visible_symbols: set[str] = set()
+            full_market = False
+            technical_scope = "ANONYMOUS"
+            authorization = self.headers.get("Authorization")
+            if authorization is not None:
+                token = extract_bearer_token(authorization)
+                if token is None:
+                    technical_scope = "UNAVAILABLE"
+                else:
+                    try:
+                        scope = self.access_client.scope(token=token)
+                        visible_symbols = set(scope.allowed_symbols)
+                        full_market = scope.effective_full_market_access
+                        technical_scope = "FULL_MARKET" if full_market else "WATCHLIST"
+                    except (AuthenticationRequired, EntitlementServiceUnavailable):
+                        technical_scope = "UNAVAILABLE"
+            try:
+                connection = self._state_connection()
+                try:
+                    payload = build_scanner_projection(
+                        connection,
+                        visible_symbols=visible_symbols,
+                        full_market=full_market,
+                    )
+                finally:
+                    connection.close()
+            except (sqlite3.Error, OSError, ValueError) as exc:
+                _response(
+                    self,
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                    {"error": "STATE_UNAVAILABLE", "message": type(exc).__name__},
+                )
+                return
+            payload["technical_scope"] = technical_scope
             _response(self, HTTPStatus.OK, payload)
             return
 
