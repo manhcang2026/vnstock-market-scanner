@@ -11,7 +11,8 @@ At desktop widths of 1200px and above, Stock Detail V3 is the reference for the 
 - The compact navigation is fixed to the viewport edge below the 52px header. Page content starts immediately to its right.
 - Both content rails use the same `--ccc-side-rail-width: 240px` token defined on `.stock-v3-shell`. A route must not silently assign its own left/right desktop widths.
 - The center track consumes all remaining width with `minmax(0, 1fr)`; neither a max-width container nor an auto margin should create empty gutters or route-to-route jitter.
-- The desktop content grid is at least the viewport height below the header. Left and right rails stretch to the grid height, including when the center content is taller.
+- The 48px navigation, 240px left rail, flexible center, and 240px right rail keep the same horizontal positions across V2 routes. Future Overview, Scanner, Signal Achievements, and Account layouts must follow this desktop track contract.
+- The desktop content grid is at least the viewport height below the header. Side rails are top-aligned and may size to their own content; they do not stretch to match taller center content. Routes must not create large empty rail background slabs merely to equalize heights.
 - Opening the navigation drawer overlays the content and replaces the visible compact rail. It must not push or resize the three content tracks.
 - Below 1200px, a route may stack or adapt its slots to preserve usable workspace width. Mobile bottom navigation and safe-area padding remain separate from desktop geometry.
 

@@ -388,7 +388,7 @@ html[data-theme="light"] .trading-terminal {
     max-width: none;
     display: grid;
     grid-template-columns: repeat(5, minmax(0, 1fr));
-    gap: 2px;
+    gap: 1px;
     overflow: visible;
   }
 
@@ -399,19 +399,27 @@ html[data-theme="light"] .trading-terminal {
 
   .terminal-toolbar button {
     min-width: 0;
-    height: 30px;
+    height: 27px;
     padding-inline: 1px;
-    font-size: 10px;
+    font-size: 9px;
   }
 
   .terminal-toolbar .ma-menu button {
     min-width: 0;
     height: 38px;
+    padding-inline: 8px;
+    font-size: 11px;
   }
 
   .fullscreen-button {
     min-width: 0 !important;
-    gap: 3px;
+    gap: 2px;
+    font-size: 9px !important;
+  }
+
+  .fullscreen-button svg {
+    width: 14px;
+    height: 14px;
   }
 
   .terminal-readout {
@@ -419,7 +427,7 @@ html[data-theme="light"] .trading-terminal {
   }
 }
 
-@media (orientation: landscape) and (max-height: 500px) {
+@media (orientation: landscape) and (max-height: 500px) and (min-width: 461px) {
   .trading-terminal:fullscreen .terminal-toolbar {
     display: flex;
     min-height: 40px;

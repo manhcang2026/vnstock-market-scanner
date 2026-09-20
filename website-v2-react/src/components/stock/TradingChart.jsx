@@ -18,6 +18,8 @@ const TIMEFRAMES = [
   { label: '1D', resolution: 1440 },
 ]
 
+const INDICATOR_SCALE_MARGINS = { top: 0.18, bottom: 0.18 }
+
 function toTimestamp(bar) {
   // Lightweight Charts treats numeric timestamps as UTC. CCC source bars use
   // Vietnam exchange wall-clock time (Asia/Ho_Chi_Minh, UTC+7), so encode the
@@ -456,6 +458,7 @@ export default function TradingChart({
       },
       1,
     )
+    volumeSeries.priceScale().applyOptions({ scaleMargins: INDICATOR_SCALE_MARGINS })
     const rsiSeries = null
     const macdSeries = {
       histogram: null,
@@ -724,6 +727,7 @@ export default function TradingChart({
         },
         2,
       )
+      refs.rsi.priceScale().applyOptions({ scaleMargins: INDICATOR_SCALE_MARGINS })
       refs.rsi.setData(lineData(model.bars, model.computed.rsi14, 14))
     }
 
@@ -738,6 +742,7 @@ export default function TradingChart({
         },
         paneIndex,
       )
+      refs.macd.histogram.priceScale().applyOptions({ scaleMargins: INDICATOR_SCALE_MARGINS })
       refs.macd.histogram.setData(
         model.bars.flatMap((bar, index) => {
           if (index < 25) return []
