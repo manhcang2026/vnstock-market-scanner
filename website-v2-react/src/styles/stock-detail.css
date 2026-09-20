@@ -1320,9 +1320,9 @@
 .stock-v3-bctc-link a { color: var(--accent); }
 
 @media (min-width: 1200px) {
-  .stock-v3-page { min-height: calc(100dvh - var(--stock-header-height)); align-items: stretch; }
-  .stock-v3-radar { position: static; min-height: 100%; max-height: none; overflow: visible; }
-  .stock-v3-context-panel { position: static; min-height: 100%; }
+  .stock-v3-page { min-height: calc(100dvh - var(--stock-header-height)); align-items: start; }
+  .stock-v3-radar { align-self: start; }
+  .stock-v3-context-panel { align-self: start; }
 }
 
 @media (max-width: 1199px) {

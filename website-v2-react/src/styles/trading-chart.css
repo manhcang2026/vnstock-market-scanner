@@ -1,6 +1,6 @@
 .trading-terminal {
-  --chart-bg: #0f1726;
-  --chart-toolbar: #121c2d;
+  --chart-bg: var(--surface);
+  --chart-toolbar: var(--surface);
   --chart-popover: #172238;
   --chart-hover: rgba(255, 255, 255, .04);
   --chart-active: rgba(255, 255, 255, .06);
@@ -12,8 +12,6 @@
 }
 
 html[data-theme="light"] .trading-terminal {
-  --chart-bg: #ffffff;
-  --chart-toolbar: #f4f6f9;
   --chart-popover: #ffffff;
   --chart-hover: rgba(31, 49, 73, .05);
   --chart-active: rgba(31, 49, 73, .08);
@@ -380,8 +378,8 @@ html[data-theme="light"] .trading-terminal {
   .terminal-toolbar {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
-    gap: 3px;
-    padding: 4px 5px;
+    gap: 2px;
+    padding: 3px 4px;
   }
 
   .timeframe-group,
@@ -390,7 +388,7 @@ html[data-theme="light"] .trading-terminal {
     max-width: none;
     display: grid;
     grid-template-columns: repeat(5, minmax(0, 1fr));
-    gap: 3px;
+    gap: 2px;
     overflow: visible;
   }
 
@@ -401,8 +399,8 @@ html[data-theme="light"] .trading-terminal {
 
   .terminal-toolbar button {
     min-width: 0;
-    height: 34px;
-    padding-inline: 2px;
+    height: 30px;
+    padding-inline: 1px;
     font-size: 10px;
   }
 

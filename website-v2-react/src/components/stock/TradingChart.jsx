@@ -186,14 +186,15 @@ function chartHeightFor(container, fullscreenElement) {
 
 function chartThemeOptions() {
   const light = document.documentElement.dataset.theme === 'light'
+  const surface = getComputedStyle(document.documentElement).getPropertyValue('--surface').trim()
   const colors = light
     ? {
-        background: '#ffffff', text: '#526071', border: '#d9dee7',
+        background: surface, text: '#526071', border: '#d9dee7',
         grid: 'rgba(85, 99, 118, .12)', crosshair: 'rgba(69, 84, 105, .4)',
         label: '#5e6d82', separator: '#d9dee7', hover: 'rgba(85, 99, 118, .16)',
       }
     : {
-        background: '#0f1726', text: '#8fa0b8', border: '#263249',
+        background: surface, text: '#8fa0b8', border: '#263249',
         grid: 'rgba(89, 105, 132, .16)', crosshair: 'rgba(180, 191, 210, .42)',
         label: '#263249', separator: '#263249', hover: 'rgba(132, 146, 166, .18)',
       }
@@ -329,7 +330,7 @@ export default function TradingChart({
       height: chartHeightFor(container, document.fullscreenElement === wrapRef.current),
       layout: {
         ...themeOptions.layout,
-        fontSize: container.clientWidth <= 440 ? 10 : 11,
+        fontSize: container.clientWidth <= 440 ? 9 : 11,
         attributionLogo: false,
       },
       grid: themeOptions.grid,
@@ -337,14 +338,15 @@ export default function TradingChart({
       rightPriceScale: {
         ...themeOptions.rightPriceScale,
         scaleMargins: container.clientWidth <= 440
-          ? { top: 0.06, bottom: 0.06 }
+          ? { top: 0.04, bottom: 0.04 }
           : { top: 0.08, bottom: 0.08 },
+        borderVisible: container.clientWidth > 440,
       },
       timeScale: {
         ...themeOptions.timeScale,
         timeVisible: true,
         secondsVisible: false,
-        rightOffset: container.clientWidth <= 440 ? 2 : 6,
+        rightOffset: container.clientWidth <= 440 ? 0 : 6,
         tickMarkFormatter: (time) => {
           const date = new Date(Number(time) * 1000)
           const dd = String(date.getUTCDate()).padStart(2, '0')
@@ -572,10 +574,18 @@ export default function TradingChart({
 
     const observer = new ResizeObserver(([entry]) => {
       if (!entry) return
+      const compact = entry.contentRect.width <= 440
       chart.applyOptions({
         width: entry.contentRect.width,
         height: chartHeightFor(container, document.fullscreenElement === wrapRef.current),
-        layout: { fontSize: entry.contentRect.width <= 440 ? 10 : 11 },
+        layout: { fontSize: compact ? 9 : 11 },
+        rightPriceScale: {
+          borderVisible: !compact,
+          scaleMargins: compact
+            ? { top: 0.04, bottom: 0.04 }
+            : { top: 0.08, bottom: 0.08 },
+        },
+        timeScale: { rightOffset: compact ? 0 : 6 },
       })
     })
     observer.observe(container)

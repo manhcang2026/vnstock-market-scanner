@@ -11,5 +11,5 @@ export function compactVolume(value) {
   if (volume >= 1_000_000_000) return format(1_000_000_000, 'B')
   if (volume >= 1_000_000) return format(1_000_000, 'M')
   if (volume >= 1_000) return format(1_000, 'K')
-  return String(volume)
+  return String(Math.round(volume))
 }
