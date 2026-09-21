@@ -1,3 +1,14 @@
+## CCC Market Data — Source of Truth
+
+Before modifying CCC market-data ingestion, historical data, baseline,
+RVOL, ATO/ATC, EOD, current state, or signal baseline eligibility, read:
+
+`docs/architecture/CCC_DATA_PIPELINE_RESET_20260921.md`
+
+If an older document, code comment, prompt, or implementation assumption
+conflicts with that document, the reset plan wins unless explicitly
+superseded.
+
 # AGENTS.md — Chuyện Chợ Chứng repository instructions
 
 These rules apply to all coding/design agents working in this repository.
