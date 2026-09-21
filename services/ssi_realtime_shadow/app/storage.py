@@ -132,6 +132,21 @@ class HistoricalCheckpoint:
     error: str | None
 
 
+@dataclass(frozen=True)
+class HistoricalBarWrite:
+    trading_date: str
+    minute: str
+    symbol: str
+    exchange: str
+    open_price: float
+    high: float
+    low: float
+    close: float
+    volume: int
+    provider_time: str
+    updated_at: str
+
+
 _MINUTE_BAR_MIGRATIONS = (
     ("exchange", "exchange TEXT"),
     (
@@ -562,6 +577,82 @@ class SQLiteStore:
                 return True
             return False
 
+    def complete_historical_batch(
+        self,
+        *,
+        symbol: str,
+        from_date: str,
+        to_date: str,
+        resolution: int,
+        bars: list[HistoricalBarWrite],
+        completed_at: str,
+    ) -> tuple[int, int]:
+        """Atomically insert one bounded historical batch and complete its checkpoint."""
+        inserted = 0
+        with self._lock:
+            if self._conn.in_transaction:
+                self._conn.commit()
+                self._pending = 0
+                self._last_commit = time.monotonic()
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                for bar in bars:
+                    cursor = self._conn.execute(
+                        """
+                        INSERT OR IGNORE INTO minute_bars (
+                            trading_date, minute, symbol, open, high, low, close,
+                            volume, last_total_volume, event_count, is_partial,
+                            exchange, quality_status, has_gap, gap_from, gap_to,
+                            data_source, provider_time, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 1, 0, ?,
+                                  'TRUSTED', 0, NULL, NULL, 'SSI_REST', ?, ?)
+                        """,
+                        (
+                            bar.trading_date,
+                            bar.minute,
+                            bar.symbol,
+                            bar.open_price,
+                            bar.high,
+                            bar.low,
+                            bar.close,
+                            max(0, int(bar.volume)),
+                            bar.exchange,
+                            bar.provider_time,
+                            bar.updated_at,
+                        ),
+                    )
+                    inserted += int(bool(cursor.rowcount))
+                checkpoint = self._conn.execute(
+                    """
+                    UPDATE historical_bootstrap_checkpoints
+                    SET status = 'COMPLETED', row_count = ?, completed_at = ?,
+                        error = NULL
+                    WHERE symbol = ? AND from_date = ? AND to_date = ?
+                          AND resolution = ? AND status = 'RUNNING'
+                    """,
+                    (
+                        len(bars),
+                        completed_at,
+                        symbol,
+                        from_date,
+                        to_date,
+                        resolution,
+                    ),
+                )
+                if checkpoint.rowcount != 1:
+                    raise RuntimeError(
+                        "historical batch requires one RUNNING checkpoint"
+                    )
+                self._conn.commit()
+            except BaseException:
+                self._conn.rollback()
+                self._pending = 0
+                self._last_commit = time.monotonic()
+                raise
+            self._pending = 0
+            self._last_commit = time.monotonic()
+        return inserted, len(bars) - inserted
+
     def get_historical_checkpoint(
         self,
         symbol: str,
@@ -626,6 +717,34 @@ class SQLiteStore:
                       AND resolution = ?
                 """,
                 (row_count, completed_at, symbol, from_date, to_date, resolution),
+            )
+            self._touch()
+
+    def mark_historical_checkpoint_no_data(
+        self,
+        symbol: str,
+        from_date: str,
+        to_date: str,
+        resolution: int,
+        completed_at: str,
+        reason: str = "NoDataFound",
+    ) -> None:
+        with self._lock:
+            self._conn.execute(
+                """
+                UPDATE historical_bootstrap_checkpoints
+                SET status = 'NO_DATA', row_count = 0, completed_at = ?, error = ?
+                WHERE symbol = ? AND from_date = ? AND to_date = ?
+                      AND resolution = ?
+                """,
+                (
+                    completed_at,
+                    reason[:1000],
+                    symbol,
+                    from_date,
+                    to_date,
+                    resolution,
+                ),
             )
             self._touch()
 

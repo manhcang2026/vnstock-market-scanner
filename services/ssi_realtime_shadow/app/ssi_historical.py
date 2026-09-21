@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import math
+import random
 import re
 import time as time_module
 from dataclasses import dataclass
@@ -34,6 +35,10 @@ class SSIHTTPError(SSIHistoricalError):
     def __init__(self, status_code: int, message: str) -> None:
         super().__init__(message)
         self.status_code = status_code
+
+
+class SSINoDataFound(SSIHistoricalError):
+    """SSI explicitly reported that the bounded request has no data."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -222,11 +227,15 @@ class SSIHistoricalClient:
         auth_type: str = "Bearer",
         session: requests.Session | None = None,
         sleep: Callable[[float], None] = time_module.sleep,
+        random_value: Callable[[], float] = random.random,
         request_timeout: float = 30,
         max_attempts: int = 4,
         page_size: int = 1000,
         max_pages_per_range: int = MAX_PAGE_INDEX,
+        request_interval: float = 0,
+        initial_retry_delay: float = 1,
         max_retry_delay: float = 60,
+        retry_jitter_ratio: float = 0,
         telemetry_sink: Callable[[SSIRequestTelemetry], None] | None = None,
     ) -> None:
         if not consumer_id or not consumer_secret:
@@ -235,6 +244,14 @@ class SSIHistoricalClient:
             raise ValueError("page_size must be between 1 and 1000")
         if max_attempts < 1 or max_pages_per_range < 1:
             raise ValueError("retry and pagination limits must be positive")
+        if request_interval < 0:
+            raise ValueError("request_interval must not be negative")
+        if initial_retry_delay <= 0 or max_retry_delay <= 0:
+            raise ValueError("retry delays must be positive")
+        if initial_retry_delay > max_retry_delay:
+            raise ValueError("initial_retry_delay must not exceed max_retry_delay")
+        if retry_jitter_ratio < 0:
+            raise ValueError("retry_jitter_ratio must not be negative")
         if max_pages_per_range > MAX_PAGE_INDEX:
             raise ValueError(
                 f"max_pages_per_range must not exceed SSI pageIndex limit "
@@ -246,45 +263,100 @@ class SSIHistoricalClient:
         self.auth_type = auth_type or "Bearer"
         self.session = session or requests.Session()
         self.sleep = sleep
+        self.random_value = random_value
         self.request_timeout = request_timeout
         self.max_attempts = max_attempts
         self.page_size = page_size
         self.max_pages_per_range = max_pages_per_range
+        self.request_interval = request_interval
+        self.initial_retry_delay = initial_retry_delay
         self.max_retry_delay = max_retry_delay
+        self.retry_jitter_ratio = retry_jitter_ratio
         self.telemetry_sink = telemetry_sink
         self._access_token: str | None = None
+        self._request_count = 0
+        self.retry_count = 0
 
     def _url(self, path: str) -> str:
         return self.base_url + path.lstrip("/")
 
     def _retry_delay(self, response: Any | None, attempt: int) -> float:
         headers = getattr(response, "headers", {}) or {}
-        retry_after = headers.get("Retry-After")
+        retry_after = self._safe_header(headers, "Retry-After")
+        base_delay: float | None = None
         if retry_after:
             try:
-                delay = float(retry_after)
+                base_delay = float(retry_after)
             except ValueError:
                 try:
                     retry_at = parsedate_to_datetime(retry_after)
                     if retry_at.tzinfo is None:
                         retry_at = retry_at.replace(tzinfo=timezone.utc)
-                    delay = max(
+                    base_delay = max(
                         0.0,
                         (retry_at - datetime.now(timezone.utc)).total_seconds(),
                     )
                 except (TypeError, ValueError, OverflowError):
-                    delay = None
-            if delay is not None:
-                return min(max(0.0, delay), self.max_retry_delay)
+                    base_delay = None
 
-        reset = headers.get("X-RateLimit-Reset") or headers.get("RateLimit-Reset")
-        if reset:
+        reset = self._safe_header(
+            headers, "X-RateLimit-Reset"
+        ) or self._safe_header(headers, "RateLimit-Reset")
+        if base_delay is None and reset:
             try:
-                delay = max(0.0, float(reset) - datetime.now(timezone.utc).timestamp())
-                return min(delay, self.max_retry_delay)
+                base_delay = max(
+                    0.0, float(reset) - datetime.now(timezone.utc).timestamp()
+                )
             except ValueError:
                 pass
-        return min(float(2 ** (attempt - 1)), self.max_retry_delay)
+        if base_delay is None:
+            base_delay = self.initial_retry_delay * (2 ** (attempt - 1))
+        else:
+            base_delay = max(self.initial_retry_delay, base_delay)
+        jitter = base_delay * self.retry_jitter_ratio * self.random_value()
+        return min(max(0.0, base_delay + jitter), self.max_retry_delay)
+
+    def _pace_request(self) -> None:
+        if self._request_count and self.request_interval:
+            self.sleep(self.request_interval)
+        self._request_count += 1
+
+    def _sleep_before_retry(
+        self,
+        *,
+        path: str,
+        response: Any | None,
+        attempt: int,
+        reason: str,
+    ) -> None:
+        cooldown = self._retry_delay(response, attempt)
+        self.retry_count += 1
+        LOG.warning(
+            "SSI retry %d/%d for %s reason=%s cooldown=%.2fs",
+            attempt,
+            self.max_attempts - 1,
+            path,
+            reason,
+            cooldown,
+        )
+        self.sleep(cooldown)
+
+    @staticmethod
+    def _provider_status_code(status: Any) -> int | None:
+        try:
+            return int(float(str(status).strip()))
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _is_no_data_payload(payload: dict[str, Any]) -> bool:
+        values = (payload.get("status"), payload.get("message"))
+        normalized = {
+            re.sub(r"[^a-z0-9]", "", str(value).casefold())
+            for value in values
+            if value is not None
+        }
+        return any("nodatafound" in value for value in normalized)
 
     @staticmethod
     def _safe_header(headers: Any, name: str) -> str | None:
@@ -350,6 +422,7 @@ class SSIHistoricalClient:
             response = None
             started_at = time_module.monotonic()
             try:
+                self._pace_request()
                 response = self.session.request(
                     method,
                     self._url(path),
@@ -358,7 +431,7 @@ class SSIHistoricalClient:
                     headers=headers,
                     timeout=self.request_timeout,
                 )
-            except (requests.Timeout, requests.ConnectionError) as exc:
+            except requests.RequestException as exc:
                 will_retry = attempt < self.max_attempts
                 self._emit_telemetry(
                     path=path,
@@ -371,7 +444,12 @@ class SSIHistoricalClient:
                     raise SSIHistoricalError(
                         f"SSI request failed after {attempt} attempts: {type(exc).__name__}"
                     ) from exc
-                self.sleep(self._retry_delay(None, attempt))
+                self._sleep_before_retry(
+                    path=path,
+                    response=None,
+                    attempt=attempt,
+                    reason=type(exc).__name__,
+                )
                 continue
 
             if authenticated and response.status_code == 401 and not refreshed_after_unauthorized:
@@ -385,6 +463,7 @@ class SSIHistoricalClient:
                         attempt=attempt,
                         will_retry=True,
                     )
+                    self.retry_count += 1
                     continue
             if response.status_code in RETRYABLE_STATUS_CODES and attempt < self.max_attempts:
                 self._emit_telemetry(
@@ -394,9 +473,21 @@ class SSIHistoricalClient:
                     attempt=attempt,
                     will_retry=True,
                 )
-                self.sleep(self._retry_delay(response, attempt))
+                self._sleep_before_retry(
+                    path=path,
+                    response=response,
+                    attempt=attempt,
+                    reason=f"HTTP {response.status_code}",
+                )
                 continue
             if response.status_code < 200 or response.status_code >= 300:
+                error_payload: dict[str, Any] | None = None
+                try:
+                    candidate = response.json()
+                    if isinstance(candidate, dict):
+                        error_payload = candidate
+                except ValueError:
+                    pass
                 self._emit_telemetry(
                     path=path,
                     response=response,
@@ -404,6 +495,12 @@ class SSIHistoricalClient:
                     attempt=attempt,
                     will_retry=False,
                 )
+                if error_payload is not None and self._is_no_data_payload(
+                    error_payload
+                ):
+                    raise SSINoDataFound(
+                        f"NoDataFound for {path}"
+                    )
                 raise SSIHTTPError(
                     response.status_code,
                     f"SSI HTTP {response.status_code} for {path}",
@@ -432,6 +529,34 @@ class SSIHistoricalClient:
             if provider_status is not None and not _provider_status_is_success(
                 provider_status
             ):
+                if self._is_no_data_payload(payload):
+                    self._emit_telemetry(
+                        path=path,
+                        response=response,
+                        duration_ms=(time_module.monotonic() - started_at) * 1000,
+                        attempt=attempt,
+                        will_retry=False,
+                        response_keys=tuple(sorted(str(key) for key in payload)),
+                    )
+                    raise SSINoDataFound(f"NoDataFound for {path}")
+                provider_code = self._provider_status_code(provider_status)
+                provider_retryable = provider_code in RETRYABLE_STATUS_CODES
+                if provider_retryable and attempt < self.max_attempts:
+                    self._emit_telemetry(
+                        path=path,
+                        response=response,
+                        duration_ms=(time_module.monotonic() - started_at) * 1000,
+                        attempt=attempt,
+                        will_retry=True,
+                        response_keys=tuple(sorted(str(key) for key in payload)),
+                    )
+                    self._sleep_before_retry(
+                        path=path,
+                        response=response,
+                        attempt=attempt,
+                        reason=f"provider {provider_status}",
+                    )
+                    continue
                 self._emit_telemetry(
                     path=path,
                     response=response,

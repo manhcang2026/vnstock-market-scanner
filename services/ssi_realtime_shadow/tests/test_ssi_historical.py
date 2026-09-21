@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,7 @@ from app.ssi_historical import (
     SSIHTTPError,
     SSIHistoricalClient,
     SSIHistoricalError,
+    SSINoDataFound,
     normalize_historical_record,
     normalize_historical_rows,
 )
@@ -95,12 +97,22 @@ def test_cli_accepts_required_dates_symbol_subset_and_limit() -> None:
             "HPG,SSI,VIX",
             "--limit-symbols",
             "2",
+            "--resolution",
+            "1",
         ]
     )
     assert args.from_date == date(2026, 9, 1)
     assert args.to_date == date(2026, 9, 11)
     assert args.symbols == "HPG,SSI,VIX"
     assert args.limit_symbols == 2
+    assert args.resolution == 1
+
+
+def test_cli_requires_explicit_bounded_symbols() -> None:
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(
+            ["--from-date", "01/09/2026", "--to-date", "11/09/2026"]
+        )
 
 
 def test_paginates_using_total_record_and_reuses_access_token() -> None:
@@ -456,7 +468,11 @@ def test_checkpoint_success_and_completed_resume_skip(tmp_path: Path) -> None:
     store.close()
 
 
-def test_empty_provider_result_can_complete_with_zero_rows(tmp_path: Path) -> None:
+def test_final_rows_and_completed_checkpoint_use_one_atomic_batch(
+    tmp_path: Path,
+) -> None:
+    trace: list[str] = []
+
     class Fetcher:
         def fetch_intraday_ohlc(
             self,
@@ -465,10 +481,14 @@ def test_empty_provider_result_can_complete_with_zero_rows(tmp_path: Path) -> No
             to_date: date,
             resolution: int = 1,
         ) -> list[dict]:
-            return []
+            store._conn.set_trace_callback(trace.append)
+            return [
+                row(symbol=symbol),
+                row(symbol=symbol, provider_time="09:16:00"),
+            ]
 
-    store = SQLiteStore(tmp_path / "empty.db")
-    output: list[str] = []
+    path = tmp_path / "atomic-success.db"
+    store = SQLiteStore(path, commit_every_events=1, commit_every_seconds=1)
     summary = run_bootstrap(
         store=store,
         client=Fetcher(),
@@ -476,15 +496,169 @@ def test_empty_provider_result_can_complete_with_zero_rows(tmp_path: Path) -> No
         exchange_map={"HPG": "HOSE"},
         from_date=date(2026, 9, 12),
         to_date=date(2026, 9, 12),
-        output=output.append,
+        output=lambda _: None,
     )
-    checkpoint = store.get_historical_checkpoint(
+    store._conn.set_trace_callback(None)
+
+    statements = [statement.strip().upper() for statement in trace]
+    batch_statements = [
+        statement
+        for statement in statements
+        if statement.startswith(("BEGIN", "INSERT", "UPDATE", "COMMIT"))
+    ]
+    assert batch_statements[0] == "BEGIN IMMEDIATE"
+    assert batch_statements[-1] == "COMMIT"
+    assert sum(statement.startswith("INSERT") for statement in batch_statements) == 2
+    assert sum(statement.startswith("UPDATE") for statement in batch_statements) == 1
+    assert batch_statements.count("COMMIT") == 1
+
+    observer = sqlite3.connect(path)
+    try:
+        row_count = observer.execute(
+            "SELECT COUNT(*) FROM minute_bars WHERE symbol='HPG'"
+        ).fetchone()[0]
+        checkpoint = observer.execute(
+            """
+            SELECT status, row_count
+            FROM historical_bootstrap_checkpoints
+            WHERE symbol='HPG' AND from_date='2026-09-12'
+              AND to_date='2026-09-12' AND resolution=1
+            """
+        ).fetchone()
+    finally:
+        observer.close()
+
+    assert summary.completed == 1 and summary.inserted_rows == 2
+    assert row_count == 2
+    assert checkpoint == ("COMPLETED", 2)
+    store.close()
+
+
+def test_failed_atomic_batch_rolls_back_and_rerun_succeeds_idempotently(
+    tmp_path: Path,
+) -> None:
+    class Fetcher:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def fetch_intraday_ohlc(
+            self,
+            symbol: str,
+            from_date: date,
+            to_date: date,
+            resolution: int = 1,
+        ) -> list[dict]:
+            self.calls += 1
+            return [
+                row(symbol=symbol),
+                row(symbol=symbol, provider_time="09:16:00"),
+            ]
+
+    store = SQLiteStore(
+        tmp_path / "atomic-failure.db",
+        commit_every_events=1,
+        commit_every_seconds=1,
+    )
+    store._conn.execute(
+        """
+        CREATE TRIGGER fail_historical_batch
+        BEFORE INSERT ON minute_bars
+        WHEN NEW.minute = '09:16'
+        BEGIN
+            SELECT RAISE(ABORT, 'simulated historical batch failure');
+        END
+        """
+    )
+    store.commit()
+    fetcher = Fetcher()
+    kwargs = dict(
+        store=store,
+        client=fetcher,
+        symbols=["HPG"],
+        exchange_map={"HPG": "HOSE"},
+        from_date=date(2026, 9, 12),
+        to_date=date(2026, 9, 12),
+        output=lambda _: None,
+    )
+
+    failed_summary = run_bootstrap(**kwargs)
+    failed_checkpoint = store.get_historical_checkpoint(
         "HPG", "2026-09-12", "2026-09-12", 1
     )
-    assert summary.completed == 1 and summary.failed == 0
-    assert checkpoint is not None and checkpoint.status == "COMPLETED"
-    assert checkpoint.row_count == 0
-    assert "raw_count=0 valid_count=0 rejected_count=0" in output[0]
+    partial_rows = store._conn.execute(
+        "SELECT COUNT(*) FROM minute_bars WHERE symbol='HPG'"
+    ).fetchone()[0]
+
+    assert failed_summary.failed == 1 and failed_summary.completed == 0
+    assert failed_checkpoint is not None and failed_checkpoint.status == "FAILED"
+    assert "simulated historical batch failure" in (failed_checkpoint.error or "")
+    assert partial_rows == 0
+
+    store._conn.execute("DROP TRIGGER fail_historical_batch")
+    store.commit()
+    resumed_summary = run_bootstrap(**kwargs)
+    skipped_summary = run_bootstrap(**kwargs)
+    completed_checkpoint = store.get_historical_checkpoint(
+        "HPG", "2026-09-12", "2026-09-12", 1
+    )
+    saved_rows = store._conn.execute(
+        "SELECT COUNT(*) FROM minute_bars WHERE symbol='HPG'"
+    ).fetchone()[0]
+
+    assert resumed_summary.completed == 1 and resumed_summary.inserted_rows == 2
+    assert skipped_summary.skipped_completed == 1
+    assert completed_checkpoint is not None
+    assert completed_checkpoint.status == "COMPLETED"
+    assert completed_checkpoint.attempt_count == 2
+    assert saved_rows == 2
+    assert fetcher.calls == 2
+    store.close()
+
+
+def test_generic_empty_response_is_failed_and_retried_on_rerun(
+    tmp_path: Path,
+) -> None:
+    class Fetcher:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def fetch_intraday_ohlc(
+            self,
+            symbol: str,
+            from_date: date,
+            to_date: date,
+            resolution: int = 1,
+        ) -> list[dict]:
+            self.calls += 1
+            return [] if self.calls == 1 else [row(symbol=symbol)]
+
+    store = SQLiteStore(tmp_path / "empty.db")
+    fetcher = Fetcher()
+    kwargs = dict(
+        store=store,
+        client=fetcher,
+        symbols=["HPG"],
+        exchange_map={"HPG": "HOSE"},
+        from_date=date(2026, 9, 12),
+        to_date=date(2026, 9, 12),
+        output=lambda _: None,
+    )
+    first = run_bootstrap(**kwargs)
+    failed = store.get_historical_checkpoint(
+        "HPG", "2026-09-12", "2026-09-12", 1
+    )
+    second = run_bootstrap(**kwargs)
+    completed = store.get_historical_checkpoint(
+        "HPG", "2026-09-12", "2026-09-12", 1
+    )
+
+    assert first.failed == 1 and first.no_data == 0
+    assert failed is not None and failed.status == "FAILED"
+    assert "EMPTY_RESPONSE" in (failed.error or "")
+    assert second.completed == 1 and second.skipped_completed == 0
+    assert completed is not None and completed.status == "COMPLETED"
+    assert completed.attempt_count == 2
+    assert fetcher.calls == 2
     store.close()
 
 
@@ -620,6 +794,7 @@ def test_partial_normalization_reports_raw_valid_and_rejected_counts(
         from_date=date(2026, 9, 12),
         to_date=date(2026, 9, 12),
         output=output.append,
+        verbose=True,
     )
     assert summary.completed == 1 and summary.rejected_rows == 1
     assert "raw_count=2 valid_count=1 rejected_count=1" in output[0]
@@ -659,6 +834,241 @@ def test_symbol_failure_is_checkpointed_and_does_not_stop_next_symbol(tmp_path: 
     store.close()
 
 
+def test_failed_checkpoint_resumes_and_completes(tmp_path: Path) -> None:
+    class Fetcher:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def fetch_intraday_ohlc(
+            self,
+            symbol: str,
+            from_date: date,
+            to_date: date,
+            resolution: int = 1,
+        ) -> list[dict]:
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("temporary failure")
+            return [row(symbol=symbol)]
+
+    store = SQLiteStore(tmp_path / "failed-resume.db")
+    fetcher = Fetcher()
+    kwargs = dict(
+        store=store,
+        client=fetcher,
+        symbols=["HPG"],
+        exchange_map={"HPG": "HOSE"},
+        from_date=date(2026, 9, 12),
+        to_date=date(2026, 9, 12),
+        output=lambda _: None,
+    )
+
+    first = run_bootstrap(**kwargs)
+    second = run_bootstrap(**kwargs)
+    checkpoint = store.get_historical_checkpoint(
+        "HPG", "2026-09-12", "2026-09-12", 1
+    )
+
+    assert first.failed == 1
+    assert second.completed == 1
+    assert fetcher.calls == 2
+    assert checkpoint is not None and checkpoint.status == "COMPLETED"
+    assert checkpoint.attempt_count == 2
+    store.close()
+
+
+def test_interruption_resume_does_not_redo_completed_symbols(tmp_path: Path) -> None:
+    class InterruptingFetcher:
+        def fetch_intraday_ohlc(
+            self,
+            symbol: str,
+            from_date: date,
+            to_date: date,
+            resolution: int = 1,
+        ) -> list[dict]:
+            if symbol == "BBB":
+                raise KeyboardInterrupt
+            return [row(symbol=symbol)]
+
+    class ResumingFetcher:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def fetch_intraday_ohlc(
+            self,
+            symbol: str,
+            from_date: date,
+            to_date: date,
+            resolution: int = 1,
+        ) -> list[dict]:
+            self.calls.append(symbol)
+            return [row(symbol=symbol)]
+
+    store = SQLiteStore(tmp_path / "interrupt-resume.db")
+    kwargs = dict(
+        store=store,
+        symbols=["AAA", "BBB"],
+        exchange_map={"AAA": "HOSE", "BBB": "HOSE"},
+        from_date=date(2026, 9, 12),
+        to_date=date(2026, 9, 12),
+        output=lambda _: None,
+    )
+    with pytest.raises(KeyboardInterrupt):
+        run_bootstrap(client=InterruptingFetcher(), **kwargs)
+
+    completed = store.get_historical_checkpoint(
+        "AAA", "2026-09-12", "2026-09-12", 1
+    )
+    interrupted = store.get_historical_checkpoint(
+        "BBB", "2026-09-12", "2026-09-12", 1
+    )
+    assert completed is not None and completed.status == "COMPLETED"
+    assert interrupted is not None and interrupted.status == "RUNNING"
+
+    resumed = ResumingFetcher()
+    summary = run_bootstrap(client=resumed, **kwargs)
+
+    assert summary.skipped_completed == 1 and summary.completed == 1
+    assert resumed.calls == ["BBB"]
+    store.close()
+
+
+def test_explicit_symbol_subset_never_expands_to_exchange_map(tmp_path: Path) -> None:
+    class Fetcher:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def fetch_intraday_ohlc(
+            self,
+            symbol: str,
+            from_date: date,
+            to_date: date,
+            resolution: int = 1,
+        ) -> list[dict]:
+            self.calls.append(symbol)
+            return []
+
+    store = SQLiteStore(tmp_path / "bounded.db")
+    fetcher = Fetcher()
+    summary = run_bootstrap(
+        store=store,
+        client=fetcher,
+        symbols=["SSI", "HPG"],
+        exchange_map={"HPG": "HOSE", "SSI": "HOSE", "VIX": "HOSE"},
+        from_date=date(2026, 9, 12),
+        to_date=date(2026, 9, 12),
+        output=lambda _: None,
+    )
+
+    assert summary.requested == 2
+    assert fetcher.calls == ["HPG", "SSI"]
+    store.close()
+
+
+def test_progress_summary_counters_are_correct(tmp_path: Path) -> None:
+    class Fetcher:
+        retry_count = 0
+
+        def fetch_intraday_ohlc(
+            self,
+            symbol: str,
+            from_date: date,
+            to_date: date,
+            resolution: int = 1,
+        ) -> list[dict]:
+            if symbol == "AAA":
+                self.retry_count += 2
+                return [
+                    row(symbol=symbol),
+                    row(symbol=symbol, provider_time="malformed"),
+                ]
+            if symbol == "BBB":
+                raise SSINoDataFound("NoDataFound for test")
+            raise RuntimeError("still unavailable")
+
+    store = SQLiteStore(tmp_path / "summary.db")
+    store.insert_historical_bar(
+        trading_date="2026-09-12",
+        minute="09:15",
+        symbol="AAA",
+        exchange="HOSE",
+        open_price=27.1,
+        high=27.5,
+        low=27.0,
+        close=27.4,
+        volume=1234,
+        provider_time="09:15:00",
+        updated_at="2026-09-12T09:15:01+07:00",
+    )
+    store.mark_historical_checkpoint_running(
+        "DDD", "2026-09-12", "2026-09-12", 1, "start"
+    )
+    store.mark_historical_checkpoint_completed(
+        "DDD", "2026-09-12", "2026-09-12", 1, 1, "done"
+    )
+    store.commit()
+    ticks = iter([10.0, 12.5])
+
+    summary = run_bootstrap(
+        store=store,
+        client=Fetcher(),
+        symbols=["DDD", "CCC", "BBB", "AAA"],
+        exchange_map={symbol: "HOSE" for symbol in ("AAA", "BBB", "CCC", "DDD")},
+        from_date=date(2026, 9, 12),
+        to_date=date(2026, 9, 12),
+        output=lambda _: None,
+        monotonic=lambda: next(ticks),
+    )
+
+    assert summary.requested == 4
+    assert summary.skipped_completed == 1
+    assert summary.completed == 1
+    assert summary.no_data == 1
+    assert summary.failed == 1
+    assert summary.retry_count == 2
+    assert summary.valid_rows == 1
+    assert summary.inserted_rows == 0
+    assert summary.existing_rows == 1
+    assert summary.rejected_rows == 1
+    assert summary.elapsed_seconds == 2.5
+    store.close()
+
+
+def test_provider_no_data_found_is_checkpointed_distinctly(tmp_path: Path) -> None:
+    session = FakeSession(
+        [
+            token_response(),
+            FakeResponse(
+                200,
+                {"status": "NoDataFound", "message": "NoDataFound", "data": []},
+            ),
+        ]
+    )
+    store = SQLiteStore(tmp_path / "provider-no-data.db")
+    kwargs = dict(
+        store=store,
+        client=client(session),
+        symbols=["HPG"],
+        exchange_map={"HPG": "HOSE"},
+        from_date=date(2026, 9, 12),
+        to_date=date(2026, 9, 12),
+        output=lambda _: None,
+    )
+    summary = run_bootstrap(**kwargs)
+    checkpoint = store.get_historical_checkpoint(
+        "HPG", "2026-09-12", "2026-09-12", 1
+    )
+    calls_after_first_run = len(session.calls)
+    rerun = run_bootstrap(**kwargs)
+
+    assert summary.no_data == 1 and summary.failed == 0
+    assert checkpoint is not None and checkpoint.status == "NO_DATA"
+    assert "NoDataFound" in (checkpoint.error or "")
+    assert rerun.no_data == 1 and rerun.skipped_completed == 0
+    assert len(session.calls) == calls_after_first_run
+    store.close()
+
+
 def test_retry_429_respects_retry_after() -> None:
     sleeps: list[float] = []
     session = FakeSession(
@@ -670,6 +1080,126 @@ def test_retry_429_respects_retry_after() -> None:
     )
     assert client(session, sleep=sleeps.append).fetch_intraday_ohlc("HPG", "12/09/2026", "12/09/2026") == []
     assert sleeps == [7.0]
+
+
+def test_pacing_is_invoked_between_rest_requests() -> None:
+    sleeps: list[float] = []
+    session = FakeSession(
+        [
+            FakeResponse(200, {"status": 200, "data": [], "totalRecord": 0}),
+            FakeResponse(200, {"status": 200, "data": [], "totalRecord": 0}),
+        ]
+    )
+    paced = client(session, sleep=sleeps.append, request_interval=1.25)
+    paced._access_token = "test-token"
+
+    paced.fetch_intraday_ohlc("HPG", "12/09/2026", "12/09/2026")
+    paced.fetch_intraday_ohlc("SSI", "12/09/2026", "12/09/2026")
+
+    assert sleeps == [1.25]
+
+
+def test_http_429_uses_exponential_backoff_with_jitter_then_succeeds() -> None:
+    sleeps: list[float] = []
+    session = FakeSession(
+        [
+            token_response(),
+            FakeResponse(429, {}),
+            FakeResponse(429, {}),
+            FakeResponse(200, {"status": 200, "data": [], "totalRecord": 0}),
+        ]
+    )
+    retried = client(
+        session,
+        sleep=sleeps.append,
+        initial_retry_delay=2,
+        retry_jitter_ratio=0.25,
+        random_value=lambda: 0.5,
+    )
+
+    assert retried.fetch_intraday_ohlc(
+        "HPG", "12/09/2026", "12/09/2026"
+    ) == []
+    assert sleeps == [2.25, 4.5]
+    assert retried.retry_count == 2
+
+
+def test_provider_429_retries_then_succeeds() -> None:
+    sleeps: list[float] = []
+    session = FakeSession(
+        [
+            token_response(),
+            FakeResponse(200, {"status": 429, "message": "Rate limited"}),
+            FakeResponse(200, {"status": 200, "data": [], "totalRecord": 0}),
+        ]
+    )
+    retried = client(session, sleep=sleeps.append, initial_retry_delay=3)
+
+    assert retried.fetch_intraday_ohlc(
+        "HPG", "12/09/2026", "12/09/2026"
+    ) == []
+    assert sleeps == [3.0]
+    assert retried.retry_count == 1
+
+
+def test_repeated_429_stops_after_configured_limit_and_marks_failed(
+    tmp_path: Path,
+) -> None:
+    sleeps: list[float] = []
+    session = FakeSession(
+        [
+            token_response(),
+            FakeResponse(429, {}),
+            FakeResponse(429, {}),
+            FakeResponse(429, {}),
+        ]
+    )
+    retried = client(
+        session,
+        sleep=sleeps.append,
+        max_attempts=3,
+        initial_retry_delay=2,
+        max_retry_delay=3,
+    )
+
+    store = SQLiteStore(tmp_path / "repeated-429.db")
+    summary = run_bootstrap(
+        store=store,
+        client=retried,
+        symbols=["HPG"],
+        exchange_map={"HPG": "HOSE"},
+        from_date=date(2026, 9, 12),
+        to_date=date(2026, 9, 12),
+        output=lambda _: None,
+    )
+    checkpoint = store.get_historical_checkpoint(
+        "HPG", "2026-09-12", "2026-09-12", 1
+    )
+
+    assert summary.failed == 1 and summary.retry_count == 2
+    assert checkpoint is not None and checkpoint.status == "FAILED"
+    assert "SSI HTTP 429" in (checkpoint.error or "")
+    assert sleeps == [2.0, 3.0]
+    assert retried.retry_count == 2
+    store.close()
+
+
+def test_5xx_transient_retry_then_succeeds() -> None:
+    sleeps: list[float] = []
+    session = FakeSession(
+        [
+            token_response(),
+            FakeResponse(503, {}),
+            FakeResponse(200, {"status": 200, "data": [], "totalRecord": 0}),
+        ]
+    )
+    retried = client(session, sleep=sleeps.append, initial_retry_delay=4)
+
+    assert retried.fetch_intraday_ohlc(
+        "HPG", "12/09/2026", "12/09/2026"
+    ) == []
+    assert sleeps == [4.0]
+    assert retried.retry_count == 1
 
 
 def test_retry_5xx_and_network_timeout_are_bounded() -> None:
