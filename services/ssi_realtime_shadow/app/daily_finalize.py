@@ -44,9 +44,8 @@ MIN_STREAM_SYMBOLS = 500
 MIN_STREAM_MINUTES = 200
 MAX_STREAM_FIRST_MINUTE = "09:15"
 MIN_STREAM_LAST_MINUTE = "14:45"
-SETTLEABLE_EVENT_QUALITIES = frozenset(
-    {"TRUSTED", "PARTIAL", "VOLUME_REGRESSION"}
-)
+MAX_TARGETED_REPAIR_SYMBOLS = 50
+SETTLEABLE_EVENT_QUALITIES = frozenset({"TRUSTED"})
 CANONICAL_MINUTE_SOURCES = frozenset({"SSI_REST", "SSI_STREAM"})
 MINUTE_COLUMNS = (
     "trading_date",
@@ -139,6 +138,27 @@ class FinalizeResult:
     missing_daily_ohlc: int
     unresolved_gaps: int
     symbols: tuple[SymbolFinalizeResult, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class RepairPlan:
+    bounded: bool
+    symbols: tuple[str, ...]
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class CanonicalDayCompleteness:
+    complete: bool
+    expected_symbols: tuple[str, ...]
+    complete_symbols: tuple[str, ...]
+    missing_daily_bars: tuple[str, ...]
+    missing_history: tuple[str, ...]
+    unsafe_daily_bars: tuple[str, ...]
+    unsafe_history: tuple[str, ...]
+    volume_mismatches: tuple[str, ...]
+    unfinalized_stream: tuple[str, ...]
+    unsafe_stream_source: tuple[str, ...]
 
 
 _JOURNAL_COLUMNS: Mapping[str, str] = {
@@ -643,6 +663,8 @@ def _settle_symbol(
             continue
         if bool(row["has_gap"]):
             reasons.append("UNRESOLVED_GAP")
+        if bool(row["is_partial"]):
+            reasons.append("PARTIAL_STREAM_ROW")
         if quality not in SETTLEABLE_EVENT_QUALITIES:
             reasons.append("UNRESOLVED_EVENT_ANOMALY")
         represented += int(row["volume"])
@@ -915,6 +937,325 @@ def _record_result(connection: sqlite3.Connection, result: FinalizeResult) -> No
     except Exception:
         connection.rollback()
         raise
+
+
+def repair_plan_from_details(
+    details: object,
+    *,
+    status: str,
+    maximum_symbols: int = MAX_TARGETED_REPAIR_SYMBOLS,
+) -> RepairPlan:
+    """Return a bounded symbol repair set or an explicit fail-closed reason."""
+    canonical_status = str(status or "").strip().upper()
+    if canonical_status not in {"PARTIAL", "BLOCKED", "REST_BLOCKED"}:
+        return RepairPlan(False, (), f"STATUS_NOT_REPAIRABLE:{canonical_status or 'EMPTY'}")
+    if not isinstance(details, list):
+        return RepairPlan(False, (), "MISSING_SYMBOL_DETAILS")
+
+    symbol_results = [
+        item
+        for item in details
+        if isinstance(item, dict) and str(item.get("symbol") or "").strip()
+    ]
+    if not symbol_results:
+        return RepairPlan(False, (), "MISSING_SYMBOL_DETAILS")
+    if any(
+        any(str(reason).startswith("STREAM_") for reason in item.get("reasons") or ())
+        for item in symbol_results
+    ):
+        return RepairPlan(False, (), "GLOBAL_STREAM_COVERAGE_FAILURE")
+
+    targets = tuple(
+        sorted(
+            {
+                str(item["symbol"]).strip().upper()
+                for item in symbol_results
+                if str(item.get("status") or "").strip().upper() != "TRUSTED"
+            }
+        )
+    )
+    if not targets:
+        return RepairPlan(False, (), "NO_NON_TRUSTED_SYMBOLS")
+    if len(targets) > maximum_symbols:
+        return RepairPlan(
+            False,
+            (),
+            f"REPAIR_SET_TOO_LARGE:{len(targets)}>{maximum_symbols}",
+        )
+    return RepairPlan(True, targets, "TARGETED_REPAIR")
+
+
+def rest_repair_status(
+    *,
+    prior_status: str,
+    checkpoints_complete: bool,
+    canonical_complete: bool,
+) -> str:
+    """REST repair passes only when checkpoints and canonical outputs are complete."""
+    if checkpoints_complete and canonical_complete:
+        return "REST_PASS"
+    canonical_prior = str(prior_status or "").strip().upper()
+    return canonical_prior if canonical_prior in {"PARTIAL", "BLOCKED"} else "REST_BLOCKED"
+
+
+def _journal_symbol_states(
+    history: sqlite3.Connection, trading_date: str
+) -> tuple[set[str], set[str]]:
+    if not _table_exists(history, "daily_finalize_runs"):
+        return set(), set()
+    row = history.execute(
+        "SELECT details_json FROM daily_finalize_runs WHERE trading_date=?",
+        (trading_date,),
+    ).fetchone()
+    if row is None:
+        return set(), set()
+    try:
+        details = json.loads(str(row["details_json"] or ""))
+    except (TypeError, ValueError):
+        return set(), set()
+    if not isinstance(details, list):
+        return set(), set()
+    journal_symbols: set[str] = set()
+    trusted_symbols: set[str] = set()
+    for item in details:
+        if not isinstance(item, dict):
+            continue
+        symbol = str(item.get("symbol") or "").strip().upper()
+        if not symbol:
+            continue
+        journal_symbols.add(symbol)
+        if (
+            str(item.get("status") or "").strip().upper() == "TRUSTED"
+            and not item.get("reasons")
+        ):
+            trusted_symbols.add(symbol)
+    return journal_symbols, trusted_symbols
+
+
+def _safe_canonical_history_row(
+    row: sqlite3.Row, *, exchange: str, valid_minutes: set[str]
+) -> bool:
+    try:
+        return (
+            str(row["data_source"] or "").strip().upper()
+            in CANONICAL_MINUTE_SOURCES
+            and str(row["quality_status"] or "").strip().upper()
+            == TRUSTED_QUALITY
+            and not bool(row["is_partial"])
+            and not bool(row["has_gap"])
+            and str(row["minute"] or "") in valid_minutes
+            and normalize_exchange(str(row["exchange"] or "")) == exchange
+            and _valid_ohlcv(row)
+        )
+    except (TypeError, ValueError):
+        return False
+
+
+def _minute_core(row: sqlite3.Row) -> tuple[object, ...]:
+    return (
+        str(row["minute"]),
+        normalize_exchange(str(row["exchange"] or "")),
+        float(row["open"]),
+        float(row["high"]),
+        float(row["low"]),
+        float(row["close"]),
+        int(row["volume"]),
+    )
+
+
+def canonical_day_completeness(
+    *,
+    source_path: Path,
+    history_path: Path,
+    market_path: Path,
+    trading_date: str,
+) -> CanonicalDayCompleteness:
+    """Prove that every observed day symbol has safe minute and daily outputs."""
+    target = date.fromisoformat(trading_date)
+    if target.isoformat() != trading_date:
+        raise ValueError("trading_date must be canonical YYYY-MM-DD")
+    source = _connect_existing(source_path, read_only=True)
+    history = _connect_existing(history_path, read_only=True)
+    market = _connect_existing(market_path, read_only=True)
+    try:
+        source_symbols = (
+            {
+                str(row[0]).strip().upper()
+                for row in source.execute(
+                    "SELECT DISTINCT symbol FROM minute_bars WHERE trading_date=?",
+                    (trading_date,),
+                )
+                if str(row[0] or "").strip()
+            }
+            if _table_exists(source, "minute_bars")
+            else set()
+        )
+        history_symbols = (
+            {
+                str(row[0]).strip().upper()
+                for row in history.execute(
+                    "SELECT DISTINCT symbol FROM minute_bars WHERE trading_date=?",
+                    (trading_date,),
+                )
+                if str(row[0] or "").strip()
+            }
+            if _table_exists(history, "minute_bars")
+            else set()
+        )
+        daily_symbols = (
+            {
+                str(row[0]).strip().upper()
+                for row in market.execute(
+                    "SELECT DISTINCT symbol FROM daily_bars WHERE trading_date=?",
+                    (trading_date,),
+                )
+                if str(row[0] or "").strip()
+            }
+            if _table_exists(market, "daily_bars")
+            else set()
+        )
+        journal_symbols, trusted_journal_symbols = _journal_symbol_states(
+            history, trading_date
+        )
+        expected = tuple(
+            sorted(source_symbols | history_symbols | daily_symbols | journal_symbols)
+        )
+        complete_symbols: list[str] = []
+        missing_daily: list[str] = []
+        missing_history: list[str] = []
+        unsafe_daily: list[str] = []
+        unsafe_history: list[str] = []
+        volume_mismatches: list[str] = []
+        unfinalized_stream: list[str] = []
+        unsafe_stream_source: list[str] = []
+
+        for symbol in expected:
+            daily_row = (
+                market.execute(
+                    """
+                    SELECT exchange, open, high, low, close, volume,
+                           source, quality_status
+                    FROM daily_bars WHERE symbol=? AND trading_date=?
+                    """,
+                    (symbol, trading_date),
+                ).fetchone()
+                if _table_exists(market, "daily_bars")
+                else None
+            )
+            if daily_row is None:
+                missing_daily.append(symbol)
+                continue
+            try:
+                exchange = normalize_exchange(str(daily_row["exchange"] or ""))
+                daily_volume = int(daily_row["volume"])
+                daily_source = str(daily_row["source"] or "").strip().upper()
+                if (
+                    not _valid_ohlcv(daily_row)
+                    or daily_source not in {DAILY_SOURCE, SSI_STREAM}
+                    or str(daily_row["quality_status"] or "").strip().upper()
+                    != TRUSTED_QUALITY
+                ):
+                    raise ValueError
+            except (TypeError, ValueError):
+                unsafe_daily.append(symbol)
+                continue
+
+            rows = (
+                history.execute(
+                    f"""
+                    SELECT {', '.join(MINUTE_COLUMNS)}
+                    FROM minute_bars WHERE symbol=? AND trading_date=?
+                    ORDER BY minute
+                    """,
+                    (symbol, trading_date),
+                ).fetchall()
+                if _table_exists(history, "minute_bars")
+                else []
+            )
+            if not rows:
+                missing_history.append(symbol)
+                continue
+            valid_minutes = {point.minute for point in volume_market_grid(exchange)}
+            if any(
+                not _safe_canonical_history_row(
+                    row, exchange=exchange, valid_minutes=valid_minutes
+                )
+                for row in rows
+            ):
+                unsafe_history.append(symbol)
+                continue
+            if sum(int(row["volume"]) for row in rows) != daily_volume:
+                volume_mismatches.append(symbol)
+                continue
+            stream_backed = (
+                daily_source == SSI_STREAM
+                or any(
+                    str(row["data_source"] or "").strip().upper() == SSI_STREAM
+                    for row in rows
+                )
+            )
+            if stream_backed:
+                if symbol not in trusted_journal_symbols:
+                    unfinalized_stream.append(symbol)
+                    continue
+                source_rows = source.execute(
+                    f"""
+                    SELECT {', '.join(MINUTE_COLUMNS)}
+                    FROM minute_bars WHERE symbol=? AND trading_date=?
+                    ORDER BY minute
+                    """,
+                    (symbol, trading_date),
+                ).fetchall()
+                try:
+                    source_is_safe = bool(source_rows) and all(
+                        _safe_canonical_history_row(
+                            row, exchange=exchange, valid_minutes=valid_minutes
+                        )
+                        and str(row["data_source"] or "").strip().upper()
+                        == SSI_STREAM
+                        for row in source_rows
+                    )
+                    source_matches_history = tuple(
+                        _minute_core(row) for row in source_rows
+                    ) == tuple(_minute_core(row) for row in rows)
+                    stream_daily_matches = (
+                        daily_source != SSI_STREAM
+                        or (
+                            float(daily_row["open"]) == float(source_rows[0]["open"])
+                            and float(daily_row["high"])
+                            == max(float(row["high"]) for row in source_rows)
+                            and float(daily_row["low"])
+                            == min(float(row["low"]) for row in source_rows)
+                            and float(daily_row["close"])
+                            == float(source_rows[-1]["close"])
+                        )
+                    )
+                except (IndexError, TypeError, ValueError):
+                    source_is_safe = source_matches_history = stream_daily_matches = False
+                if not (
+                    source_is_safe and source_matches_history and stream_daily_matches
+                ):
+                    unsafe_stream_source.append(symbol)
+                    continue
+            complete_symbols.append(symbol)
+
+        complete = bool(expected) and len(complete_symbols) == len(expected)
+        return CanonicalDayCompleteness(
+            complete=complete,
+            expected_symbols=expected,
+            complete_symbols=tuple(complete_symbols),
+            missing_daily_bars=tuple(missing_daily),
+            missing_history=tuple(missing_history),
+            unsafe_daily_bars=tuple(unsafe_daily),
+            unsafe_history=tuple(unsafe_history),
+            volume_mismatches=tuple(volume_mismatches),
+            unfinalized_stream=tuple(unfinalized_stream),
+            unsafe_stream_source=tuple(unsafe_stream_source),
+        )
+    finally:
+        source.close()
+        history.close()
+        market.close()
 
 
 def finalize_day(

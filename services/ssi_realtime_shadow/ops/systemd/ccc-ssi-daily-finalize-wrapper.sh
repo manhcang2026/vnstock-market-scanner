@@ -11,25 +11,39 @@ log() {
   echo "[$(TZ=Asia/Ho_Chi_Minh date '+%Y-%m-%d %H:%M:%S')] $*"
 }
 
-# Idempotent day-level exit. Do not re-hit SSI REST after a successful finalize.
-PREVIOUS_STATUS="$(docker exec -i "$CONTAINER" python - "$DAY" "$HISTORY_DB" <<'PY'
-import sqlite3, sys
+# Idempotent exit requires both a success status and complete canonical outputs.
+if docker exec -i "$CONTAINER" python - \
+  "$DAY" "$SOURCE_DB" "$HISTORY_DB" "$MARKET_DB" <<'PY'
+import json
+import sqlite3
+import sys
+from dataclasses import asdict
 
-day, db = sys.argv[1], sys.argv[2]
+from app.daily_finalize import canonical_day_completeness
+
+day, source_db, history_db, market_db = sys.argv[1:5]
 try:
-    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    con = sqlite3.connect(f"file:{history_db}?mode=ro", uri=True)
     row = con.execute(
         "SELECT status FROM daily_finalize_runs WHERE trading_date=?", (day,)
     ).fetchone()
-    print(row[0] if row else "")
     con.close()
-except Exception:
-    print("")
+    status = str(row[0]) if row else ""
+    if status not in {"PASS", "REST_PASS"}:
+        raise SystemExit(2)
+    proof = canonical_day_completeness(
+        source_path=source_db,
+        history_path=history_db,
+        market_path=market_db,
+        trading_date=day,
+    )
+    print(json.dumps({"status": status, **asdict(proof)}, sort_keys=True))
+    raise SystemExit(0 if proof.complete else 2)
+except (OSError, sqlite3.Error, ValueError):
+    raise SystemExit(2)
 PY
-)"
-
-if [[ "$PREVIOUS_STATUS" == "PASS" || "$PREVIOUS_STATUS" == "REST_PASS" ]]; then
-  log "Already finalized: day=$DAY status=$PREVIOUS_STATUS"
+then
+  log "Already finalized with complete canonical outputs: day=$DAY"
   exit 0
 fi
 
@@ -46,7 +60,45 @@ if docker exec "$CONTAINER" \
   exit 0
 fi
 
-log "Stream finalize blocked. Running SSI REST repair/backfill."
+log "Stream finalize did not fully pass. Deriving bounded REST repair set."
+set +e
+REPAIR_SYMBOLS="$(docker exec -i "$CONTAINER" python - "$DAY" "$HISTORY_DB" <<'PY'
+import json
+import sqlite3
+import sys
+
+from app.daily_finalize import repair_plan_from_details
+
+day, history_db = sys.argv[1:3]
+con = sqlite3.connect(f"file:{history_db}?mode=ro", uri=True)
+con.row_factory = sqlite3.Row
+row = con.execute(
+    "SELECT status, details_json FROM daily_finalize_runs WHERE trading_date=?",
+    (day,),
+).fetchone()
+con.close()
+if row is None:
+    print("MISSING_FINALIZE_JOURNAL", file=sys.stderr)
+    raise SystemExit(2)
+try:
+    details = json.loads(str(row["details_json"] or ""))
+except (TypeError, ValueError):
+    details = None
+plan = repair_plan_from_details(details, status=str(row["status"] or ""))
+if not plan.bounded:
+    print(plan.reason, file=sys.stderr)
+    raise SystemExit(2)
+print(",".join(plan.symbols))
+PY
+)"
+REPAIR_PLAN_RC=$?
+set -e
+if [[ $REPAIR_PLAN_RC -ne 0 || -z "$REPAIR_SYMBOLS" ]]; then
+  log "No bounded REST repair set; failing closed without bootstrap."
+  exit 2
+fi
+
+log "Running targeted SSI REST repair/backfill: symbols=$REPAIR_SYMBOLS"
 CLI_DATE="$(date -d "$DAY" '+%d/%m/%Y')"
 
 set +e
@@ -55,50 +107,59 @@ docker exec \
   "$CONTAINER" \
   python -m app.historical_bootstrap \
     --from-date "$CLI_DATE" \
-    --to-date "$CLI_DATE"
+    --to-date "$CLI_DATE" \
+    --symbols "$REPAIR_SYMBOLS"
 BOOTSTRAP_RC=$?
 set -e
 
 log "REST bootstrap returned rc=$BOOTSTRAP_RC; evaluating checkpoints + canonical history."
 
-docker exec -i "$CONTAINER" python - "$DAY" "$SOURCE_DB" "$HISTORY_DB" <<'PY'
+docker exec -i "$CONTAINER" python - \
+  "$DAY" "$SOURCE_DB" "$HISTORY_DB" "$MARKET_DB" "$REPAIR_SYMBOLS" <<'PY'
 import json
 import sqlite3
 import sys
+from dataclasses import asdict
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-DAY, SOURCE_DB, HISTORY_DB = sys.argv[1:4]
+from app.daily_finalize import canonical_day_completeness, rest_repair_status
+
+DAY, SOURCE_DB, HISTORY_DB, MARKET_DB, RAW_TARGETS = sys.argv[1:6]
+TARGETS = tuple(sorted({item for item in RAW_TARGETS.split(",") if item}))
 VN = ZoneInfo("Asia/Ho_Chi_Minh")
 
-source = sqlite3.connect(f"file:{SOURCE_DB}?mode=ro", uri=True)
 hist = sqlite3.connect(HISTORY_DB)
 hist.row_factory = sqlite3.Row
 
-# NoDataFound is a legitimate symbol/day outcome, not a fatal provider error.
+placeholders = ",".join("?" for _ in TARGETS)
+
+# NoDataFound remains explicit and is scoped to this bounded repair set.
 hist.execute(
-    """
+    f"""
     UPDATE historical_bootstrap_checkpoints
     SET status='NO_DATA', row_count=0,
         completed_at=COALESCE(completed_at, last_attempt_at)
     WHERE from_date=? AND to_date=? AND resolution=1
       AND status='FAILED'
       AND error LIKE '%NoDataFound%'
+      AND symbol IN ({placeholders})
     """,
-    (DAY, DAY),
+    (DAY, DAY, *TARGETS),
 )
 hist.commit()
 
 status_counts = {
     str(r["status"]): int(r["n"])
     for r in hist.execute(
-        """
+        f"""
         SELECT status, COUNT(*) n
         FROM historical_bootstrap_checkpoints
         WHERE from_date=? AND to_date=? AND resolution=1
+          AND symbol IN ({placeholders})
         GROUP BY status
         """,
-        (DAY, DAY),
+        (DAY, DAY, *TARGETS),
     )
 }
 checkpoint_total = sum(status_counts.values())
@@ -106,14 +167,7 @@ bad_checkpoints = sum(
     n for status, n in status_counts.items()
     if status not in {"COMPLETED", "NO_DATA"}
 )
-
-expected_row = source.execute(
-    "SELECT value FROM collector_meta WHERE key='universe_size'"
-).fetchone()
-expected_universe = int(expected_row[0]) if expected_row else None
-stream_symbols = int(source.execute(
-    "SELECT COUNT(DISTINCT symbol) FROM minute_bars WHERE trading_date=?", (DAY,)
-).fetchone()[0])
+checkpoints_complete = bad_checkpoints == 0 and checkpoint_total == len(TARGETS)
 
 r = hist.execute(
     """
@@ -146,34 +200,33 @@ quality_counts = {
 }
 
 reasons = []
-if r["rows"] < 20000:
-    reasons.append("rest_rows<20000")
-if r["symbols"] < 500:
-    reasons.append("rest_symbols<500")
-if r["symbols"] < stream_symbols:
-    reasons.append(f"rest_symbols={r['symbols']}<stream_symbols={stream_symbols}")
-if r["minutes"] < 200:
-    reasons.append("rest_minutes<200")
-if r["last_minute"] is None or r["last_minute"] < "14:45":
-    reasons.append("rest_last_minute<14:45")
-if r["gap_rows"]:
-    reasons.append(f"rest_gap_rows={r['gap_rows']}")
-if r["negative_volume_rows"]:
-    reasons.append(f"rest_negative_volume_rows={r['negative_volume_rows']}")
 if bad_checkpoints:
-    reasons.append(f"rest_bad_checkpoints={bad_checkpoints}")
-if expected_universe is not None and checkpoint_total != expected_universe:
-    reasons.append(
-        f"rest_checkpoints={checkpoint_total}!=universe={expected_universe}"
-    )
+    reasons.append(f"repair_bad_checkpoints={bad_checkpoints}")
+if checkpoint_total != len(TARGETS):
+    reasons.append(f"repair_checkpoints={checkpoint_total}!=targets={len(TARGETS)}")
 
-# Historical SSI occasionally emits internally inconsistent OHLC bars. Preserve the
-# raw provider row; ChartDataStore filters those candles by default. Report, don't block.
-status = "REST_PASS" if not reasons else "REST_BLOCKED"
+proof = canonical_day_completeness(
+    source_path=SOURCE_DB,
+    history_path=HISTORY_DB,
+    market_path=MARKET_DB,
+    trading_date=DAY,
+)
+for field in (
+    "missing_daily_bars",
+    "missing_history",
+    "unsafe_daily_bars",
+    "unsafe_history",
+    "volume_mismatches",
+    "unfinalized_stream",
+    "unsafe_stream_source",
+):
+    values = getattr(proof, field)
+    if values:
+        reasons.append(f"{field}={','.join(values)}")
 now = datetime.now(VN).isoformat()
 
 existing = hist.execute(
-    "SELECT details_json FROM daily_finalize_runs WHERE trading_date=?", (DAY,)
+    "SELECT status, details_json FROM daily_finalize_runs WHERE trading_date=?", (DAY,)
 ).fetchone()
 try:
     details = json.loads(str(existing["details_json"])) if existing else []
@@ -185,14 +238,20 @@ details = [
     item for item in details
     if not (isinstance(item, dict) and item.get("kind") == "REST_REPAIR")
 ]
+prior_status = str(existing["status"] or "") if existing else ""
+status = rest_repair_status(
+    prior_status=prior_status,
+    checkpoints_complete=checkpoints_complete,
+    canonical_complete=proof.complete,
+)
 details.append({
     "kind": "REST_REPAIR",
     "status": status,
+    "repair_symbols": TARGETS,
     "reasons": reasons,
     "checkpoint_status": status_counts,
     "checkpoint_total": checkpoint_total,
-    "expected_universe": expected_universe,
-    "invalid_ohlc_policy": "preserve_raw_filter_in_chart_api",
+    "canonical_completeness": asdict(proof),
 })
 
 columns = {
@@ -227,7 +286,6 @@ print(json.dumps({
     "status": status,
     "rows": int(r["rows"]),
     "symbols": int(r["symbols"]),
-    "stream_symbols": stream_symbols,
     "minutes": int(r["minutes"]),
     "first_minute": r["first_minute"],
     "last_minute": r["last_minute"],
@@ -235,11 +293,11 @@ print(json.dumps({
     "negative_volume_rows": int(r["negative_volume_rows"]),
     "checkpoint_status": status_counts,
     "checkpoint_total": checkpoint_total,
-    "expected_universe": expected_universe,
+    "repair_symbols": TARGETS,
+    "canonical_completeness": asdict(proof),
     "reasons": reasons,
 }, ensure_ascii=False))
 
-source.close()
 hist.close()
 raise SystemExit(0 if status == "REST_PASS" else 2)
 PY

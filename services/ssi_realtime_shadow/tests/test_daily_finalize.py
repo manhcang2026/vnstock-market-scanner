@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import json
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
@@ -72,11 +73,13 @@ def _make_paths(tmp_path: Path) -> DbPaths:
     return paths
 
 
-def _daily(symbol: str = "FPT", *, volume: int = 100) -> DailyBar:
+def _daily(
+    symbol: str = "FPT", *, volume: int = 100, exchange: str = "HOSE"
+) -> DailyBar:
     return DailyBar(
         symbol=symbol,
         trading_date=DAY,
-        exchange="HOSE",
+        exchange=exchange,
         open=100,
         high=105,
         low=99,
@@ -193,6 +196,34 @@ def _count(path: Path, table: str) -> int:
     value = int(connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
     connection.close()
     return value
+
+
+def _insert_daily_bar(path: Path, bar: DailyBar) -> None:
+    connection = sqlite3.connect(path)
+    connection.execute(
+        """
+        INSERT INTO daily_bars (
+            symbol, trading_date, exchange, open, high, low, close,
+            volume, value, source, quality_status, finalized_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            bar.symbol,
+            bar.trading_date,
+            bar.exchange,
+            bar.open,
+            bar.high,
+            bar.low,
+            bar.close,
+            bar.volume,
+            bar.value,
+            bar.source,
+            bar.quality_status,
+            NOW_TEXT,
+        ),
+    )
+    connection.commit()
+    connection.close()
 
 
 def _history_row(paths: DbPaths):
@@ -337,6 +368,14 @@ def test_healthy_stream_replaces_rest_blocked_and_finalizes_canonically(
     ).proven
     history.close()
     market.close()
+    completeness = daily_finalize_module.canonical_day_completeness(
+        source_path=paths.source,
+        history_path=paths.history,
+        market_path=paths.market,
+        trading_date=DAY,
+    )
+    assert completeness.complete
+    assert completeness.complete_symbols == ("FPT",)
 
 
 def test_insufficient_stream_with_rest_blocked_still_fails(tmp_path: Path) -> None:
@@ -365,6 +404,17 @@ def test_insufficient_stream_with_rest_blocked_still_fails(tmp_path: Path) -> No
     assert "STREAM_MINUTES<200" in result.symbols[0].reasons
     assert _count(paths.history, "minute_bars") == 0
     assert _count(paths.market, "daily_bars") == 0
+    connection = sqlite3.connect(paths.history)
+    row = connection.execute(
+        "SELECT status, details_json FROM daily_finalize_runs WHERE trading_date=?",
+        (DAY,),
+    ).fetchone()
+    connection.close()
+    plan = daily_finalize_module.repair_plan_from_details(
+        json.loads(row[1]), status=row[0]
+    )
+    assert not plan.bounded
+    assert plan.reason == "GLOBAL_STREAM_COVERAGE_FAILURE"
 
 
 def test_stream_coverage_accepts_production_shape_and_exact_boundaries() -> None:
@@ -383,17 +433,111 @@ def test_stream_coverage_accepts_production_shape_and_exact_boundaries() -> None
     ) == ()
 
 
-def test_wrapper_keeps_rest_pass_idempotency_and_rest_as_fallback() -> None:
+def test_wrapper_is_stream_first_and_rest_is_strictly_targeted() -> None:
     wrapper = (
         Path(__file__).resolve().parents[1]
         / "ops"
         / "systemd"
         / "ccc-ssi-daily-finalize-wrapper.sh"
     ).read_text(encoding="utf-8")
-    assert '"$PREVIOUS_STATUS" == "REST_PASS"' in wrapper
-    assert wrapper.index("--stream-primary") < wrapper.index("app.historical_bootstrap")
+    stream_position = wrapper.index("--stream-primary")
+    bootstrap_position = wrapper.index("app.historical_bootstrap")
+    assert stream_position < wrapper.index("exit 0", stream_position) < bootstrap_position
+    assert '--symbols "$REPAIR_SYMBOLS"' in wrapper
+    assert "No bounded REST repair set; failing closed" in wrapper
+    assert wrapper.count("canonical_day_completeness") >= 2
     assert "--market \"$MARKET_DB\"" in wrapper
     assert "--write" in wrapper
+
+
+def test_partial_stream_derives_only_non_trusted_repair_symbols(tmp_path: Path) -> None:
+    paths = _make_paths(tmp_path)
+    _insert_minute(paths.source, symbol="FPT")
+    _insert_minute(paths.source, symbol="HPG", quality="VOLUME_REGRESSION")
+    result = _run(paths, bars=(_daily("FPT"), _daily("HPG")))
+    assert result.status == "PARTIAL"
+    connection = sqlite3.connect(paths.history)
+    status, details_json = connection.execute(
+        "SELECT status, details_json FROM daily_finalize_runs WHERE trading_date=?",
+        (DAY,),
+    ).fetchone()
+    connection.close()
+    plan = daily_finalize_module.repair_plan_from_details(
+        json.loads(details_json), status=status
+    )
+    assert plan.bounded
+    assert plan.symbols == ("HPG",)
+
+
+def test_large_partial_repair_set_fails_closed() -> None:
+    details = [
+        {"symbol": f"S{index:03d}", "status": "BLOCKED", "reasons": ["GAP"]}
+        for index in range(daily_finalize_module.MAX_TARGETED_REPAIR_SYMBOLS + 1)
+    ]
+    plan = daily_finalize_module.repair_plan_from_details(details, status="PARTIAL")
+    assert not plan.bounded
+    assert plan.symbols == ()
+    assert plan.reason.startswith("REPAIR_SET_TOO_LARGE:")
+
+
+def test_rest_minute_repair_without_daily_bar_is_not_canonically_complete(
+    tmp_path: Path,
+) -> None:
+    paths = _make_paths(tmp_path)
+    _insert_minute(paths.source, exchange="UPCOM", minute="14:59")
+    _insert_minute(
+        paths.history, source=SSI_REST, exchange="UPCOM", minute="14:59"
+    )
+    proof = daily_finalize_module.canonical_day_completeness(
+        source_path=paths.source,
+        history_path=paths.history,
+        market_path=paths.market,
+        trading_date=DAY,
+    )
+    assert not proof.complete
+    assert proof.missing_daily_bars == ("FPT",)
+    assert daily_finalize_module.rest_repair_status(
+        prior_status="PARTIAL",
+        checkpoints_complete=True,
+        canonical_complete=proof.complete,
+    ) == "PARTIAL"
+
+
+def test_rest_pass_completeness_requires_and_accepts_canonical_outputs(
+    tmp_path: Path,
+) -> None:
+    paths = _make_paths(tmp_path)
+    _insert_minute(paths.source, exchange="UPCOM", minute="14:59")
+    _insert_minute(
+        paths.history, source=SSI_REST, exchange="UPCOM", minute="14:59"
+    )
+    incomplete = daily_finalize_module.canonical_day_completeness(
+        source_path=paths.source,
+        history_path=paths.history,
+        market_path=paths.market,
+        trading_date=DAY,
+    )
+    assert not incomplete.complete
+    assert daily_finalize_module.rest_repair_status(
+        prior_status="REST_BLOCKED",
+        checkpoints_complete=True,
+        canonical_complete=incomplete.complete,
+    ) == "REST_BLOCKED"
+
+    _insert_daily_bar(paths.market, _daily(exchange="UPCOM"))
+    complete = daily_finalize_module.canonical_day_completeness(
+        source_path=paths.source,
+        history_path=paths.history,
+        market_path=paths.market,
+        trading_date=DAY,
+    )
+    assert complete.complete
+    assert complete.complete_symbols == ("FPT",)
+    assert daily_finalize_module.rest_repair_status(
+        prior_status="REST_BLOCKED",
+        checkpoints_complete=True,
+        canonical_complete=complete.complete,
+    ) == "REST_PASS"
 
 
 def test_finalized_minute_source_remains_ssi_stream(tmp_path: Path) -> None:
@@ -460,15 +604,54 @@ def test_unresolved_gap_blocks(tmp_path: Path) -> None:
     assert _count(paths.history, "minute_bars") == 0
 
 
-def test_raw_event_anomaly_can_settle_trusted(tmp_path: Path) -> None:
+def test_volume_regression_cannot_self_validate_as_trusted(tmp_path: Path) -> None:
     paths = _make_paths(tmp_path)
-    _insert_minute(paths.source, quality="VOLUME_REGRESSION", partial=1)
+    _insert_minute(paths.source, quality="VOLUME_REGRESSION")
     result = _run(paths)
-    assert result.status == "PASS"
+    assert result.status == "BLOCKED"
     assert result.event_anomaly_rows == 1
     assert "VOLUME_REGRESSION=1" in result.symbols[0].event_anomalies
-    assert "IS_PARTIAL=1" in result.symbols[0].event_anomalies
-    assert _history_row(paths) == (SSI_STREAM, "TRUSTED", 0, 0, 100)
+    assert "UNRESOLVED_EVENT_ANOMALY" in result.symbols[0].reasons
+    assert _count(paths.history, "minute_bars") == 0
+    assert _count(paths.market, "daily_bars") == 0
+
+
+def test_partial_stream_row_cannot_self_validate_as_trusted(tmp_path: Path) -> None:
+    paths = _make_paths(tmp_path)
+    _insert_minute(paths.source, quality="PARTIAL", partial=1)
+    result = _run(paths)
+    assert result.status == "BLOCKED"
+    assert "PARTIAL_STREAM_ROW" in result.symbols[0].reasons
+    assert "UNRESOLVED_EVENT_ANOMALY" in result.symbols[0].reasons
+    assert _count(paths.history, "minute_bars") == 0
+    assert _count(paths.market, "daily_bars") == 0
+
+
+def test_idempotent_stream_pass_rechecks_raw_trust_invariant(tmp_path: Path) -> None:
+    paths = _make_paths(tmp_path)
+    _insert_minute(paths.source)
+    assert _run(paths).status == "PASS"
+
+    connection = sqlite3.connect(paths.source)
+    connection.execute(
+        """
+        UPDATE minute_bars
+        SET quality_status='VOLUME_REGRESSION', is_partial=1
+        WHERE symbol='FPT' AND trading_date=?
+        """,
+        (DAY,),
+    )
+    connection.commit()
+    connection.close()
+
+    proof = daily_finalize_module.canonical_day_completeness(
+        source_path=paths.source,
+        history_path=paths.history,
+        market_path=paths.market,
+        trading_date=DAY,
+    )
+    assert not proof.complete
+    assert proof.unsafe_stream_source == ("FPT",)
 
 
 def test_unresolved_event_anomaly_does_not_settle(tmp_path: Path) -> None:
