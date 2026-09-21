@@ -298,8 +298,9 @@ def test_timer_advances_zero_volume_minute_without_fabricating_trade(
 
 
 def test_harness_uses_one_volume_engine_call_per_normalized_event(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr("app.collector._now_vn", lambda: _at("09:00"))
     baseline = tmp_path / "baseline.db"
     _baseline(baseline)
     store = SQLiteStore(tmp_path / "hot.db")

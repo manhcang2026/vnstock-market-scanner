@@ -106,6 +106,10 @@ def _as_local(moment: datetime) -> datetime:
     return moment.astimezone(VN_TZ)
 
 
+def _now_vn() -> datetime:
+    return datetime.now(VN_TZ)
+
+
 def _extract_payloads(message: Any) -> Iterable[dict[str, Any]]:
     if isinstance(message, bytes):
         message = message.decode("utf-8", errors="replace")
@@ -152,6 +156,7 @@ class CollectorStats:
     ignored_outside_universe: int = 0
     ignored_without_price: int = 0
     ignored_malformed_trading_date: int = 0
+    ignored_non_current_trading_date: int = 0
     ignored_non_equity_market: int = 0
     ignored_unknown_market: int = 0
     volume_shadow_events: int = 0
@@ -174,7 +179,7 @@ class QuoteCollector:
     ) -> None:
         self.universe = universe
         self.store = store
-        self.started_at = _as_local(started_at or datetime.now(VN_TZ))
+        self.started_at = _as_local(started_at or _now_vn())
         self.stats = CollectorStats()
         self._prev_total: dict[tuple[str, str], int] = {}
         self._initialized_keys: set[tuple[str, str]] = set()
@@ -196,7 +201,7 @@ class QuoteCollector:
 
     def on_message(self, message: Any) -> None:
         self.stats.received_messages += 1
-        now = datetime.now(VN_TZ)
+        now = _now_vn()
         payloads = list(_extract_payloads(message))
         if not payloads:
             return
@@ -231,6 +236,15 @@ class QuoteCollector:
                     "Ignoring SSI payload for %s: malformed TradingDate=%r",
                     symbol,
                     raw_trading_date,
+                )
+                continue
+            if trading_date != now.date().isoformat():
+                self.stats.ignored_non_current_trading_date += 1
+                LOG.debug(
+                    "Ignoring SSI payload for %s: non-current TradingDate=%s current=%s",
+                    symbol,
+                    trading_date,
+                    now.date().isoformat(),
                 )
                 continue
 
@@ -457,6 +471,9 @@ class QuoteCollector:
             "ignored_outside_universe": self.stats.ignored_outside_universe,
             "ignored_without_price": self.stats.ignored_without_price,
             "ignored_malformed_trading_date": self.stats.ignored_malformed_trading_date,
+            "ignored_non_current_trading_date": (
+                self.stats.ignored_non_current_trading_date
+            ),
             "ignored_non_equity_market": self.stats.ignored_non_equity_market,
             "ignored_unknown_market": self.stats.ignored_unknown_market,
             "volume_shadow_events": self.stats.volume_shadow_events,

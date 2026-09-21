@@ -29,6 +29,11 @@ def started_at(hour: int, minute: int, second: int = 0) -> datetime:
     return datetime(2026, 9, 14, hour, minute, second, tzinfo=VN_TZ)
 
 
+@pytest.fixture(autouse=True)
+def _fixed_collector_now(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("app.collector._now_vn", lambda: started_at(9, 0))
+
+
 def official_x_payload(**overrides: object) -> dict[str, object]:
     payload: dict[str, object] = {
         "RType": "X",
@@ -136,16 +141,16 @@ def test_minute_volume_uses_cumulative_delta(tmp_path: Path) -> None:
     collector = QuoteCollector({"HPG"}, store)
 
     collector.on_message(
-        {"Symbol": "HPG", "TradingDate": "11/09/2026", "Time": "09:00:10", "LastPrice": 27000, "TotalVol": 1000}
+        {"Symbol": "HPG", "TradingDate": "14/09/2026", "Time": "09:00:10", "LastPrice": 27000, "TotalVol": 1000}
     )
     collector.on_message(
-        {"Symbol": "HPG", "TradingDate": "11/09/2026", "Time": "09:00:20", "LastPrice": 27100, "TotalVol": 1200}
+        {"Symbol": "HPG", "TradingDate": "14/09/2026", "Time": "09:00:20", "LastPrice": 27100, "TotalVol": 1200}
     )
     collector.on_message(
-        {"Symbol": "HPG", "TradingDate": "11/09/2026", "Time": "09:00:40", "LastPrice": 26900, "TotalVol": 1250}
+        {"Symbol": "HPG", "TradingDate": "14/09/2026", "Time": "09:00:40", "LastPrice": 26900, "TotalVol": 1250}
     )
     collector.on_message(
-        {"Symbol": "HPG", "TradingDate": "11/09/2026", "Time": "09:01:05", "LastPrice": 27200, "TotalVol": 1500}
+        {"Symbol": "HPG", "TradingDate": "14/09/2026", "Time": "09:01:05", "LastPrice": 27200, "TotalVol": 1500}
     )
     store.commit()
 
@@ -210,14 +215,85 @@ def test_malformed_nonempty_trading_date_is_rejected(
 
     assert store._conn.execute("SELECT COUNT(*) FROM minute_bars").fetchone()[0] == 0
     assert collector.stats.ignored_malformed_trading_date == 1
+    assert collector.stats.ignored_non_current_trading_date == 0
     assert "malformed TradingDate" in caplog.text
+    store.close()
+
+
+@pytest.mark.parametrize(
+    ("current", "provider_date"),
+    (
+        (datetime(2026, 9, 15, 9, 0, tzinfo=VN_TZ), "14/09/2026"),
+        (datetime(2026, 9, 14, 9, 0, tzinfo=VN_TZ), "15/09/2026"),
+    ),
+    ids=("previous-date", "future-date"),
+)
+def test_non_current_trading_date_is_ignored_without_live_side_effects(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    current: datetime,
+    provider_date: str,
+) -> None:
+    monkeypatch.setattr("app.collector._now_vn", lambda: current)
+    store = SQLiteStore(tmp_path / "test.db", commit_every_events=1)
+    received: list[VolumeEvent] = []
+    collector = QuoteCollector(
+        {"HPG"},
+        store,
+        started_at=started_at(8, 30),
+        volume_event_handler=received.append,
+    )
+    previous_last_event_at = started_at(8, 59)
+    collector.last_event_at = previous_last_event_at
+
+    collector.on_message(
+        market_event(TradingDate=provider_date, TradingSession="ATO")
+    )
+
+    assert store._conn.execute("SELECT COUNT(*) FROM minute_bars").fetchone()[0] == 0
+    assert store._conn.execute("SELECT COUNT(*) FROM latest_quotes").fetchone()[0] == 0
+    assert store._conn.execute(
+        "SELECT COUNT(*) FROM auction_session_buckets"
+    ).fetchone()[0] == 0
+    assert received == []
+    assert collector.last_event_at == previous_last_event_at
+    assert collector.stats.accepted_events == 0
+    assert collector.stats.volume_shadow_events == 0
+    assert collector.stats.auction_projection_events == 0
+    assert collector.stats.ignored_non_current_trading_date == 1
+    assert collector.snapshot_stats()["ignored_non_current_trading_date"] == 1
+    store.close()
+
+
+def test_current_trading_date_retains_live_collector_behavior(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    current = datetime(2026, 9, 15, 9, 0, tzinfo=VN_TZ)
+    monkeypatch.setattr("app.collector._now_vn", lambda: current)
+    store = SQLiteStore(tmp_path / "test.db", commit_every_events=1)
+    received: list[VolumeEvent] = []
+    collector = QuoteCollector(
+        {"HPG"},
+        store,
+        started_at=datetime(2026, 9, 15, 8, 30, tzinfo=VN_TZ),
+        volume_event_handler=received.append,
+    )
+
+    collector.on_message(market_event(TradingDate="15/09/2026"))
+
+    assert store._conn.execute("SELECT COUNT(*) FROM minute_bars").fetchone()[0] == 1
+    assert store._conn.execute("SELECT COUNT(*) FROM latest_quotes").fetchone()[0] == 1
+    assert len(received) == 1
+    assert collector.last_event_at == current
+    assert collector.stats.accepted_events == 1
+    assert collector.stats.ignored_non_current_trading_date == 0
     store.close()
 
 
 def test_missing_trading_date_uses_current_local_date(tmp_path: Path) -> None:
     store = SQLiteStore(tmp_path / "test.db", commit_every_events=1)
     collector = QuoteCollector({"HPG"}, store)
-    expected_date = datetime.now(VN_TZ).date().isoformat()
+    expected_date = started_at(9, 0).date().isoformat()
     event = market_event()
     event.pop("TradingDate")
     collector.on_message(event)
