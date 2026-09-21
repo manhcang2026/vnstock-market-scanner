@@ -20,7 +20,7 @@ from app.auction_history import (
     read_ato_exact10,
     store_auction_history_row,
 )
-from app.daily_finalize import finalize_day, yearly_history_path
+from app.daily_finalize import finalize_day, finalize_stream_day, yearly_history_path
 from app.daily_history import DailyBar
 from app.market_storage_schema import ensure_market_storage_schema
 from app.storage import SCHEMA
@@ -98,6 +98,7 @@ def _insert_minute(
     source: str = SSI_STREAM,
     close: float = 103,
     trading_date: str = DAY,
+    exchange: str = "HOSE",
 ) -> None:
     connection = sqlite3.connect(path)
     connection.execute(
@@ -107,7 +108,7 @@ def _insert_minute(
             last_total_volume, event_count, is_partial, exchange,
             quality_status, has_gap, gap_from, gap_to, data_source,
             provider_time, updated_at
-        ) VALUES (?, ?, ?, 100, 105, 99, ?, ?, ?, 2, ?, 'HOSE', ?, ?,
+        ) VALUES (?, ?, ?, 100, 105, 99, ?, ?, ?, 2, ?, ?, ?, ?,
                   NULL, NULL, ?, ?, ?)
         """,
         (
@@ -118,6 +119,7 @@ def _insert_minute(
             volume,
             volume,
             partial,
+            exchange,
             quality,
             gap,
             source,
@@ -272,6 +274,126 @@ def test_completed_trusted_session_finalizes(tmp_path: Path) -> None:
     assert result.status == "PASS"
     assert result.symbols_trusted == 1
     assert result.minute_rows_inserted == 1
+
+
+def test_healthy_stream_replaces_rest_blocked_and_finalizes_canonically(
+    tmp_path: Path,
+) -> None:
+    paths = _make_paths(tmp_path)
+    _run(paths, bars=())
+    connection = sqlite3.connect(paths.history)
+    connection.execute(
+        "UPDATE daily_finalize_runs SET status='REST_BLOCKED' WHERE trading_date=?",
+        (DAY,),
+    )
+    connection.commit()
+    connection.close()
+
+    _insert_minute(
+        paths.source, minute="09:00", volume=40, close=101, exchange="UPCOM"
+    )
+    _insert_minute(
+        paths.source, minute="14:59", volume=60, close=104, exchange="UPCOM"
+    )
+    result = finalize_stream_day(
+        source_path=paths.source,
+        history_path=paths.history,
+        market_path=paths.market,
+        trading_date=DAY,
+        dry_run=False,
+        now=NOW,
+        minimum_symbols=1,
+        minimum_minutes=2,
+    )
+
+    assert result.status == "PASS"
+    assert (result.minute_rows_inserted, result.daily_rows_inserted) == (2, 1)
+    market = sqlite3.connect(paths.market)
+    market.row_factory = sqlite3.Row
+    daily = market.execute(
+        """
+        SELECT open, high, low, close, volume, value, source, quality_status
+        FROM daily_bars WHERE symbol='FPT' AND trading_date=?
+        """,
+        (DAY,),
+    ).fetchone()
+    assert tuple(daily) == (
+        100.0,
+        105.0,
+        99.0,
+        104.0,
+        100,
+        None,
+        SSI_STREAM,
+        "TRUSTED",
+    )
+    history = sqlite3.connect(paths.history)
+    history.row_factory = sqlite3.Row
+    assert history.execute(
+        "SELECT status FROM daily_finalize_runs WHERE trading_date=?", (DAY,)
+    ).fetchone()[0] == "PASS"
+    assert prove_volume_session(
+        history, market, symbol="FPT", trading_date=DAY
+    ).proven
+    history.close()
+    market.close()
+
+
+def test_insufficient_stream_with_rest_blocked_still_fails(tmp_path: Path) -> None:
+    paths = _make_paths(tmp_path)
+    _run(paths, bars=())
+    connection = sqlite3.connect(paths.history)
+    connection.execute(
+        "UPDATE daily_finalize_runs SET status='REST_BLOCKED' WHERE trading_date=?",
+        (DAY,),
+    )
+    connection.commit()
+    connection.close()
+    _insert_minute(paths.source, minute="14:59", exchange="UPCOM")
+
+    result = finalize_stream_day(
+        source_path=paths.source,
+        history_path=paths.history,
+        market_path=paths.market,
+        trading_date=DAY,
+        dry_run=False,
+        now=NOW,
+    )
+
+    assert result.status == "BLOCKED"
+    assert "STREAM_SYMBOLS<500" in result.symbols[0].reasons
+    assert "STREAM_MINUTES<200" in result.symbols[0].reasons
+    assert _count(paths.history, "minute_bars") == 0
+    assert _count(paths.market, "daily_bars") == 0
+
+
+def test_stream_coverage_accepts_production_shape_and_exact_boundaries() -> None:
+    minutes = [f"{9 + offset // 60:02d}:{offset % 60:02d}" for offset in range(268)]
+    minutes.append("14:59")
+    production_rows = {
+        f"S{index:03d}": [{"minute": minutes[index % len(minutes)]}]
+        for index in range(635)
+    }
+    production_rows["S000"] = [{"minute": minute} for minute in minutes]
+    assert daily_finalize_module._stream_coverage_reasons(production_rows) == ()
+
+    boundary_rows = {"FPT": [{"minute": "09:15"}, {"minute": "14:45"}]}
+    assert daily_finalize_module._stream_coverage_reasons(
+        boundary_rows, minimum_symbols=1, minimum_minutes=2
+    ) == ()
+
+
+def test_wrapper_keeps_rest_pass_idempotency_and_rest_as_fallback() -> None:
+    wrapper = (
+        Path(__file__).resolve().parents[1]
+        / "ops"
+        / "systemd"
+        / "ccc-ssi-daily-finalize-wrapper.sh"
+    ).read_text(encoding="utf-8")
+    assert '"$PREVIOUS_STATUS" == "REST_PASS"' in wrapper
+    assert wrapper.index("--stream-primary") < wrapper.index("app.historical_bootstrap")
+    assert "--market \"$MARKET_DB\"" in wrapper
+    assert "--write" in wrapper
 
 
 def test_finalized_minute_source_remains_ssi_stream(tmp_path: Path) -> None:

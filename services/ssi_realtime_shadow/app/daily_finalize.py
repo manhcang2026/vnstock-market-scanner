@@ -39,6 +39,11 @@ from .volume_baseline import volume_market_grid
 
 
 SAFE_AFTER = time(15, 20)
+STREAM_DAILY_SOURCE = SSI_STREAM
+MIN_STREAM_SYMBOLS = 500
+MIN_STREAM_MINUTES = 200
+MAX_STREAM_FIRST_MINUTE = "09:15"
+MIN_STREAM_LAST_MINUTE = "14:45"
 SETTLEABLE_EVENT_QUALITIES = frozenset(
     {"TRUSTED", "PARTIAL", "VOLUME_REGRESSION"}
 )
@@ -249,7 +254,10 @@ def ensure_finalize_schema(
 
 
 def _canonical_daily_bars(
-    bars: Iterable[DailyBar], trading_date: str
+    bars: Iterable[DailyBar],
+    trading_date: str,
+    *,
+    allowed_sources: frozenset[str] = frozenset({DAILY_SOURCE}),
 ) -> dict[str, DailyBar]:
     canonical: dict[str, DailyBar] = {}
     for bar in bars:
@@ -259,7 +267,7 @@ def _canonical_daily_bars(
         if (
             symbol != bar.symbol
             or bar.trading_date != trading_date
-            or bar.source != DAILY_SOURCE
+            or bar.source not in allowed_sources
             or bar.quality_status != TRUSTED_QUALITY
             or not all(math.isfinite(float(value)) and float(value) > 0 for value in values)
             or float(bar.high) < float(bar.low)
@@ -284,12 +292,76 @@ def _canonical_daily_bars(
             close=float(bar.close),
             volume=int(bar.volume),
             value=None if bar.value is None else float(bar.value),
+            source=bar.source,
+            quality_status=bar.quality_status,
         )
         existing = canonical.get(symbol)
         if existing is not None and existing != normalized:
             raise ValueError(f"Conflicting DailyOhlc input for {symbol}/{trading_date}")
         canonical[symbol] = normalized
     return canonical
+
+
+def _stream_coverage_reasons(
+    rows_by_symbol: Mapping[str, list[sqlite3.Row]],
+    *,
+    minimum_symbols: int = MIN_STREAM_SYMBOLS,
+    minimum_minutes: int = MIN_STREAM_MINUTES,
+) -> tuple[str, ...]:
+    minutes = sorted(
+        {
+            str(row["minute"] or "")
+            for rows in rows_by_symbol.values()
+            for row in rows
+            if row["minute"]
+        }
+    )
+    reasons: list[str] = []
+    symbol_count = sum(bool(symbol) for symbol in rows_by_symbol)
+    if symbol_count < minimum_symbols:
+        reasons.append(f"STREAM_SYMBOLS<{minimum_symbols}")
+    if len(minutes) < minimum_minutes:
+        reasons.append(f"STREAM_MINUTES<{minimum_minutes}")
+    if not minutes or minutes[0] > MAX_STREAM_FIRST_MINUTE:
+        reasons.append(f"STREAM_FIRST_MINUTE>{MAX_STREAM_FIRST_MINUTE}")
+    if not minutes or minutes[-1] < MIN_STREAM_LAST_MINUTE:
+        reasons.append(f"STREAM_LAST_MINUTE<{MIN_STREAM_LAST_MINUTE}")
+    return tuple(reasons)
+
+
+def _stream_daily_bars(
+    rows_by_symbol: Mapping[str, list[sqlite3.Row]], trading_date: str
+) -> tuple[DailyBar, ...]:
+    """Aggregate stream rows without claiming that REST DailyOhlc supplied them."""
+    bars: list[DailyBar] = []
+    for symbol, raw_rows in sorted(rows_by_symbol.items()):
+        if not symbol:
+            continue
+        rows = sorted(raw_rows, key=lambda row: str(row["minute"] or ""))
+        try:
+            exchanges = {
+                normalize_exchange(str(row["exchange"] or "")) for row in rows
+            }
+            if len(exchanges) != 1 or not rows or not all(_valid_ohlcv(row) for row in rows):
+                continue
+            bars.append(
+                DailyBar(
+                    symbol=symbol,
+                    trading_date=trading_date,
+                    exchange=next(iter(exchanges)),
+                    open=float(rows[0]["open"]),
+                    high=max(float(row["high"]) for row in rows),
+                    low=min(float(row["low"]) for row in rows),
+                    close=float(rows[-1]["close"]),
+                    volume=sum(int(row["volume"]) for row in rows),
+                    value=None,
+                    source=STREAM_DAILY_SOURCE,
+                    quality_status=TRUSTED_QUALITY,
+                )
+            )
+        except (TypeError, ValueError):
+            continue
+    return tuple(bars)
 
 
 def _load_source_rows(
@@ -854,6 +926,8 @@ def finalize_day(
     daily_bars: Iterable[DailyBar],
     dry_run: bool = True,
     now: datetime | None = None,
+    _allowed_daily_sources: frozenset[str] = frozenset({DAILY_SOURCE}),
+    _day_block_reasons: tuple[str, ...] = (),
 ) -> FinalizeResult:
     """Settle one completed day, using one atomic transaction per symbol."""
     target = date.fromisoformat(trading_date)
@@ -868,7 +942,9 @@ def finalize_day(
 
     moment = now or datetime.now(VN_TZ)
     started_at = canonical_timestamp(moment)
-    canonical_daily = _canonical_daily_bars(daily_bars, trading_date)
+    canonical_daily = _canonical_daily_bars(
+        daily_bars, trading_date, allowed_sources=_allowed_daily_sources
+    )
     source = _connect_existing(resolved[0], read_only=True)
     connection = _connect_existing(resolved[2])
     try:
@@ -892,6 +968,19 @@ def finalize_day(
         universe = sorted(set(rows_by_symbol) | set(canonical_daily))
         symbol_results: list[SymbolFinalizeResult] = []
         for symbol in universe:
+            if _day_block_reasons:
+                symbol_results.append(
+                    _empty_symbol_result(
+                        symbol,
+                        "BLOCKED",
+                        _day_block_reasons,
+                        rows_by_symbol.get(symbol, []),
+                        canonical_daily.get(symbol).volume
+                        if symbol in canonical_daily
+                        else None,
+                    )
+                )
+                continue
             try:
                 symbol_results.append(
                     _settle_symbol(
@@ -934,6 +1023,40 @@ def finalize_day(
         connection.close()
 
 
+def finalize_stream_day(
+    *,
+    source_path: Path,
+    history_path: Path,
+    market_path: Path,
+    trading_date: str,
+    dry_run: bool = True,
+    now: datetime | None = None,
+    minimum_symbols: int = MIN_STREAM_SYMBOLS,
+    minimum_minutes: int = MIN_STREAM_MINUTES,
+) -> FinalizeResult:
+    """Finalize a sufficiently complete current day directly from SSI stream data."""
+    source = _connect_existing(source_path, read_only=True)
+    try:
+        rows_by_symbol = _load_source_rows(source, trading_date)
+    finally:
+        source.close()
+    return finalize_day(
+        source_path=source_path,
+        history_path=history_path,
+        market_path=market_path,
+        trading_date=trading_date,
+        daily_bars=_stream_daily_bars(rows_by_symbol, trading_date),
+        dry_run=dry_run,
+        now=now,
+        _allowed_daily_sources=frozenset({STREAM_DAILY_SOURCE}),
+        _day_block_reasons=_stream_coverage_reasons(
+            rows_by_symbol,
+            minimum_symbols=minimum_symbols,
+            minimum_minutes=minimum_minutes,
+        ),
+    )
+
+
 def _parse_date(value: str) -> date:
     try:
         return date.fromisoformat(value)
@@ -963,7 +1086,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--history", type=Path, required=True)
     parser.add_argument("--market", type=Path, required=True)
-    parser.add_argument("--daily-json", type=Path, required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--daily-json", type=Path)
+    source.add_argument("--stream-primary", action="store_true")
     parser.add_argument("--date", type=_parse_date, required=True)
     parser.add_argument("--write", action="store_true")
     return parser
@@ -977,17 +1102,28 @@ def main(argv: list[str] | None = None) -> int:
             f"Refusing to finalize {args.date.isoformat()} before "
             f"{SAFE_AFTER.strftime('%H:%M')} VN"
         )
-    result = finalize_day(
-        source_path=args.source,
-        history_path=args.history,
-        market_path=args.market,
-        trading_date=args.date.isoformat(),
-        daily_bars=_load_daily_json(args.daily_json, args.date.isoformat()),
-        dry_run=not args.write,
-        now=now,
-    )
+    kwargs = {
+        "source_path": args.source,
+        "history_path": args.history,
+        "market_path": args.market,
+        "trading_date": args.date.isoformat(),
+        "dry_run": not args.write,
+        "now": now,
+    }
+    if args.stream_primary:
+        result = finalize_stream_day(**kwargs)
+    else:
+        result = finalize_day(
+            **kwargs,
+            daily_bars=_load_daily_json(args.daily_json, args.date.isoformat()),
+        )
     print(json.dumps(asdict(result), ensure_ascii=False, sort_keys=True))
-    return 0 if result.status in {"PASS", "DRY_RUN_PASS", "PARTIAL"} else 2
+    successful = (
+        {"PASS", "DRY_RUN_PASS"}
+        if args.stream_primary
+        else {"PASS", "DRY_RUN_PASS", "PARTIAL"}
+    )
+    return 0 if result.status in successful else 2
 
 
 if __name__ == "__main__":

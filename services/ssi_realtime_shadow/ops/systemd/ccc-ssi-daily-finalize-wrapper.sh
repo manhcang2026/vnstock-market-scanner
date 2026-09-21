@@ -4,6 +4,7 @@ set -uo pipefail
 CONTAINER="ccc-ssi-shadow"
 SOURCE_DB="/app/data/ssi_shadow.db"
 HISTORY_DB="/app/data/ssi_history_2026.db"
+MARKET_DB="/app/data/ccc_market_v2.db"
 DAY="${1:-$(TZ=Asia/Ho_Chi_Minh date +%F)}"
 
 log() {
@@ -32,17 +33,20 @@ if [[ "$PREVIOUS_STATUS" == "PASS" || "$PREVIOUS_STATUS" == "REST_PASS" ]]; then
   exit 0
 fi
 
-log "Strict realtime finalize: day=$DAY"
+log "Canonical stream-first finalize: day=$DAY"
 if docker exec "$CONTAINER" \
   python -m app.daily_finalize \
     --source "$SOURCE_DB" \
     --history "$HISTORY_DB" \
-    --date "$DAY"; then
-  log "Realtime finalize PASS"
+    --market "$MARKET_DB" \
+    --date "$DAY" \
+    --stream-primary \
+    --write; then
+  log "Canonical stream finalize PASS"
   exit 0
 fi
 
-log "Realtime QA blocked. Falling back to SSI REST 1-minute rebuild."
+log "Stream finalize blocked. Running SSI REST repair/backfill."
 CLI_DATE="$(date -d "$DAY" '+%d/%m/%Y')"
 
 set +e
@@ -168,44 +172,53 @@ if expected_universe is not None and checkpoint_total != expected_universe:
 status = "REST_PASS" if not reasons else "REST_BLOCKED"
 now = datetime.now(VN).isoformat()
 
+existing = hist.execute(
+    "SELECT details_json FROM daily_finalize_runs WHERE trading_date=?", (DAY,)
+).fetchone()
+try:
+    details = json.loads(str(existing["details_json"])) if existing else []
+except (TypeError, ValueError):
+    details = []
+if not isinstance(details, list):
+    details = []
+details = [
+    item for item in details
+    if not (isinstance(item, dict) and item.get("kind") == "REST_REPAIR")
+]
+details.append({
+    "kind": "REST_REPAIR",
+    "status": status,
+    "reasons": reasons,
+    "checkpoint_status": status_counts,
+    "checkpoint_total": checkpoint_total,
+    "expected_universe": expected_universe,
+    "invalid_ohlc_policy": "preserve_raw_filter_in_chart_api",
+})
+
+columns = {
+    str(row["name"])
+    for row in hist.execute("PRAGMA table_info(daily_finalize_runs)")
+}
+updates = {
+    "status": status,
+    "details_json": json.dumps(details, sort_keys=True),
+    "finalized_at": now,
+}
+legacy_updates = {
+    "inserted_rows": int(r["rows"]),
+    "history_rows": int(r["rows"]),
+    "symbols": int(r["symbols"]),
+    "minutes": int(r["minutes"]),
+    "partial_rows": int(r["partial_rows"]),
+    "gap_rows": int(r["gap_rows"]),
+    "invalid_ohlc_rows": int(r["invalid_ohlc_rows"]),
+    "quality_json": json.dumps(quality_counts, sort_keys=True),
+}
+updates.update({key: value for key, value in legacy_updates.items() if key in columns})
+assignments = ", ".join(f"{key}=?" for key in updates)
 hist.execute(
-    """
-    UPDATE daily_finalize_runs
-    SET status=?,
-        inserted_rows=?,
-        history_rows=?,
-        symbols=?,
-        minutes=?,
-        partial_rows=?,
-        gap_rows=?,
-        invalid_ohlc_rows=?,
-        quality_json=?,
-        details_json=?,
-        finalized_at=?
-    WHERE trading_date=?
-    """,
-    (
-        status,
-        int(r["rows"]),
-        int(r["rows"]),
-        int(r["symbols"]),
-        int(r["minutes"]),
-        int(r["partial_rows"]),
-        int(r["gap_rows"]),
-        int(r["invalid_ohlc_rows"]),
-        json.dumps(quality_counts, sort_keys=True),
-        json.dumps(
-            {
-                "reasons": reasons,
-                "fallback": "SSI_REST",
-                "checkpoint_status": status_counts,
-                "invalid_ohlc_policy": "preserve_raw_filter_in_chart_api",
-            },
-            sort_keys=True,
-        ),
-        now,
-        DAY,
-    ),
+    f"UPDATE daily_finalize_runs SET {assignments} WHERE trading_date=?",
+    (*updates.values(), DAY),
 )
 hist.commit()
 

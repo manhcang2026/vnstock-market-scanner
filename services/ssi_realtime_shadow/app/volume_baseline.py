@@ -12,6 +12,7 @@ from .market_session import VN_TZ, SessionType, classify_market_session, normali
 
 COVERAGE_PROOF = "SSI_DAILY_VOLUME_RECONCILED_V1"
 TRUSTED_DAILY_SOURCE = "SSI_DAILY_OHLC"
+TRUSTED_DAILY_SOURCES = frozenset({TRUSTED_DAILY_SOURCE, "SSI_STREAM"})
 TRUSTED_INTRADAY_SOURCE = "SSI_REST"
 TRUSTED_REPLAY_SOURCES = frozenset({"SSI_REST", "SSI_STREAM"})
 TRUSTED_HISTORICAL_SOURCES = TRUSTED_REPLAY_SOURCES
@@ -303,9 +304,10 @@ def load_candidate_market_sessions(
         for row in daily.execute(
             """
             SELECT DISTINCT trading_date FROM daily_bars
-            WHERE source=? AND quality_status='TRUSTED' AND trading_date < ?
+            WHERE source IN ('SSI_DAILY_OHLC', 'SSI_STREAM')
+              AND quality_status='TRUSTED' AND trading_date < ?
             """,
-            (TRUSTED_DAILY_SOURCE, as_of_date),
+            (as_of_date,),
         )
     }
     observed_dates.update(
@@ -346,7 +348,11 @@ def _prove_volume_session(
         """,
         (symbol, trading_date),
     ).fetchone()
-    if daily_row is None or str(daily_row["source"]) != TRUSTED_DAILY_SOURCE or str(daily_row["quality_status"]).upper() != "TRUSTED":
+    if (
+        daily_row is None
+        or str(daily_row["source"]) not in TRUSTED_DAILY_SOURCES
+        or str(daily_row["quality_status"]).upper() != "TRUSTED"
+    ):
         return SessionProof(symbol, trading_date, None, None, 0, "DAILY_MISSING")
     try:
         exchange = normalize_exchange(str(daily_row["exchange"] or ""))
