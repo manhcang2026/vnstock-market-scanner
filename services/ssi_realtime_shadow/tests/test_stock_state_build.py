@@ -87,6 +87,7 @@ def _write_baseline(
     proof: str | None = None,
     as_of_date: str = TRADING_DATE,
     sessions_used: int = 10,
+    break_blocks: int = 0,
 ) -> None:
     connection = sqlite3.connect(path)
     connection.executescript(BASELINE_SCHEMA)
@@ -104,14 +105,15 @@ def _write_baseline(
         INSERT INTO volume_baseline_coverage (
             symbol, exchange, available_sessions, baseline_sessions_used,
             active_sessions_available, active_sessions_used,
-            first_history_date, last_history_date
+            first_history_date, last_history_date, break_blocks
         ) VALUES (
-            'VGI', 'UPCOM', 10, ?, 10, ?, '2026-09-04', '2026-09-17'
+            'VGI', 'UPCOM', 10, ?, 10, ?, '2026-09-04', '2026-09-17', ?
         )
         """,
-        (sessions_used, sessions_used),
+        (sessions_used, sessions_used, break_blocks),
     )
-    for index, point in enumerate(volume_market_grid("UPCOM"), start=1):
+    points = volume_market_grid("UPCOM") if sessions_used >= 8 and break_blocks <= 2 else ()
+    for index, point in enumerate(points, start=1):
         connection.execute(
             """
             INSERT INTO volume_baseline (
@@ -227,19 +229,23 @@ def test_offline_builder_integrates_exact_ma_price_volume_and_is_idempotent(
 
 
 @pytest.mark.parametrize(
-    ("proof", "as_of_date", "sessions_used", "expected_trusted"),
+    ("proof", "as_of_date", "sessions_used", "break_blocks", "expected_trusted"),
     [
-        (COVERAGE_PROOF, TRADING_DATE, 10, 1),
-        (COVERAGE_PROOF, TRADING_DATE, 9, 0),
-        (None, TRADING_DATE, 10, 0),
-        (COVERAGE_PROOF, "2026-09-17", 10, 0),
+        (COVERAGE_PROOF, TRADING_DATE, 10, 0, 1),
+        (COVERAGE_PROOF, TRADING_DATE, 9, 1, 1),
+        (COVERAGE_PROOF, TRADING_DATE, 8, 2, 1),
+        (COVERAGE_PROOF, TRADING_DATE, 7, 0, 0),
+        (COVERAGE_PROOF, TRADING_DATE, 8, 3, 0),
+        (None, TRADING_DATE, 10, 0, 0),
+        (COVERAGE_PROOF, "2026-09-17", 10, 0, 0),
     ],
 )
-def test_baseline_proof_metadata_and_exact_coverage_gate_state_trust(
+def test_baseline_proof_and_usable_coverage_gate_state_trust(
     tmp_path: Path,
     proof: str | None,
     as_of_date: str,
     sessions_used: int,
+    break_blocks: int,
     expected_trusted: int,
 ) -> None:
     realtime = tmp_path / "ssi_shadow.db"
@@ -251,6 +257,7 @@ def test_baseline_proof_metadata_and_exact_coverage_gate_state_trust(
         proof=proof,
         as_of_date=as_of_date,
         sessions_used=sessions_used,
+        break_blocks=break_blocks,
     )
     _write_daily_history(market)
 
@@ -265,6 +272,16 @@ def test_baseline_proof_metadata_and_exact_coverage_gate_state_trust(
     assert state[0] == expected_trusted
     assert summary["baseline_proven_symbol_count"] == expected_trusted
     assert summary["replay_day_audit"]["replay_day_completeness_proven"] is True
+    assert summary["baseline_10_10_count"] == int(sessions_used == 10)
+    assert summary["baseline_9_10_accepted_count"] == int(
+        sessions_used == 9 and break_blocks <= 2
+    )
+    assert summary["baseline_8_10_accepted_count"] == int(
+        sessions_used == 8 and break_blocks <= 2
+    )
+    assert summary["unusable_baseline_count"] == int(
+        sessions_used < 8 or break_blocks > 2
+    )
     if expected_trusted:
         assert state[1] == "TRUSTED"
     else:

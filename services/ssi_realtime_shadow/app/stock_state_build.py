@@ -539,8 +539,9 @@ def build_stock_state_current(
                     volume_engine.baseline.coverage_proof == COVERAGE_PROOF
                     and volume_engine.baseline.as_of_date == latest_date
                     and baseline_coverage is not None
-                    and baseline_coverage.baseline_sessions_used == 10
-                    and baseline_coverage.active_sessions_used == 10
+                    and baseline_coverage.usable
+                    and baseline_coverage.active_sessions_used
+                    >= baseline_coverage.baseline_sessions_used
                     and symbol in replay_proven_symbols
                     and volume is not None
                     and volume.metrics_trusted
@@ -590,13 +591,35 @@ def build_stock_state_current(
             target.rollback()
             raise
 
+        projected_coverage = [
+            volume_engine.baseline.coverage.get(row["symbol"])
+            for row in projections
+        ]
         baseline_full = sum(
-            row["baseline_sessions_used"] == 10 for row in projections
+            item is not None
+            and item.usable
+            and item.baseline_sessions_used == 10
+            for item in projected_coverage
         )
-        baseline_partial = sum(
-            0 < row["baseline_sessions_used"] < 10 for row in projections
+        baseline_accepted_9 = sum(
+            item is not None
+            and item.usable
+            and item.baseline_sessions_used == 9
+            for item in projected_coverage
         )
-        no_baseline = sum(row["baseline_sessions_used"] == 0 for row in projections)
+        baseline_accepted_8 = sum(
+            item is not None
+            and item.usable
+            and item.baseline_sessions_used == 8
+            for item in projected_coverage
+        )
+        baseline_unusable = sum(
+            item is None or not item.usable for item in projected_coverage
+        )
+        no_baseline = sum(
+            item is None or item.baseline_sessions_used == 0
+            for item in projected_coverage
+        )
         trusted = sum(bool(row["metrics_trusted"]) for row in projections)
         return {
             "latest_trading_date": latest_date,
@@ -609,7 +632,10 @@ def build_stock_state_current(
             ),
             "symbols_with_valid_exchange": valid_exchange_count,
             "baseline_10_10_count": baseline_full,
-            "partial_baseline_count": baseline_partial,
+            "baseline_9_10_accepted_count": baseline_accepted_9,
+            "baseline_8_10_accepted_count": baseline_accepted_8,
+            "unusable_baseline_count": baseline_unusable,
+            "partial_baseline_count": baseline_accepted_9 + baseline_accepted_8,
             "no_baseline_count": no_baseline,
             "ma10_ready_count": sum(row["ma10"] is not None for row in projections),
             "ma200_ready_count": sum(row["ma200"] is not None for row in projections),

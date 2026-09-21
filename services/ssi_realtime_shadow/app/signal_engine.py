@@ -209,7 +209,9 @@ def _reason_codes(state: TechnicalState, config: SignalConfig) -> tuple[str, ...
             and state.atc_baseline_quality in {"PROVEN", "MIXED", "INFERRED_BOUNDARY"}
         )
     else:
-        baseline_complete = state.baseline_sessions_used == config.exact_previous_sessions
+        baseline_complete = (
+            state.baseline_sessions_used == config.continuous_target_sessions
+        )
     if not baseline_complete:
         found.add("BASELINE_INCOMPLETE")
     watch = raw["watching"]
@@ -317,18 +319,20 @@ def classify_signal(
         if state.session_type in {"OPEN_AUCTION", "CLOSE_AUCTION"}
         else _continuous_candidates(state, previous_signal_state, config)
     )
-    exact = state.baseline_sessions_used == config.exact_previous_sessions
+    baseline_eligible = (
+        state.baseline_sessions_used >= config.continuous_minimum_sessions
+    )
     if state.session_type == "OPEN_AUCTION":
-        exact = (
+        baseline_eligible = (
             state.ato_baseline_sessions_used == config.exact_previous_sessions
             and state.ato_baseline_quality == "PROVEN"
         )
     elif state.session_type == "CLOSE_AUCTION":
-        exact = (
+        baseline_eligible = (
             state.atc_baseline_sessions_used == config.exact_previous_sessions
             and state.atc_baseline_quality in {"PROVEN", "MIXED", "INFERRED_BOUNDARY"}
         )
-    if not state.metrics_trusted or not exact:
+    if not state.metrics_trusted or not baseline_eligible:
         candidates -= {
             "FLOW_APPEARING", "FLOW_PRICE_CONFIRMED",
             "MOMENTUM_MAINTAINED", "SELLING_PRESSURE",

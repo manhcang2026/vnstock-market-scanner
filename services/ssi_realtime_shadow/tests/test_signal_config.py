@@ -17,13 +17,21 @@ from app.signal_config import (
 
 def test_canonical_config_loads_and_locks_versions_states_and_quality() -> None:
     config = load_signal_config()
-    assert config.config_version == "cfg-20260918-beta-001"
-    assert config.engine_version == "2.0.0-beta"
+    assert config.config_version == "cfg-20260922-beta-002"
+    assert config.engine_version == "2.0.1-beta"
     assert config.exact_previous_sessions == 10
+    assert config.continuous_target_sessions == 10
+    assert config.continuous_minimum_sessions == 8
+    assert config.continuous_max_break_blocks == 2
     assert tuple(config.states) == EXPECTED_STATES
     assert config.evaluation_priority == EXPECTED_PRIORITY
     assert config.states["SELLING_PRESSURE"].direction == "BEARISH"
-    assert config.raw["quality"]["strong_signal_requires_exact_baseline"] is True
+    assert config.raw["quality"]["strong_signal_requires_usable_baseline"] is True
+    locked = config.raw["locked_rules"]
+    assert "exact_previous_sessions" not in locked
+    assert "allow_11th_session_substitution" not in locked
+    assert locked["auctions"]["exact_previous_sessions"] == 10
+    assert locked["auctions"]["allow_older_session_substitution"] is False
 
 
 @pytest.mark.parametrize(
@@ -32,7 +40,21 @@ def test_canonical_config_loads_and_locks_versions_states_and_quality() -> None:
         lambda raw: raw.update(config_version="wrong"),
         lambda raw: raw["state_model"].update(evaluation_priority=["NORMAL"]),
         lambda raw: raw["state_model"]["states"]["NORMAL"].update(direction="UP"),
-        lambda raw: raw["quality"].update(required_baseline_sessions=9),
+        lambda raw: raw["quality"]["ordinary_continuous_baseline"].update(
+            minimum_accepted_sessions=7
+        ),
+        lambda raw: raw["quality"]["ordinary_continuous_baseline"].update(
+            maximum_break_blocks=3
+        ),
+        lambda raw: raw["locked_rules"]["auctions"].update(
+            exact_previous_sessions=9
+        ),
+        lambda raw: raw["locked_rules"]["auctions"].update(
+            allow_older_session_substitution=True
+        ),
+        lambda raw: raw["locked_rules"].update(
+            allow_11th_session_substitution=False
+        ),
         lambda raw: raw["watching"].update(day_rvol_min="1.3"),
         lambda raw: raw["watching"].update(enabled="yes"),
         lambda raw: raw["state_model"]["inactive_session_behavior"].update(

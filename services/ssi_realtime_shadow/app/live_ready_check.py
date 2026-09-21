@@ -201,10 +201,25 @@ def inspect_live_readiness(
         try:
             baseline = load_volume_baseline(baseline_db)
             exact = sum(
-                item.baseline_sessions_used == 10
-                and item.active_sessions_used == 10
+                item.usable
+                and item.baseline_sessions_used == 10
+                and item.active_sessions_used >= item.baseline_sessions_used
                 for item in baseline.coverage.values()
             )
+            accepted_9 = sum(
+                item.usable
+                and item.baseline_sessions_used == 9
+                and item.active_sessions_used >= item.baseline_sessions_used
+                for item in baseline.coverage.values()
+            )
+            accepted_8 = sum(
+                item.usable
+                and item.baseline_sessions_used == 8
+                and item.active_sessions_used >= item.baseline_sessions_used
+                for item in baseline.coverage.values()
+            )
+            usable = exact + accepted_9 + accepted_8
+            unusable = len(baseline.coverage) - usable
             partial = sum(
                 0 < item.baseline_sessions_used < 10
                 or 0 < item.active_sessions_used < 10
@@ -220,6 +235,10 @@ def inspect_live_readiness(
                 ),
                 baseline_symbols_total=len(baseline.coverage),
                 baseline_symbols_exact10=exact,
+                baseline_symbols_accepted9=accepted_9,
+                baseline_symbols_accepted8=accepted_8,
+                baseline_symbols_usable=usable,
+                baseline_symbols_unusable=unusable,
                 baseline_symbols_partial=partial,
             )
             if baseline.schema_version != 2:
@@ -230,8 +249,8 @@ def inspect_live_readiness(
                 blocking.append("BASELINE_COVERAGE_PROOF_MISMATCH")
             if baseline.as_of_date != target_trading_date:
                 blocking.append("BASELINE_DATE_MISMATCH")
-            if exact == 0:
-                blocking.append("BASELINE_HAS_NO_EXACT10_SYMBOLS")
+            if usable == 0:
+                blocking.append("BASELINE_HAS_NO_USABLE_SYMBOLS")
             if partial:
                 warnings.append(f"BASELINE_PARTIAL_SYMBOLS:{partial}")
         except Exception as exc:

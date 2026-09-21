@@ -104,8 +104,8 @@ def _project(
     [
         replace(
             _volume(),
-            baseline_sessions_used=9,
-            active_sessions_used=9,
+            baseline_sessions_used=7,
+            active_sessions_used=7,
             metrics_trusted=True,
             reasons=("INSUFFICIENT_HISTORY",),
         ),
@@ -123,15 +123,35 @@ def _project(
             reasons=("CURRENT_GAP", "CURRENT_PARTIAL", "NON_TRUSTED_QUALITY"),
         ),
         replace(_volume(), active_sessions_used=9),
+        replace(_volume(), baseline_break_blocks=3),
     ],
 )
 def test_incomplete_or_untrusted_volume_never_claims_unified_trust(
     volume: VolumeSnapshot,
 ) -> None:
-    projected = _project(volume)
+    projected = _project(volume, baseline_coverage_proven=True)
 
     assert projected["metrics_trusted"] == 0
     assert projected["quality_status"] in {"DEGRADED", "UNAVAILABLE"}
+
+
+@pytest.mark.parametrize("sessions", (9, 8))
+def test_usable_partial_baseline_is_trusted_for_continuous_projection(
+    sessions: int,
+) -> None:
+    volume = replace(
+        _volume(),
+        historical_sessions=sessions,
+        baseline_sessions_used=sessions,
+        active_sessions_available=sessions,
+        active_sessions_used=sessions,
+    )
+
+    projected = _project(volume, baseline_coverage_proven=True)
+
+    assert projected["metrics_trusted"] == 1
+    assert projected["quality_status"] == "TRUSTED"
+    assert "BASELINE_INCOMPLETE" in projected["reason_codes_json"]
 
 
 def test_null_moving_averages_and_dependents_remain_null() -> None:

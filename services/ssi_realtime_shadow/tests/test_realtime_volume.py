@@ -30,6 +30,8 @@ def _write_baseline(
     rvol15_denominator: float = 15.0,
     rvol30_denominator: float = 30.0,
     opening_denominator: float = 10.0,
+    break_blocks: int = 0,
+    include_points: bool = True,
 ) -> None:
     connection = sqlite3.connect(path)
     connection.executescript(BASELINE_SCHEMA)
@@ -43,8 +45,8 @@ def _write_baseline(
             INSERT INTO volume_baseline_coverage (
                 symbol, exchange, available_sessions, baseline_sessions_used,
                 active_sessions_available, active_sessions_used,
-                first_history_date, last_history_date
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                first_history_date, last_history_date, break_blocks
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 symbol,
@@ -55,9 +57,10 @@ def _write_baseline(
                 active_sessions,
                 "2026-08-31" if sessions else None,
                 "2026-09-11" if sessions else None,
+                break_blocks,
             ),
         )
-        if exchange is None or sessions == 0:
+        if exchange is None or sessions == 0 or not include_points:
             continue
         connection.executemany(
             """
@@ -465,7 +468,51 @@ def test_no_baseline_symbol_returns_safe_unavailable_metrics(tmp_path: Path) -> 
     assert snapshot.rvol_15 is None
     assert snapshot.rvol_30 is None
     assert snapshot.baseline_sessions_used == 0
+    assert not snapshot.metrics_trusted
     assert "NO_BASELINE" in snapshot.reasons
+
+
+@pytest.mark.parametrize("sessions", (9, 8))
+def test_accepted_partial_history_is_trusted_and_not_insufficient(
+    tmp_path: Path, sessions: int
+) -> None:
+    path = tmp_path / "baseline.db"
+    _write_baseline(
+        path,
+        symbols=(("SHS", "HNX", sessions, sessions),),
+        break_blocks=2,
+    )
+    engine = RealtimeVolumeEngine(path)
+    immediate = engine.on_event(_event("SHS", "HNX", "09:00", 10))
+    assert immediate.metrics_trusted
+    engine.advance_time(_at("09:15"))
+
+    snapshot = engine.get_snapshot("SHS")
+    assert snapshot is not None
+    assert snapshot.metrics_trusted
+    assert snapshot.day_rvol is not None
+    assert "INSUFFICIENT_HISTORY" not in snapshot.reasons
+
+
+def test_more_than_two_break_blocks_is_untrusted_upstream(tmp_path: Path) -> None:
+    path = tmp_path / "baseline.db"
+    _write_baseline(
+        path,
+        symbols=(("SHS", "HNX", 8, 8),),
+        break_blocks=3,
+        include_points=False,
+    )
+    engine = RealtimeVolumeEngine(path)
+    immediate = engine.on_event(_event("SHS", "HNX", "09:00", 10))
+    assert not immediate.metrics_trusted
+    engine.advance_time(_at("09:15"))
+
+    snapshot = engine.get_snapshot("SHS")
+    assert snapshot is not None
+    assert not snapshot.metrics_trusted
+    assert snapshot.baseline_break_blocks == 3
+    assert snapshot.day_rvol is None
+    assert "INSUFFICIENT_HISTORY" in snapshot.reasons
 
 
 @pytest.mark.parametrize(

@@ -48,8 +48,8 @@ def test_all_demo_records_have_identical_ordered_contract_and_versions() -> None
     for item in items:
         assert tuple(item) == PUBLIC_CONTRACT_KEYS
         assert item["contract_version"] == "ccc-state-v1"
-        assert item["engine_version"] == "2.0.0-beta"
-        assert item["config_version"] == "cfg-20260918-beta-001"
+        assert item["engine_version"] == "2.0.1-beta"
+        assert item["config_version"] == "cfg-20260922-beta-002"
         assert isinstance(item["reason_codes"], list)
         assert isinstance(item["metrics_trusted"], bool)
         assert "reason_codes_json" not in item

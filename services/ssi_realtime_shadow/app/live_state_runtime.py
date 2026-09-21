@@ -1,7 +1,7 @@
 """Live CCC V2 current-state orchestration over the canonical SSI collector.
 
 This module deliberately does not prove the active day against DailyOhlc.  The
-immutable exact-10 baseline is the historical proof; the active-day trust gate
+immutable approved 8-10 baseline is the historical proof; the active-day trust gate
 is the canonical :class:`VolumeSnapshot` produced from the live stream.
 """
 
@@ -508,8 +508,9 @@ class LiveStateRuntime:
                 baseline_proven = bool(
                     self.baseline_ready
                     and coverage is not None
-                    and coverage.baseline_sessions_used == EXPECTED_LOOKBACK
-                    and coverage.active_sessions_used == EXPECTED_LOOKBACK
+                    and coverage.usable
+                    and coverage.active_sessions_used
+                    >= coverage.baseline_sessions_used
                 )
                 projection = project_stock_state(
                     quote=quote,

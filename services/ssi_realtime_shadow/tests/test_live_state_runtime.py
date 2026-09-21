@@ -684,20 +684,23 @@ def test_new_trading_date_invalidates_ma_and_resets_previous_state(
     runtime.close()
     store.close()
 
-    partial_root = tmp_path / "partial"
-    partial_root.mkdir()
-    store, engine, runtime, market = _runtime(partial_root, sessions=9)
-    snapshot = engine.get_snapshot("SHS")
-    assert snapshot is not None
-    assert runtime.handle_snapshot(snapshot, observed_at=_at("09:31"))
-    connection = sqlite3.connect(market)
-    row = connection.execute(
-        "SELECT signal_state,metrics_trusted,reason_codes_json "
-        "FROM stock_state_current"
-    ).fetchone()
-    assert row[0] == "WATCHING"
-    assert row[1] == 0
-    assert "BASELINE_INCOMPLETE" in row[2]
-    connection.close()
-    runtime.close()
-    store.close()
+    for sessions in (9, 8):
+        accepted_root = tmp_path / f"accepted-{sessions}"
+        accepted_root.mkdir()
+        store, engine, runtime, market = _runtime(
+            accepted_root, sessions=sessions
+        )
+        snapshot = engine.get_snapshot("SHS")
+        assert snapshot is not None
+        assert runtime.handle_snapshot(snapshot, observed_at=_at("09:31"))
+        connection = sqlite3.connect(market)
+        row = connection.execute(
+            "SELECT signal_state,metrics_trusted,reason_codes_json "
+            "FROM stock_state_current"
+        ).fetchone()
+        assert row[0] == "FLOW_PRICE_CONFIRMED"
+        assert row[1] == 1
+        assert "BASELINE_INCOMPLETE" in row[2]
+        connection.close()
+        runtime.close()
+        store.close()

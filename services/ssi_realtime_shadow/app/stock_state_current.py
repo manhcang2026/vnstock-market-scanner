@@ -17,6 +17,7 @@ from .realtime_volume import VolumeSnapshot
 from .signal_auction import AuctionSignalMetrics
 from .signal_config import SignalConfig, load_signal_config
 from .signal_engine import TechnicalState, classify_signal
+from .volume_baseline import MAX_BREAK_BLOCKS, MINIMUM_BASELINE_SESSIONS
 
 
 _DEFAULT_CONFIG = load_signal_config()
@@ -98,7 +99,8 @@ def _volume_is_trusted(
     return (
         snapshot.metrics_trusted
         and snapshot.quality_status == "TRUSTED"
-        and snapshot.baseline_sessions_used >= BASELINE_TARGET_SESSIONS
+        and snapshot.baseline_sessions_used >= MINIMUM_BASELINE_SESSIONS
+        and snapshot.baseline_break_blocks <= MAX_BREAK_BLOCKS
         and snapshot.active_sessions_used >= snapshot.baseline_sessions_used
         and not untrusted_reasons.intersection(snapshot.reasons)
     )

@@ -77,15 +77,27 @@ def test_untrusted_metrics_cannot_produce_strong_positive_or_selling(metrics_tru
         assert "METRICS_UNTRUSTED" in result.reason_codes
 
 
-def test_incomplete_baseline_blocks_strong_signal_but_allows_degraded_watching() -> None:
+@pytest.mark.parametrize("sessions", (10, 9, 8))
+def test_usable_continuous_baseline_can_emit_same_strong_signal(
+    sessions: int,
+) -> None:
     technical = state(
-        baseline_sessions_used=9, day_rvol=1.5, rvol15=2.0,
+        baseline_sessions_used=sessions, day_rvol=1.5, rvol15=2.0,
+        rvol30=2.0, price5_pct=0.8, price15_pct=1.2,
+    )
+    result = classify_signal(technical, None, CONFIG)
+    assert result.signal_state == "FLOW_PRICE_CONFIRMED"
+    assert ("BASELINE_INCOMPLETE" in result.reason_codes) is (sessions < 10)
+
+
+def test_seven_session_baseline_blocks_strong_but_preserves_watching() -> None:
+    technical = state(
+        baseline_sessions_used=7, day_rvol=1.5, rvol15=2.0,
         rvol30=2.0, price5_pct=0.8, price15_pct=1.2,
     )
     result = classify_signal(technical, None, CONFIG)
     assert result.signal_state == "WATCHING"
     assert "BASELINE_INCOMPLETE" in result.reason_codes
-    assert classify_signal(replace(technical, baseline_sessions_used=10), None, CONFIG).signal_state == "FLOW_PRICE_CONFIRMED"
 
 
 def test_null_is_not_zero_and_null_ma_emits_no_ma_reason() -> None:
@@ -117,13 +129,19 @@ def test_ato_and_atc_quality_gates_use_their_own_exact10_coverage() -> None:
         ato_baseline_sessions_used=10, ato_baseline_quality="PROVEN",
     )
     assert classify_signal(ato, None, CONFIG).signal_state == "FLOW_PRICE_CONFIRMED"
-    assert classify_signal(replace(ato, ato_baseline_sessions_used=9), None, CONFIG).signal_state == "WATCHING"
+    for sessions in (9, 8):
+        assert classify_signal(
+            replace(ato, ato_baseline_sessions_used=sessions), None, CONFIG
+        ).signal_state == "WATCHING"
     atc = state(
         session_type="CLOSE_AUCTION", atc_rvol=2.5,
         atc_price_impact_pct=-1.5, atc_baseline_sessions_used=10,
         atc_baseline_quality="INFERRED_BOUNDARY",
     )
     assert classify_signal(atc, None, CONFIG).signal_state == "SELLING_PRESSURE"
+    assert classify_signal(
+        replace(atc, atc_baseline_sessions_used=8), None, CONFIG
+    ).signal_state == "WATCHING"
 
 
 @pytest.mark.parametrize(

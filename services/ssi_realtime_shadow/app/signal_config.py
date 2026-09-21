@@ -10,8 +10,8 @@ from typing import Any, Mapping
 import yaml
 
 
-EXPECTED_CONFIG_VERSION = "cfg-20260918-beta-001"
-EXPECTED_ENGINE_VERSION = "2.0.0-beta"
+EXPECTED_CONFIG_VERSION = "cfg-20260922-beta-002"
+EXPECTED_ENGINE_VERSION = "2.0.1-beta"
 EXPECTED_STATES = (
     "NORMAL",
     "WATCHING",
@@ -64,6 +64,9 @@ class SignalConfig:
     engine_version: str
     contract_version: str
     exact_previous_sessions: int
+    continuous_target_sessions: int
+    continuous_minimum_sessions: int
+    continuous_max_break_blocks: int
     states: Mapping[str, StateDefinition]
     evaluation_priority: tuple[str, ...]
     positive_previous_states: frozenset[str]
@@ -173,9 +176,19 @@ def validate_signal_config(raw: Mapping[str, Any]) -> SignalConfig:
     if raw.get("engine_version") != EXPECTED_ENGINE_VERSION:
         raise SignalConfigError("unexpected engine_version")
     locked = _mapping(raw.get("locked_rules"), "locked_rules")
-    exact = locked.get("exact_previous_sessions")
-    if exact != 10 or locked.get("allow_11th_session_substitution") is not False:
-        raise SignalConfigError("exact previous-session rules are invalid")
+    obsolete_global_rules = {
+        "exact_previous_sessions",
+        "allow_11th_session_substitution",
+    }
+    if obsolete_global_rules.intersection(locked):
+        raise SignalConfigError("obsolete global exact-10 rules are not allowed")
+    auction_rules = _mapping(locked.get("auctions"), "locked_rules.auctions")
+    exact = auction_rules.get("exact_previous_sessions")
+    if (
+        exact != 10
+        or auction_rules.get("allow_older_session_substitution") is not False
+    ):
+        raise SignalConfigError("auction exact previous-session rules are invalid")
     contract = _mapping(raw.get("contract"), "contract")
     contract_version = contract.get("signal_contract_version")
     if contract_version != "ccc-state-v1":
@@ -220,11 +233,19 @@ def validate_signal_config(raw: Mapping[str, Any]) -> SignalConfig:
         raise SignalConfigError("inactive session behavior values must be boolean")
 
     quality = _mapping(raw.get("quality"), "quality")
-    if quality.get("required_baseline_sessions") != exact:
-        raise SignalConfigError("quality baseline requirement does not match exact-10")
+    ordinary = _mapping(
+        quality.get("ordinary_continuous_baseline"),
+        "quality.ordinary_continuous_baseline",
+    )
+    if ordinary.get("target_sessions") != 10:
+        raise SignalConfigError("continuous baseline target must remain 10")
+    if ordinary.get("minimum_accepted_sessions") != 8:
+        raise SignalConfigError("continuous baseline minimum must be 8")
+    if ordinary.get("maximum_break_blocks") != 2:
+        raise SignalConfigError("continuous baseline maximum break blocks must be 2")
     if (
         quality.get("require_metrics_trusted_for_strong_signal") is not True
-        or quality.get("strong_signal_requires_exact_baseline") is not True
+        or quality.get("strong_signal_requires_usable_baseline") is not True
     ):
         raise SignalConfigError("strong-signal quality gates must remain enabled")
     degraded = _mapping(quality.get("degraded_behavior"), "quality.degraded_behavior")
@@ -256,6 +277,9 @@ def validate_signal_config(raw: Mapping[str, Any]) -> SignalConfig:
         engine_version=str(raw["engine_version"]),
         contract_version=str(contract_version),
         exact_previous_sessions=int(exact),
+        continuous_target_sessions=int(ordinary["target_sessions"]),
+        continuous_minimum_sessions=int(ordinary["minimum_accepted_sessions"]),
+        continuous_max_break_blocks=int(ordinary["maximum_break_blocks"]),
         states=MappingProxyType(states),
         evaluation_priority=priority,
         positive_previous_states=positive,

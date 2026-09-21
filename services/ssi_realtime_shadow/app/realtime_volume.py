@@ -180,6 +180,7 @@ class VolumeSnapshot:
     metrics_trusted: bool
     metric_availability: Mapping[str, bool]
     reasons: tuple[str, ...]
+    baseline_break_blocks: int = 0
 
 
 @dataclass(slots=True)
@@ -814,10 +815,12 @@ class RealtimeVolumeEngine:
         coverage = self._coverage(state.symbol)
         baseline = self._baseline.points.get((state.symbol, point.minute))
         reasons = set(state.finalized_quality_reasons | state.integrity_reasons)
-        if coverage.baseline_sessions_used == 0 or baseline is None:
+        if coverage.baseline_sessions_used == 0:
             reasons.add("NO_BASELINE")
-        elif coverage.baseline_sessions_used < self._baseline.lookback:
+        elif not coverage.usable:
             reasons.add("INSUFFICIENT_HISTORY")
+        elif baseline is None:
+            reasons.add("NO_BASELINE")
 
         avg_cumulative = baseline.avg_cumulative_volume if baseline else None
         day_rvol = _ratio(state.cumulative_volume, avg_cumulative)
@@ -885,24 +888,31 @@ class RealtimeVolumeEngine:
             first_history_date=coverage.first_history_date,
             last_history_date=coverage.last_history_date,
             quality_status=state.latest_quality_status,
-            metrics_trusted=not (
-                state.finalized_quality_reasons or state.integrity_reasons
+            metrics_trusted=bool(
+                coverage.usable
+                and baseline is not None
+                and not state.finalized_quality_reasons
+                and not state.integrity_reasons
             ),
             metric_availability=availability,
             reasons=tuple(sorted(reasons)) if reasons else ("OK",),
+            baseline_break_blocks=coverage.break_blocks,
         )
 
     def _refresh_latest_quality(self, state: _DayState) -> VolumeSnapshot:
         if state.snapshot is None:
             return self._empty_snapshot(state)
+        coverage = self._coverage(state.symbol)
         reasons = set(state.snapshot.reasons)
         reasons.discard("OK")
         reasons.update(state.integrity_reasons)
         return replace(
             state.snapshot,
             quality_status=state.latest_quality_status,
-            metrics_trusted=not (
-                state.finalized_quality_reasons or state.integrity_reasons
+            metrics_trusted=bool(
+                coverage.usable
+                and not state.finalized_quality_reasons
+                and not state.integrity_reasons
             ),
             reasons=tuple(sorted(reasons)) if reasons else ("OK",),
         )
@@ -912,7 +922,7 @@ class RealtimeVolumeEngine:
         reasons = {"OUTSIDE_ROLLING_WINDOW"} | state.integrity_reasons
         if coverage.baseline_sessions_used == 0:
             reasons.add("NO_BASELINE")
-        elif coverage.baseline_sessions_used < self._baseline.lookback:
+        elif not coverage.usable:
             reasons.add("INSUFFICIENT_HISTORY")
         return VolumeSnapshot(
             symbol=state.symbol,
@@ -939,7 +949,7 @@ class RealtimeVolumeEngine:
             first_history_date=coverage.first_history_date,
             last_history_date=coverage.last_history_date,
             quality_status=state.latest_quality_status,
-            metrics_trusted=not state.integrity_reasons,
+            metrics_trusted=coverage.usable and not state.integrity_reasons,
             metric_availability=MappingProxyType(
                 {
                     "day_rvol": False,
@@ -949,6 +959,7 @@ class RealtimeVolumeEngine:
                 }
             ),
             reasons=tuple(sorted(reasons)),
+            baseline_break_blocks=coverage.break_blocks,
         )
 
 

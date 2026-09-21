@@ -12,8 +12,8 @@
 # while preserving the public frontend signal contract.
 # ============================================================
 
-config_version: "cfg-20260918-beta-001"
-engine_version: "2.0.0-beta"
+config_version: "cfg-20260922-beta-002"
+engine_version: "2.0.1-beta"
 
 contract:
   signal_contract_version: "ccc-state-v1"
@@ -21,9 +21,6 @@ contract:
 
 locked_rules:
   technical_provider: "SSI_ONLY"
-
-  exact_previous_sessions: 10
-  allow_11th_session_substitution: false
 
   missing_is_zero: false
 
@@ -36,6 +33,9 @@ locked_rules:
     price15_cross_lunch: false
 
   auctions:
+    exact_previous_sessions: 10
+    allow_older_session_substitution: false
+
     ato_is_continuous_window: false
     atc_is_continuous_window: false
 
@@ -50,9 +50,12 @@ locked_rules:
 quality:
   require_metrics_trusted_for_strong_signal: true
 
-  required_baseline_sessions: 10
+  ordinary_continuous_baseline:
+    target_sessions: 10
+    minimum_accepted_sessions: 8
+    maximum_break_blocks: 2
 
-  strong_signal_requires_exact_baseline: true
+  strong_signal_requires_usable_baseline: true
 
   unavailable_metric_value: null
 
