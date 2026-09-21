@@ -9,8 +9,16 @@ import pytest
 
 from app.storage import SQLiteStore
 from app.market_storage_schema import ensure_market_storage_schema
-from app.volume_baseline import build_volume_baseline as _build_volume_baseline
-from app.volume_baseline import volume_market_grid
+from app.realtime_volume import load_volume_baseline
+from app.volume_baseline import (
+    RawVolumeBar,
+    SessionProof,
+    build_symbol_volume_baseline,
+    build_volume_baseline as _build_volume_baseline,
+    prove_volume_session,
+    select_volume_sessions,
+    volume_market_grid,
+)
 from app.volume_baseline_build import build_parser
 
 
@@ -111,6 +119,47 @@ def _weekdays(start: date, count: int) -> list[str]:
     return values
 
 
+def _minimum_healthy_bars(
+    bars: list[tuple[str, str, str, str, int]],
+) -> list[tuple[str, str, str, str, int]]:
+    """Repeat test session patterns across eight dates without changing averages."""
+    patterns: dict[str, list[tuple[str, str, str, str, int]]] = {}
+    for bar in bars:
+        patterns.setdefault(bar[2], []).append(bar)
+    source_dates = sorted(patterns)
+    target_dates = _weekdays(date(2026, 8, 24), 8)
+    result: list[tuple[str, str, str, str, int]] = []
+    for index, trading_date in enumerate(target_dates):
+        pattern = patterns[source_dates[index % len(source_dates)]]
+        result.extend(
+            (symbol, exchange, trading_date, minute, volume)
+            for symbol, exchange, _, minute, volume in pattern
+        )
+    return result
+
+
+def _selection_proof(
+    trading_date: str,
+    *,
+    valid: bool = True,
+    volume: int = 10,
+    reason: str = "DAILY_MISSING",
+) -> SessionProof:
+    if not valid:
+        return SessionProof("HPG", trading_date, None, None, 0, reason)
+    return SessionProof(
+        "HPG",
+        trading_date,
+        "HOSE",
+        volume,
+        volume,
+        "PROVEN_ZERO" if volume == 0 else "PROVEN",
+        ()
+        if volume == 0
+        else (RawVolumeBar(trading_date, "09:16", "HOSE", volume),),
+    )
+
+
 def test_hose_grid_separates_opening_continuous_and_close_buckets() -> None:
     points = volume_market_grid("HOSE")
     grid = {point.minute: point for point in points}
@@ -171,7 +220,296 @@ def test_volume_baseline_cli_accepts_sample_arguments() -> None:
         ]
     )
     assert args.lookback == 10
+    assert args.max_scan_sessions == 20
     assert args.symbols == ["HPG", "SSI", "VIX"]
+
+
+def _selection(pattern: str, *, max_scan_sessions: int = 20):
+    dates = list(reversed(_weekdays(date(2026, 8, 3), len(pattern))))
+    proofs = [
+        _selection_proof(trading_date, valid=marker == "V")
+        for trading_date, marker in zip(dates, pattern)
+    ]
+    return select_volume_sessions(
+        proofs,
+        max_scan_sessions=max_scan_sessions,
+    )
+
+
+def test_exact_ten_healthy_sessions_are_full() -> None:
+    selection = _selection("VVVVVVVVVV")
+
+    assert len(selection.selected) == 10
+    assert selection.coverage_tier == "FULL"
+    assert selection.break_blocks == 0
+    assert len(selection.scanned) == 10
+    assert selection.stopped_reason == "TARGET_REACHED"
+
+
+def test_one_isolated_broken_session_uses_an_older_valid_session() -> None:
+    selection = _selection("VVVBVVVVVVV")
+
+    assert len(selection.selected) == 10
+    assert len(selection.skipped) == 1
+    assert selection.break_blocks == 1
+    assert selection.selected[-1].trading_date < selection.skipped[0].trading_date
+
+
+def test_two_isolated_break_blocks_can_be_crossed() -> None:
+    selection = _selection("VVBVVVBVVVVV")
+
+    assert len(selection.selected) == 10
+    assert len(selection.skipped) == 2
+    assert selection.break_blocks == 2
+    assert selection.stopped_reason == "TARGET_REACHED"
+
+
+def test_third_separate_break_block_stops_selection() -> None:
+    selection = _selection("VVBVVBVVBVVVV")
+
+    assert len(selection.selected) == 6
+    assert selection.break_blocks == 3
+    assert selection.stopped_by_third_break_block
+    assert len(selection.scanned) == 9
+
+
+def test_third_break_block_makes_nine_selected_sessions_unusable() -> None:
+    selection = _selection("VVVBVVVBVVVBVV")
+    coverage, rows = build_symbol_volume_baseline(
+        "HPG",
+        selection,
+        lookback=10,
+        candidate_sessions=[proof.trading_date for proof in selection.scanned],
+    )
+
+    assert len(selection.selected) == 9
+    assert selection.break_blocks == 3
+    assert coverage.coverage_tier == "INSUFFICIENT"
+    assert rows == []
+
+
+def test_consecutive_bad_sessions_are_one_break_block() -> None:
+    selection = _selection("VVBBBVVVVVVVV")
+
+    assert len(selection.selected) == 10
+    assert len(selection.skipped) == 3
+    assert selection.break_blocks == 1
+    assert selection.stopped_reason == "TARGET_REACHED"
+
+
+@pytest.mark.parametrize(
+    ("session_count", "expected_tier", "expect_rows"),
+    [
+        (9, "ACCEPTABLE", True),
+        (8, "ACCEPTABLE_MINIMUM", True),
+        (7, "INSUFFICIENT", False),
+    ],
+)
+def test_coverage_tiers_control_usable_baseline_rows(
+    session_count: int,
+    expected_tier: str,
+    expect_rows: bool,
+) -> None:
+    dates = list(reversed(_weekdays(date(2026, 8, 3), session_count)))
+    selection = select_volume_sessions(
+        [_selection_proof(item) for item in dates]
+    )
+
+    coverage, rows = build_symbol_volume_baseline(
+        "HPG",
+        selection,
+        lookback=10,
+        candidate_sessions=dates,
+    )
+
+    assert coverage.baseline_sessions_used == session_count
+    assert coverage.coverage_tier == expected_tier
+    assert bool(rows) is expect_rows
+    if rows:
+        assert {item.historical_sessions for item in rows} == {session_count}
+
+
+def test_build_summary_reports_nine_and_eight_session_symbols(
+    tmp_path: Path,
+) -> None:
+    history = tmp_path / "tier-summary-history.db"
+    output = tmp_path / "tier-summary-baseline.db"
+    dates = _weekdays(date(2026, 8, 24), 9)
+    _history_db(
+        history,
+        [("HPG", "HOSE", item, "09:16", 10) for item in dates]
+        + [("SHS", "HNX", item, "09:00", 20) for item in dates[1:]],
+    )
+
+    summary = build_volume_baseline(
+        history_db=history,
+        output_db=output,
+        symbols=["HPG", "SHS"],
+    )
+    connection = _connect(output)
+    coverage = {
+        row["symbol"]: row
+        for row in connection.execute(
+            "SELECT * FROM volume_baseline_coverage ORDER BY symbol"
+        )
+    }
+    row_counts = dict(
+        connection.execute(
+            "SELECT symbol, COUNT(*) FROM volume_baseline GROUP BY symbol"
+        )
+    )
+    connection.close()
+
+    assert summary.symbols_10_sessions == 0
+    assert summary.symbols_9_sessions == 1
+    assert summary.symbols_8_sessions == 1
+    assert summary.symbols_under_8_sessions == 0
+    assert summary.daily_missing_count == 1
+    assert coverage["HPG"]["coverage_tier"] == "ACCEPTABLE"
+    assert coverage["SHS"]["coverage_tier"] == "ACCEPTABLE_MINIMUM"
+    assert coverage["SHS"]["break_blocks"] == 1
+    assert row_counts["HPG"] > 0 and row_counts["SHS"] > 0
+
+
+def test_selection_never_exceeds_max_scan_sessions() -> None:
+    selection = _selection("VVVVVVVBBBVVVVVVVVVV", max_scan_sessions=10)
+
+    assert len(selection.scanned) == 10
+    assert len(selection.selected) == 7
+    assert selection.exhausted_max_scan
+
+
+def test_zero_volume_session_requires_trusted_daily_proof(tmp_path: Path) -> None:
+    history_path = tmp_path / "zero-history.db"
+    daily_path = tmp_path / "zero-daily.db"
+    SQLiteStore(history_path).close()
+    daily = sqlite3.connect(daily_path)
+    ensure_market_storage_schema(daily)
+    daily.execute(
+        """
+        INSERT INTO daily_bars (
+          symbol,trading_date,exchange,open,high,low,close,volume,value,
+          source,quality_status,finalized_at
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+        """,
+        (
+            "HPG",
+            "2026-09-10",
+            "HOSE",
+            1,
+            1,
+            1,
+            1,
+            0,
+            None,
+            "SSI_DAILY_OHLC",
+            "TRUSTED",
+            "fixed",
+        ),
+    )
+    daily.commit()
+    daily.close()
+
+    history = _connect(history_path)
+    daily = _connect(daily_path)
+    try:
+        proven_zero = prove_volume_session(
+            history,
+            daily,
+            symbol="HPG",
+            trading_date="2026-09-10",
+        )
+        missing_daily = prove_volume_session(
+            history,
+            daily,
+            symbol="HPG",
+            trading_date="2026-09-09",
+        )
+    finally:
+        daily.close()
+        history.close()
+
+    assert proven_zero.reason == "PROVEN_ZERO" and proven_zero.proven
+    assert missing_daily.reason == "DAILY_MISSING" and not missing_daily.proven
+
+
+def test_untrusted_provider_and_missing_intraday_are_not_zero_filled(
+    tmp_path: Path,
+) -> None:
+    history_path = tmp_path / "provider-history.db"
+    daily_path = tmp_path / "provider-daily.db"
+    _history_db(
+        history_path,
+        [("HPG", "HOSE", "2026-09-10", "09:16", 10)],
+    )
+    history_write = sqlite3.connect(history_path)
+    history_write.execute(
+        "UPDATE minute_bars SET data_source='KBS' WHERE symbol='HPG'"
+    )
+    history_write.commit()
+    history_write.close()
+
+    daily = sqlite3.connect(daily_path)
+    ensure_market_storage_schema(daily)
+    daily.executemany(
+        """
+        INSERT INTO daily_bars (
+          symbol,trading_date,exchange,open,high,low,close,volume,value,
+          source,quality_status,finalized_at
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+        """,
+        [
+            (
+                "HPG",
+                trading_date,
+                "HOSE",
+                1,
+                1,
+                1,
+                1,
+                10,
+                None,
+                "SSI_DAILY_OHLC",
+                "TRUSTED",
+                "fixed",
+            )
+            for trading_date in ("2026-09-10", "2026-09-09")
+        ],
+    )
+    daily.commit()
+    daily.close()
+
+    history = _connect(history_path)
+    daily = _connect(daily_path)
+    try:
+        mixed_provider = prove_volume_session(
+            history,
+            daily,
+            symbol="HPG",
+            trading_date="2026-09-10",
+        )
+        missing_intraday = prove_volume_session(
+            history,
+            daily,
+            symbol="HPG",
+            trading_date="2026-09-09",
+        )
+    finally:
+        daily.close()
+        history.close()
+
+    selection = select_volume_sessions([mixed_provider, missing_intraday])
+    coverage, rows = build_symbol_volume_baseline(
+        "HPG",
+        selection,
+        lookback=10,
+        candidate_sessions=["2026-09-09", "2026-09-10"],
+    )
+    assert mixed_provider.reason == "UNSAFE_INTRADAY"
+    assert missing_intraday.reason == "VOLUME_MISMATCH"
+    assert coverage.baseline_sessions_used == 0
+    assert coverage.coverage_tier == "INSUFFICIENT"
+    assert rows == []
 
 
 @pytest.mark.parametrize(("symbol", "exchange"), [("SHS", "HNX"), ("VGI", "UPCOM")])
@@ -182,13 +520,13 @@ def test_hnx_upcom_morning_windows_use_exact_closed_bar_count(
     output = tmp_path / f"{exchange}-baseline.db"
     _history_db(
         history,
-        [
+        _minimum_healthy_bars([
             (symbol, exchange, "2026-09-10", "09:00", 100),
             (symbol, exchange, "2026-09-10", "09:14", 14),
             (symbol, exchange, "2026-09-10", "09:15", 999),
             (symbol, exchange, "2026-09-10", "09:29", 29),
             (symbol, exchange, "2026-09-10", "09:30", 777),
-        ],
+        ]),
     )
     build_volume_baseline(history_db=history, output_db=output)
 
@@ -215,14 +553,14 @@ def test_hose_morning_windows_exclude_opening_and_use_exact_bar_count(
     output = tmp_path / "hose-baseline.db"
     _history_db(
         history,
-        [
+        _minimum_healthy_bars([
             ("HPG", "HOSE", "2026-09-10", "09:15", 5000),
             ("HPG", "HOSE", "2026-09-10", "09:16", 100),
             ("HPG", "HOSE", "2026-09-10", "09:30", 14),
             ("HPG", "HOSE", "2026-09-10", "09:31", 999),
             ("HPG", "HOSE", "2026-09-10", "09:45", 29),
             ("HPG", "HOSE", "2026-09-10", "09:46", 777),
-        ],
+        ]),
     )
     build_volume_baseline(history_db=history, output_db=output)
 
@@ -252,13 +590,13 @@ def test_afternoon_windows_use_exact_closed_bar_count(
     output = tmp_path / f"{exchange}-pm-baseline.db"
     _history_db(
         history,
-        [
+        _minimum_healthy_bars([
             (symbol, exchange, "2026-09-10", "13:00", 100),
             (symbol, exchange, "2026-09-10", "13:14", 14),
             (symbol, exchange, "2026-09-10", "13:15", 999),
             (symbol, exchange, "2026-09-10", "13:29", 29),
             (symbol, exchange, "2026-09-10", "13:30", 777),
-        ],
+        ]),
     )
     build_volume_baseline(history_db=history, output_db=output)
 
@@ -283,11 +621,11 @@ def test_missing_hose_auction_rows_contribute_zero_samples(tmp_path: Path) -> No
     output = tmp_path / "hose-auction-baseline.db"
     _history_db(
         history,
-        [
+        _minimum_healthy_bars([
             ("HPG", "HOSE", "2026-09-09", "09:15", 100),
             ("HPG", "HOSE", "2026-09-09", "14:45", 50),
             ("HPG", "HOSE", "2026-09-10", "09:16", 20),
-        ],
+        ]),
     )
     build_volume_baseline(history_db=history, output_db=output)
 
@@ -300,9 +638,9 @@ def test_missing_hose_auction_rows_contribute_zero_samples(tmp_path: Path) -> No
     ).fetchone()
     assert opening["avg_opening_volume"] == 50
     assert opening["avg_cumulative_volume"] == 50
-    assert opening["historical_sessions"] == 2
+    assert opening["historical_sessions"] == 8
     assert closing["avg_cumulative_volume"] == 85
-    assert closing["historical_sessions"] == 2
+    assert closing["historical_sessions"] == 8
     assert closing["avg_volume_15"] is None
     connection.close()
 
@@ -314,11 +652,11 @@ def test_missing_hnx_close_contributes_final_cumulative_sample(
     output = tmp_path / "hnx-close-baseline.db"
     _history_db(
         history,
-        [
+        _minimum_healthy_bars([
             ("SHS", "HNX", "2026-09-09", "09:00", 100),
             ("SHS", "HNX", "2026-09-09", "14:45", 50),
             ("SHS", "HNX", "2026-09-10", "09:00", 20),
-        ],
+        ]),
     )
     build_volume_baseline(history_db=history, output_db=output)
 
@@ -327,7 +665,7 @@ def test_missing_hnx_close_contributes_final_cumulative_sample(
         "SELECT * FROM volume_baseline WHERE symbol='SHS' AND minute='14:45'"
     ).fetchone()
     assert closing["avg_cumulative_volume"] == 85
-    assert closing["historical_sessions"] == 2
+    assert closing["historical_sessions"] == 8
     assert closing["avg_volume_15"] is None
     connection.close()
 
@@ -339,11 +677,11 @@ def test_hose_opening_and_close_affect_cumulative_but_not_rolling(
     output = tmp_path / "baseline.db"
     _history_db(
         history,
-        [
+        _minimum_healthy_bars([
             ("HPG", "HOSE", "2026-09-10", "09:15", 100),
             ("HPG", "HOSE", "2026-09-10", "09:16", 10),
             ("HPG", "HOSE", "2026-09-10", "14:45", 50),
-        ],
+        ]),
     )
     build_volume_baseline(history_db=history, output_db=output)
 
@@ -374,7 +712,9 @@ def test_continuous_no_trade_minutes_zero_fill_volume_without_ohlc(
     output = tmp_path / "baseline.db"
     _history_db(
         history,
-        [("SHS", "HNX", "2026-09-10", "09:01", 75)],
+        _minimum_healthy_bars(
+            [("SHS", "HNX", "2026-09-10", "09:01", 75)]
+        ),
     )
     build_volume_baseline(history_db=history, output_db=output)
 
@@ -387,7 +727,7 @@ def test_continuous_no_trade_minutes_zero_fill_volume_without_ohlc(
         for item in connection.execute("PRAGMA table_info(volume_baseline)")
     }
     assert row["avg_volume_15"] == 75
-    assert row["historical_sessions"] == 1
+    assert row["historical_sessions"] == 8
     assert not {"open", "high", "low", "close"} & columns
     assert connection.execute(
         "SELECT 1 FROM volume_baseline WHERE minute='11:30'"
@@ -402,10 +742,10 @@ def test_lunch_keeps_day_cumulative_and_resets_rolling_window(
     output = tmp_path / "baseline.db"
     _history_db(
         history,
-        [
+        _minimum_healthy_bars([
             ("SHS", "HNX", "2026-09-10", "11:29", 100),
             ("SHS", "HNX", "2026-09-10", "13:15", 7),
-        ],
+        ]),
     )
     build_volume_baseline(history_db=history, output_db=output)
 
@@ -436,7 +776,11 @@ def test_lookback_uses_latest_ten_sessions_and_coverage_keeps_all_history(
             for index, trading_date in enumerate(dates, start=1)
         ],
     )
-    build_volume_baseline(history_db=history, output_db=output, lookback=10)
+    summary = build_volume_baseline(
+        history_db=history,
+        output_db=output,
+        lookback=10,
+    )
 
     connection = _connect(output)
     coverage = connection.execute(
@@ -445,15 +789,71 @@ def test_lookback_uses_latest_ten_sessions_and_coverage_keeps_all_history(
     baseline = connection.execute(
         "SELECT * FROM volume_baseline WHERE symbol='SHS' AND minute='09:15'"
     ).fetchone()
-    assert coverage["available_sessions"] == 10
+    assert coverage["available_sessions"] == 12
     assert coverage["baseline_sessions_used"] == 10
     assert coverage["active_sessions_available"] == 10
     assert coverage["active_sessions_used"] == 10
+    assert coverage["coverage_tier"] == "FULL"
+    assert coverage["scanned_sessions"] == 10
     assert coverage["first_history_date"] == dates[2]
     assert coverage["last_history_date"] == dates[-1]
     assert baseline["historical_sessions"] == 10
     assert baseline["avg_volume_15"] == 7.5
+    assert summary.symbols_10_sessions == 1
+    assert summary.symbols_9_sessions == 0
+    assert summary.symbols_8_sessions == 0
+    assert summary.symbols_under_8_sessions == 0
+    assert summary.samples[0]["selected_dates"] == list(reversed(dates[-10:]))
+    assert summary.samples[0]["skipped_dates"] == []
+    assert summary.samples[0]["coverage_tier"] == "FULL"
     connection.close()
+
+
+def test_opening_average_keeps_exact_previous_ten_window(
+    tmp_path: Path,
+) -> None:
+    history = tmp_path / "opening-window-history.db"
+    daily = tmp_path / "opening-window-daily.db"
+    output = tmp_path / "opening-window-baseline.db"
+    dates = _weekdays(date(2026, 8, 24), 11)
+    _history_db(
+        history,
+        [
+            ("HPG", "HOSE", trading_date, "09:15", index)
+            for index, trading_date in enumerate(dates, start=1)
+        ],
+    )
+    as_of_date = _daily_from_history(history, daily)
+    broken_date = dates[5]
+    daily_write = sqlite3.connect(daily)
+    daily_write.execute(
+        "UPDATE daily_bars SET volume=volume+1 "
+        "WHERE symbol='HPG' AND trading_date=?",
+        (broken_date,),
+    )
+    daily_write.commit()
+    daily_write.close()
+
+    _build_volume_baseline(
+        history_db=history,
+        daily_db=daily,
+        output_db=output,
+        as_of_date=as_of_date,
+        symbols=["HPG"],
+    )
+    connection = _connect(output)
+    opening = connection.execute(
+        "SELECT avg_cumulative_volume, avg_opening_volume "
+        "FROM volume_baseline WHERE symbol='HPG' AND minute='09:15'"
+    ).fetchone()
+    connection.close()
+
+    ordinary_selected = [1, *[value for value in range(2, 12) if value != 6]]
+    exact_window_opening = [value for value in range(2, 12) if value != 6]
+    assert opening["avg_cumulative_volume"] == sum(ordinary_selected) / 10
+    assert opening["avg_opening_volume"] == (
+        sum(exact_window_opening) / len(exact_window_opening)
+    )
 
 
 def test_four_sessions_report_four_and_no_history_symbol_does_not_fail(
@@ -478,9 +878,10 @@ def test_four_sessions_report_four_and_no_history_symbol_does_not_fail(
     ).fetchone()
     assert hpg_coverage["available_sessions"] == 4
     assert hpg_coverage["baseline_sessions_used"] == 4
+    assert hpg_coverage["coverage_tier"] == "INSUFFICIENT"
     assert connection.execute(
-        "SELECT MIN(historical_sessions) FROM volume_baseline WHERE symbol='HPG'"
-    ).fetchone()[0] == 4
+        "SELECT COUNT(*) FROM volume_baseline WHERE symbol='HPG'"
+    ).fetchone()[0] == 0
     assert no_history["available_sessions"] == 4
     assert no_history["baseline_sessions_used"] == 0
     assert no_history["active_sessions_available"] == 0
@@ -491,6 +892,11 @@ def test_four_sessions_report_four_and_no_history_symbol_does_not_fail(
         "SELECT COUNT(*) FROM volume_baseline WHERE symbol='NOHIST'"
     ).fetchone()[0] == 0
     assert summary.symbols_without_history == 1
+    assert summary.symbols_under_8_sessions == 2
+    assert summary.symbols_no_history == 1
+    snapshot = load_volume_baseline(output)
+    assert snapshot.coverage["HPG"].baseline_sessions_used == 4
+    assert not any(key[0] == "HPG" for key in snapshot.points)
     connection.close()
 
 
@@ -533,13 +939,10 @@ def test_global_calendar_does_not_zero_fill_whole_missing_sessions(
     assert coverage["active_sessions_used"] == 2
     assert coverage["first_history_date"] == dates[0]
     assert coverage["last_history_date"] == dates[-1]
-    assert rolling["historical_sessions"] == 2
-    assert rolling["avg_cumulative_volume"] == 200
-    assert rolling["avg_volume_15"] == 200
-    assert rolling_30["historical_sessions"] == 2
-    assert rolling_30["avg_volume_30"] == 200
-    assert close["historical_sessions"] == 2
-    assert close["avg_cumulative_volume"] == 200
+    assert coverage["coverage_tier"] == "INSUFFICIENT"
+    assert rolling is None
+    assert rolling_30 is None
+    assert close is None
     connection.close()
 
 
@@ -573,10 +976,9 @@ def test_global_calendar_excludes_unproven_trailing_missing_sessions(
     assert coverage["available_sessions"] == 10
     assert coverage["active_sessions_available"] == 2
     assert coverage["last_history_date"] == dates[4]
-    assert opening["historical_sessions"] == 2
-    assert opening["avg_opening_volume"] == 50
-    assert close["historical_sessions"] == 2
-    assert close["avg_cumulative_volume"] == 100
+    assert coverage["coverage_tier"] == "INSUFFICIENT"
+    assert opening is None
+    assert close is None
     connection.close()
 
 
@@ -610,8 +1012,8 @@ def test_newly_observed_symbol_keeps_exact_candidate_window_but_uses_only_proven
     assert coverage["active_sessions_used"] == 2
     assert coverage["first_history_date"] == dates[7]
     assert coverage["last_history_date"] == dates[9]
-    assert row["historical_sessions"] == 2
-    assert row["avg_volume_15"] == 60
+    assert coverage["coverage_tier"] == "INSUFFICIENT"
+    assert row is None
     connection.close()
 
 
@@ -641,12 +1043,12 @@ def test_active_sessions_used_only_counts_active_dates_inside_lookback(
     row = connection.execute(
         "SELECT * FROM volume_baseline WHERE symbol='SHS' AND minute='09:14'"
     ).fetchone()
-    assert coverage["available_sessions"] == 10
-    assert coverage["baseline_sessions_used"] == 1
-    assert coverage["active_sessions_available"] == 1
-    assert coverage["active_sessions_used"] == 1
-    assert row["historical_sessions"] == 1
-    assert row["avg_volume_15"] == 200
+    assert coverage["available_sessions"] == 12
+    assert coverage["baseline_sessions_used"] == 2
+    assert coverage["active_sessions_available"] == 2
+    assert coverage["active_sessions_used"] == 2
+    assert coverage["coverage_tier"] == "INSUFFICIENT"
+    assert row is None
     connection.close()
 
 

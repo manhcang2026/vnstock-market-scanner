@@ -101,7 +101,11 @@ def _write_baseline(
         )
     connection.execute(
         """
-        INSERT INTO volume_baseline_coverage VALUES (
+        INSERT INTO volume_baseline_coverage (
+            symbol, exchange, available_sessions, baseline_sessions_used,
+            active_sessions_available, active_sessions_used,
+            first_history_date, last_history_date
+        ) VALUES (
             'VGI', 'UPCOM', 10, ?, 10, ?, '2026-09-04', '2026-09-17'
         )
         """,

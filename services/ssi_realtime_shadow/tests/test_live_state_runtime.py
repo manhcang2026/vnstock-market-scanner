@@ -44,7 +44,10 @@ def _baseline(path: Path, *, day: str = DAY, sessions: int = 10) -> None:
         ),
     )
     connection.execute(
-        "INSERT INTO volume_baseline_coverage VALUES "
+        "INSERT INTO volume_baseline_coverage ("
+        "symbol,exchange,available_sessions,baseline_sessions_used,"
+        "active_sessions_available,active_sessions_used,"
+        "first_history_date,last_history_date) VALUES "
         "('SHS','HNX',10,?,10,?,'2026-09-07','2026-09-18')",
         (sessions, sessions),
     )

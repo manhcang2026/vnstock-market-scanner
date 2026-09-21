@@ -251,7 +251,7 @@ def test_real_baseline_keeps_exact10_as_finalized_stream_days_advance(
     market_connection.close()
 
     coverage = _coverage(output)
-    assert first_summary.candidate_market_sessions == 10
+    assert first_summary.candidate_market_sessions == 11
     assert first_summary.symbols_10_10_proven == 1
     assert coverage["baseline_sessions_used"] == 10
     assert coverage["first_history_date"] == old_dates[1]

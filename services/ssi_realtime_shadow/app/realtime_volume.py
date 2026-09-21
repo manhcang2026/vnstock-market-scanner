@@ -10,7 +10,12 @@ from types import MappingProxyType
 from typing import Mapping
 
 from .market_session import VN_TZ, SessionType, classify_market_session, normalize_exchange
-from .volume_baseline import VolumeGridPoint, volume_market_grid
+from .volume_baseline import (
+    MAX_BREAK_BLOCKS,
+    MINIMUM_BASELINE_SESSIONS,
+    VolumeGridPoint,
+    volume_market_grid,
+)
 
 
 class BaselineValidationError(ValueError):
@@ -27,6 +32,16 @@ class BaselineCoverage:
     active_sessions_used: int
     first_history_date: str | None
     last_history_date: str | None
+    break_blocks: int = 0
+    coverage_tier: str = "INSUFFICIENT"
+    stopped_reason: str | None = None
+
+    @property
+    def usable(self) -> bool:
+        return (
+            self.baseline_sessions_used >= MINIMUM_BASELINE_SESSIONS
+            and self.break_blocks <= MAX_BREAK_BLOCKS
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -328,7 +343,8 @@ def _load_coverage(
         """
         SELECT symbol, exchange, available_sessions, baseline_sessions_used,
                active_sessions_available, active_sessions_used,
-               first_history_date, last_history_date
+               first_history_date, last_history_date, break_blocks,
+               coverage_tier, stopped_reason
         FROM volume_baseline_coverage
         """
     )
@@ -350,6 +366,9 @@ def _load_coverage(
         )
         active_used = _nonnegative_int(
             row["active_sessions_used"], f"active_sessions_used for {symbol}"
+        )
+        break_blocks = _nonnegative_int(
+            row["break_blocks"], f"break_blocks for {symbol}"
         )
         if (
             used > available
@@ -397,6 +416,13 @@ def _load_coverage(
             active_sessions_used=active_used,
             first_history_date=first_history_date,
             last_history_date=last_history_date,
+            break_blocks=break_blocks,
+            coverage_tier=str(row["coverage_tier"] or "INSUFFICIENT"),
+            stopped_reason=(
+                str(row["stopped_reason"])
+                if row["stopped_reason"] is not None
+                else None
+            ),
         )
     return coverage
 
@@ -484,10 +510,11 @@ def _load_points(
 
     for symbol, item in coverage.items():
         symbol_keys = keys_by_symbol.get(symbol, set())
-        if item.baseline_sessions_used == 0:
+        if not item.usable:
             if symbol_keys:
                 raise BaselineValidationError(
-                    f"No-baseline coverage symbol {symbol} unexpectedly has points"
+                    f"Insufficient-baseline coverage symbol {symbol} "
+                    "unexpectedly has points"
                 )
             continue
         assert item.exchange is not None

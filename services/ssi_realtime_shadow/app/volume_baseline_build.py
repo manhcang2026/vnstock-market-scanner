@@ -5,7 +5,7 @@ import json
 from datetime import date
 from pathlib import Path
 
-from .volume_baseline import build_volume_baseline
+from .volume_baseline import DEFAULT_MAX_SCAN_SESSIONS, build_volume_baseline
 
 
 def _symbols(value: str) -> list[str]:
@@ -23,6 +23,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--daily-db", required=True, type=Path)
     parser.add_argument("--output-db", required=True, type=Path)
     parser.add_argument("--lookback", type=int, default=10)
+    parser.add_argument(
+        "--max-scan-sessions",
+        type=int,
+        default=DEFAULT_MAX_SCAN_SESSIONS,
+        help="Maximum candidate market sessions scanned per symbol",
+    )
     parser.add_argument("--as-of-date", required=True)
     parser.add_argument("--symbols", type=_symbols, help="Comma-separated symbols")
     return parser
@@ -30,8 +36,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    if args.lookback < 1:
-        raise SystemExit("--lookback must be positive")
+    if args.lookback != 10:
+        raise SystemExit("--lookback must be 10 for the approved policy")
+    if args.max_scan_sessions < 1:
+        raise SystemExit("--max-scan-sessions must be positive")
     try:
         if date.fromisoformat(args.as_of_date).isoformat() != args.as_of_date:
             raise ValueError
@@ -43,6 +51,7 @@ def main(argv: list[str] | None = None) -> int:
         output_db=args.output_db,
         as_of_date=args.as_of_date,
         lookback=args.lookback,
+        max_scan_sessions=args.max_scan_sessions,
         symbols=args.symbols,
     )
     print(json.dumps(summary.to_dict(), ensure_ascii=False, indent=2, sort_keys=True))
