@@ -51,7 +51,9 @@ def _baseline(path: Path, *, day: str = DAY, sessions: int = 10) -> None:
         "('SHS','HNX',10,?,10,?,'2026-09-07','2026-09-18')",
         (sessions, sessions),
     )
-    for index, point in enumerate(volume_market_grid("HNX"), start=1):
+    for index, point in enumerate(
+        volume_market_grid("HNX", include_provider_boundaries=True), start=1
+    ):
         connection.execute(
             "INSERT INTO volume_baseline VALUES (?,?,?,?,?,?,?,?,?)",
             (

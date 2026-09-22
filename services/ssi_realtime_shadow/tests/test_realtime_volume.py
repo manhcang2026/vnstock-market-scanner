@@ -82,7 +82,9 @@ def _write_baseline(
                     rvol30_denominator if point.rolling_30_ready else None,
                     opening_denominator if point.is_opening else None,
                 )
-                for point in volume_market_grid(exchange)
+                for point in volume_market_grid(
+                    exchange, include_provider_boundaries=True
+                )
             ],
         )
     connection.commit()
@@ -136,6 +138,60 @@ def test_loads_schema_v2_baseline_as_immutable_memory_snapshot(
     assert baseline.points[("HPG", "09:30")].avg_volume_15 == 15
     with pytest.raises(TypeError):
         baseline.coverage["NEW"] = baseline.coverage["SHS"]  # type: ignore[index]
+
+
+def test_loader_accepts_all_provider_boundary_points(tmp_path: Path) -> None:
+    path = tmp_path / "provider-boundary-baseline.db"
+    _write_baseline(path)
+
+    baseline = load_volume_baseline(path)
+
+    expected_boundaries = {
+        ("HPG", "11:30"),
+        ("HPG", "14:30"),
+        ("SHS", "11:30"),
+        ("SHS", "14:30"),
+        ("VGI", "11:30"),
+    }
+    assert expected_boundaries <= baseline.points.keys()
+    assert {
+        baseline.points[key].session_segment for key in expected_boundaries
+    } == {"PROVIDER_BOUNDARY"}
+
+
+def test_loader_still_rejects_minute_outside_provider_grid(tmp_path: Path) -> None:
+    path = tmp_path / "invalid-minute-baseline.db"
+    _write_baseline(path, symbols=(("HPG", "HOSE", 10, 8),))
+    connection = sqlite3.connect(path)
+    connection.execute(
+        "UPDATE volume_baseline SET minute='08:00' "
+        "WHERE symbol='HPG' AND minute='11:30'"
+    )
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(
+        BaselineValidationError,
+        match=r"Baseline minute is outside the HOSE grid: HPG/08:00",
+    ):
+        load_volume_baseline(path)
+
+
+def test_provider_boundary_baseline_does_not_expand_live_grids(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "provider-boundary-baseline.db"
+    _write_baseline(path)
+
+    engine = RealtimeVolumeEngine(path)
+
+    for exchange in ("HOSE", "HNX"):
+        live_minutes = {point.minute for point in engine._grids[exchange]}
+        assert "11:30" not in live_minutes
+        assert "14:30" not in live_minutes
+    assert "11:30" not in {
+        point.minute for point in engine._grids["UPCOM"]
+    }
 
 
 def test_wrong_schema_version_fails_clearly(tmp_path: Path) -> None:

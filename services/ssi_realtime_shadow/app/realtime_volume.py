@@ -434,7 +434,12 @@ def _load_points(
 ) -> dict[tuple[str, str], BaselinePoint]:
     points: dict[tuple[str, str], BaselinePoint] = {}
     grid_by_exchange = {
-        exchange: {point.minute: point for point in volume_market_grid(exchange)}
+        exchange: {
+            point.minute: point
+            for point in volume_market_grid(
+                exchange, include_provider_boundaries=True
+            )
+        }
         for exchange in ("HOSE", "HNX", "UPCOM")
     }
     keys_by_symbol: dict[str, set[tuple[str, str]]] = {}
@@ -520,7 +525,10 @@ def _load_points(
             continue
         assert item.exchange is not None
         expected_keys = {
-            (symbol, point.minute) for point in volume_market_grid(item.exchange)
+            (symbol, point.minute)
+            for point in volume_market_grid(
+                item.exchange, include_provider_boundaries=True
+            )
         }
         if symbol_keys != expected_keys:
             missing = len(expected_keys - symbol_keys)

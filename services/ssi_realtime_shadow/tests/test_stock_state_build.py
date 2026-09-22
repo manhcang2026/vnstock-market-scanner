@@ -112,7 +112,11 @@ def _write_baseline(
         """,
         (sessions_used, sessions_used, break_blocks),
     )
-    points = volume_market_grid("UPCOM") if sessions_used >= 8 and break_blocks <= 2 else ()
+    points = (
+        volume_market_grid("UPCOM", include_provider_boundaries=True)
+        if sessions_used >= 8 and break_blocks <= 2
+        else ()
+    )
     for index, point in enumerate(points, start=1):
         connection.execute(
             """
