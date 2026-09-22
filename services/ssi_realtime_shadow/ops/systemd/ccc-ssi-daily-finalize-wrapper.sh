@@ -145,6 +145,26 @@ def fetch_daily_checkpoint(con, client, symbol, day, target):
             )
             if raw_day in {day, target.strftime("%d/%m/%Y"), target.strftime("%Y%m%d")}:
                 matches.append(item)
+        if not matches:
+            intraday = con.execute(
+                """
+                SELECT status, row_count
+                FROM historical_bootstrap_checkpoints
+                WHERE symbol=? AND from_date=? AND to_date=? AND resolution=1
+                """,
+                (symbol, day, day),
+            ).fetchone()
+            if intraday == ("NO_DATA", 0):
+                diagnostic = "EMPTY_RESPONSE_CONFIRMED_BY_INTRADAY_NO_DATA"
+                upsert_daily_checkpoint(
+                    con, symbol, day, "NO_DATA", error=diagnostic
+                )
+                return "NO_DATA"
+            raise RuntimeError(
+                "EMPTY_OR_AMBIGUOUS_RESPONSE: expected one DailyOhlc row, "
+                "received 0 without explicit NoDataFound or confirming "
+                "Intraday NO_DATA"
+            )
         if len(matches) != 1:
             raise RuntimeError(
                 "EMPTY_OR_AMBIGUOUS_RESPONSE: expected one DailyOhlc row, "

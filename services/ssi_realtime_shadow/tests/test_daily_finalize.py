@@ -632,6 +632,34 @@ def _wrapper_validation_connection(
     return connection
 
 
+def _wrapper_fetch_connection(
+    namespace: dict[str, object],
+    *,
+    intraday_status: str | None,
+    row_count: int = 0,
+) -> sqlite3.Connection:
+    connection = sqlite3.connect(":memory:")
+    connection.execute(
+        """
+        CREATE TABLE historical_bootstrap_checkpoints (
+            symbol TEXT NOT NULL,
+            from_date TEXT NOT NULL,
+            to_date TEXT NOT NULL,
+            resolution INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            row_count INTEGER NOT NULL
+        )
+        """
+    )
+    if intraday_status is not None:
+        connection.execute(
+            "INSERT INTO historical_bootstrap_checkpoints VALUES (?, ?, ?, 1, ?, ?)",
+            ("AAA", DAY, DAY, intraday_status, row_count),
+        )
+    namespace["ensure_daily_checkpoint_schema"](connection)
+    return connection
+
+
 def test_wrapper_accepts_exact_completed_checkpoint_row_count() -> None:
     namespace = _wrapper_daily_namespace()
     connection = _wrapper_validation_connection(
@@ -707,10 +735,38 @@ def test_wrapper_rejects_no_data_checkpoint_with_staged_rows() -> None:
     connection.close()
 
 
-def test_successful_empty_daily_response_is_failed_not_no_data() -> None:
+def test_daily_empty_is_no_data_when_intraday_is_confirmed_no_data() -> None:
     namespace = _wrapper_daily_namespace()
-    connection = sqlite3.connect(":memory:")
-    namespace["ensure_daily_checkpoint_schema"](connection)
+    connection = _wrapper_fetch_connection(
+        namespace, intraday_status="NO_DATA", row_count=0
+    )
+
+    class EmptyClient:
+        @staticmethod
+        def fetch_daily_ohlc(_symbol, _start, _end):
+            return []
+
+    result = namespace["fetch_daily_checkpoint"](
+        connection, EmptyClient(), "AAA", DAY, date.fromisoformat(DAY)
+    )
+    row = connection.execute(
+        "SELECT status, payload_json, error FROM eod_daily_checkpoints"
+    ).fetchone()
+    connection.close()
+
+    assert result == "NO_DATA"
+    assert row == (
+        "NO_DATA",
+        None,
+        "EMPTY_RESPONSE_CONFIRMED_BY_INTRADAY_NO_DATA",
+    )
+
+
+def test_daily_empty_fails_when_intraday_is_completed() -> None:
+    namespace = _wrapper_daily_namespace()
+    connection = _wrapper_fetch_connection(
+        namespace, intraday_status="COMPLETED", row_count=1
+    )
 
     class EmptyClient:
         @staticmethod
@@ -727,6 +783,136 @@ def test_successful_empty_daily_response_is_failed_not_no_data() -> None:
     connection.close()
     assert row[0] == "FAILED"
     assert "EMPTY_OR_AMBIGUOUS_RESPONSE" in row[1]
+
+
+def test_daily_empty_fails_when_intraday_is_failed() -> None:
+    namespace = _wrapper_daily_namespace()
+    connection = _wrapper_fetch_connection(
+        namespace, intraday_status="FAILED", row_count=0
+    )
+
+    class EmptyClient:
+        @staticmethod
+        def fetch_daily_ohlc(_symbol, _start, _end):
+            return []
+
+    with pytest.raises(RuntimeError, match="without explicit NoDataFound"):
+        namespace["fetch_daily_checkpoint"](
+            connection, EmptyClient(), "AAA", DAY, date.fromisoformat(DAY)
+        )
+    row = connection.execute(
+        "SELECT status, error FROM eod_daily_checkpoints"
+    ).fetchone()
+    connection.close()
+    assert row[0] == "FAILED"
+    assert "EMPTY_OR_AMBIGUOUS_RESPONSE" in row[1]
+
+
+def test_daily_empty_fails_when_intraday_checkpoint_is_missing() -> None:
+    namespace = _wrapper_daily_namespace()
+    connection = _wrapper_fetch_connection(namespace, intraday_status=None)
+
+    class EmptyClient:
+        @staticmethod
+        def fetch_daily_ohlc(_symbol, _start, _end):
+            return []
+
+    with pytest.raises(RuntimeError, match="without explicit NoDataFound"):
+        namespace["fetch_daily_checkpoint"](
+            connection, EmptyClient(), "AAA", DAY, date.fromisoformat(DAY)
+        )
+    row = connection.execute(
+        "SELECT status, error FROM eod_daily_checkpoints"
+    ).fetchone()
+    connection.close()
+    assert row[0] == "FAILED"
+    assert "EMPTY_OR_AMBIGUOUS_RESPONSE" in row[1]
+
+
+def test_daily_empty_fails_when_intraday_no_data_has_nonzero_count() -> None:
+    namespace = _wrapper_daily_namespace()
+    connection = _wrapper_fetch_connection(
+        namespace, intraday_status="NO_DATA", row_count=1
+    )
+
+    class EmptyClient:
+        @staticmethod
+        def fetch_daily_ohlc(_symbol, _start, _end):
+            return []
+
+    with pytest.raises(RuntimeError, match="without explicit NoDataFound"):
+        namespace["fetch_daily_checkpoint"](
+            connection, EmptyClient(), "AAA", DAY, date.fromisoformat(DAY)
+        )
+    row = connection.execute(
+        "SELECT status, error FROM eod_daily_checkpoints"
+    ).fetchone()
+    connection.close()
+    assert row[0] == "FAILED"
+    assert "EMPTY_OR_AMBIGUOUS_RESPONSE" in row[1]
+
+
+def test_daily_multiple_matching_rows_remains_failed() -> None:
+    namespace = _wrapper_daily_namespace()
+    connection = _wrapper_fetch_connection(
+        namespace, intraday_status="NO_DATA", row_count=0
+    )
+
+    class AmbiguousClient:
+        @staticmethod
+        def fetch_daily_ohlc(_symbol, _start, _end):
+            return [{"TradingDate": DAY}, {"TradingDate": DAY}]
+
+    with pytest.raises(RuntimeError, match="received 2"):
+        namespace["fetch_daily_checkpoint"](
+            connection, AmbiguousClient(), "AAA", DAY, date.fromisoformat(DAY)
+        )
+    row = connection.execute(
+        "SELECT status, error FROM eod_daily_checkpoints"
+    ).fetchone()
+    connection.close()
+    assert row[0] == "FAILED"
+    assert "EMPTY_OR_AMBIGUOUS_RESPONSE" in row[1]
+
+
+def test_failed_daily_checkpoint_retries_empty_as_confirmed_no_data() -> None:
+    namespace = _wrapper_daily_namespace()
+    connection = _wrapper_fetch_connection(
+        namespace, intraday_status="NO_DATA", row_count=0
+    )
+    namespace["upsert_daily_checkpoint"](
+        connection,
+        "AAA",
+        DAY,
+        "FAILED",
+        error="RuntimeError: EMPTY_OR_AMBIGUOUS_RESPONSE",
+    )
+
+    class EmptyClient:
+        calls = 0
+
+        def fetch_daily_ohlc(self, _symbol, _start, _end):
+            self.calls += 1
+            return []
+
+    client = EmptyClient()
+    first = namespace["fetch_daily_checkpoint"](
+        connection, client, "AAA", DAY, date.fromisoformat(DAY)
+    )
+    second = namespace["fetch_daily_checkpoint"](
+        connection, client, "AAA", DAY, date.fromisoformat(DAY)
+    )
+    row = connection.execute(
+        "SELECT status, payload_json, error FROM eod_daily_checkpoints"
+    ).fetchone()
+    connection.close()
+
+    assert (first, second, client.calls) == ("NO_DATA", "NO_DATA", 1)
+    assert row == (
+        "NO_DATA",
+        None,
+        "EMPTY_RESPONSE_CONFIRMED_BY_INTRADAY_NO_DATA",
+    )
 
 
 def test_daily_no_data_checkpoint_is_persisted_and_skipped_on_rerun() -> None:
