@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from enum import Enum
 from typing import Final
 from zoneinfo import ZoneInfo
@@ -237,6 +237,30 @@ def market_day_feed_start(moment: datetime, exchange: str) -> datetime | None:
         if definition.session_type is not SessionType.LUNCH_BREAK
     )
     return _at(local_moment.date(), first_active.start)
+
+
+def missing_market_minutes(
+    exchange: str, previous_event: datetime, current_event: datetime
+) -> tuple[str, ...]:
+    """Return expected feed minutes strictly between two accepted events.
+
+    Session breaks are intentionally absent.  The result is diagnostic evidence,
+    not a wall-clock duration, so a restart across lunch is harmless while a
+    skipped continuous/auction minute remains fail-closed.
+    """
+    canonical_exchange = normalize_exchange(exchange)
+    previous = _localize(previous_event)
+    current = _localize(current_event)
+    if current <= previous or current.date() != previous.date():
+        return ()
+    cursor = previous.replace(second=0, microsecond=0) + timedelta(minutes=1)
+    stop = current.replace(second=0, microsecond=0)
+    missing: list[str] = []
+    while cursor < stop:
+        if market_feed_expected(cursor, canonical_exchange):
+            missing.append(cursor.strftime("%H:%M"))
+        cursor += timedelta(minutes=1)
+    return tuple(missing)
 
 
 def market_feed_stale(

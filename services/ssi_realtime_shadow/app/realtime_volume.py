@@ -663,7 +663,6 @@ class RealtimeVolumeEngine:
                     )
 
             event_integrity_reasons = self._event_integrity_reasons(event)
-            state.integrity_reasons.update(event_integrity_reasons)
             state.latest_total_volume = event.total_volume
             state.latest_quality_status = event.quality_status
             state.latest_event_time = event.event_time
@@ -676,6 +675,12 @@ class RealtimeVolumeEngine:
                 )
                 reasons = state.bucket_reasons.setdefault(bucket, set())
                 reasons.update(event_integrity_reasons)
+                # Quality is sticky only for the active canonical minute.  On
+                # finalization it moves to finalized_quality_reasons; a later
+                # clean minute cannot erase accepted corrupt evidence.
+                state.integrity_reasons = set(reasons)
+            else:
+                state.integrity_reasons = set(event_integrity_reasons)
 
             state.snapshot = self._refresh_latest_quality(state)
             return state.snapshot

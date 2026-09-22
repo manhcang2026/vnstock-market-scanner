@@ -695,6 +695,69 @@ def test_current_partial_minute_is_not_used_in_completed_rvol(tmp_path: Path) ->
     assert "CURRENT_PARTIAL" in current.reasons
 
 
+def test_rejected_stale_event_does_not_poison_trust(tmp_path: Path) -> None:
+    path = tmp_path / "baseline.db"
+    _write_baseline(path)
+    engine = RealtimeVolumeEngine(path)
+    trusted = engine.on_event(_event("SHS", "HNX", "09:01", 10))
+    assert trusted.metrics_trusted
+
+    with pytest.raises(ValueError, match="Out-of-order event_time"):
+        engine.on_event(_event("SHS", "HNX", "09:00", 999))
+
+    after = engine.get_snapshot("SHS")
+    assert after is not None and after.metrics_trusted
+    assert "CURRENT_PARTIAL" not in after.reasons
+    assert "CURRENT_GAP" not in after.reasons
+
+
+def test_accepted_bad_minute_remains_untrusted_after_finalization(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "baseline.db"
+    _write_baseline(path)
+    engine = RealtimeVolumeEngine(path)
+    engine.on_event(
+        _event(
+            "SHS",
+            "HNX",
+            "09:00",
+            10,
+            quality_status="VOLUME_REGRESSION",
+            is_partial=True,
+        )
+    )
+    engine.advance_time(_at("09:01"))
+    later = engine.on_event(_event("SHS", "HNX", "09:01", 5))
+
+    assert not later.metrics_trusted
+    assert "CURRENT_PARTIAL" in later.reasons
+    assert "NON_TRUSTED_QUALITY" in later.reasons
+
+
+def test_trusted_update_cannot_clear_bad_evidence_in_same_open_minute(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "baseline.db"
+    _write_baseline(path)
+    engine = RealtimeVolumeEngine(path)
+    bad = engine.on_event(
+        _event(
+            "SHS",
+            "HNX",
+            "09:00",
+            0,
+            quality_status="PARTIAL",
+            is_partial=True,
+        )
+    )
+    clean_later = engine.on_event(_event("SHS", "HNX", "09:00", 10))
+
+    assert not bad.metrics_trusted
+    assert not clean_later.metrics_trusted
+    assert "CURRENT_PARTIAL" in clean_later.reasons
+
+
 def test_snapshot_exposes_baseline_and_active_session_coverage(tmp_path: Path) -> None:
     path = tmp_path / "baseline.db"
     _write_baseline(path)

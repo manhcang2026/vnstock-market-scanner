@@ -121,7 +121,7 @@ def test_regression_is_zero_delta_and_never_lowers_high_watermark() -> None:
     assert recovered.delta == 20
     assert bucket.auction_volume == 120
     assert bucket.out_of_order_events == 1
-    assert bucket.quality_status == "TRUSTED"
+    assert bucket.quality_status == "DEGRADED"
     assert bucket.finalized
 
 
@@ -146,6 +146,27 @@ def test_hydration_before_atc_uses_persisted_lo_watermark_and_price() -> None:
     assert bucket.auction_volume == 8_520_100
     assert bucket.start_total_volume == 6_980_600
     assert bucket.pre_auction_price == 73_900
+
+
+def test_hydration_before_ato_keeps_explicit_provider_session_proof() -> None:
+    accumulator = AuctionSessionAccumulator()
+    accumulator.hydrate(
+        symbol="FPT",
+        trading_date=TRADING_DATE,
+        exchange="HOSE",
+        high_watermark=0,
+        last_continuous_price=None,
+        last_structural_event_at=None,
+    )
+    result = accumulator.on_event(
+        _event("ATO", 100, minute="09:00", price=101)
+    )
+    bucket = accumulator.get_bucket("FPT", TRADING_DATE, OPEN_AUCTION)
+
+    assert result.auction_type == OPEN_AUCTION
+    assert bucket.provider_session == "ATO"
+    assert bucket.auction_volume == 100
+    assert bucket.quality_status == "TRUSTED"
 
 
 def test_hydration_during_atc_preserves_bucket_and_appends_only_new_delta() -> None:
@@ -226,6 +247,50 @@ def test_regressing_lo_cannot_replace_valid_preclose_before_atc() -> None:
     assert bucket.auction_volume == 200
 
 
+def test_rejected_ordinary_event_does_not_poison_later_atc() -> None:
+    accumulator = AuctionSessionAccumulator()
+    accumulator.on_event(_event("LO", 1_000, minute="14:29", price=103))
+    rejected = accumulator.on_event(
+        _event(
+            "LO",
+            900,
+            minute="14:30",
+            price=90,
+            quality_status="VOLUME_REGRESSION",
+            is_partial=True,
+        )
+    )
+    accumulator.on_event(_event("ATC", 1_200, minute="14:31", price=101))
+    bucket = accumulator.get_bucket("FPT", TRADING_DATE, CLOSE_AUCTION)
+
+    assert rejected.anomaly == "OUT_OF_ORDER_REGRESSION"
+    assert bucket.quality_status == "TRUSTED"
+    assert bucket.pre_auction_price == 103
+
+
+def test_first_actual_auction_regression_creates_degraded_diagnostic_bucket() -> None:
+    accumulator = AuctionSessionAccumulator()
+    accumulator.on_event(_event("LO", 1_000, minute="14:29", price=103))
+
+    rejected = accumulator.on_event(
+        _event(
+            "ATC",
+            900,
+            minute="14:30",
+            price=90,
+            quality_status="VOLUME_REGRESSION",
+            is_partial=True,
+        )
+    )
+    bucket = accumulator.get_bucket("FPT", TRADING_DATE, CLOSE_AUCTION)
+
+    assert rejected.anomaly == "OUT_OF_ORDER_REGRESSION"
+    assert bucket.quality_status == "DEGRADED"
+    assert bucket.auction_price is None
+    assert bucket.auction_volume == 0
+    assert bucket.out_of_order_events == 1
+
+
 def test_duplicate_total_volume_adds_zero() -> None:
     accumulator = AuctionSessionAccumulator()
     accumulator.on_event(_event("ATC", 1_000, minute="14:30"))
@@ -244,7 +309,7 @@ def test_unsupported_provider_session_is_a_quality_failure() -> None:
 
     assert unsupported.auction_type is None
     assert unsupported.anomaly == "UNSUPPORTED_SESSION"
-    assert bucket.quality_status == "DEGRADED"
+    assert bucket.quality_status == "TRUSTED"
 
 
 @pytest.mark.parametrize(

@@ -763,7 +763,7 @@ def test_lunch_keeps_day_cumulative_and_resets_rolling_window(
     connection.close()
 
 
-def test_lookback_uses_latest_ten_sessions_and_coverage_keeps_all_history(
+def test_lookback_uses_only_exact_previous_ten_sessions(
     tmp_path: Path,
 ) -> None:
     history = tmp_path / "history.db"
@@ -789,7 +789,7 @@ def test_lookback_uses_latest_ten_sessions_and_coverage_keeps_all_history(
     baseline = connection.execute(
         "SELECT * FROM volume_baseline WHERE symbol='SHS' AND minute='09:15'"
     ).fetchone()
-    assert coverage["available_sessions"] == 12
+    assert coverage["available_sessions"] == 10
     assert coverage["baseline_sessions_used"] == 10
     assert coverage["active_sessions_available"] == 10
     assert coverage["active_sessions_used"] == 10
@@ -846,13 +846,21 @@ def test_opening_average_keeps_exact_previous_ten_window(
         "SELECT avg_cumulative_volume, avg_opening_volume "
         "FROM volume_baseline WHERE symbol='HPG' AND minute='09:15'"
     ).fetchone()
+    coverage = connection.execute(
+        "SELECT * FROM volume_baseline_coverage WHERE symbol='HPG'"
+    ).fetchone()
     connection.close()
 
-    ordinary_selected = [1, *[value for value in range(2, 12) if value != 6]]
-    exact_window_opening = [value for value in range(2, 12) if value != 6]
-    assert opening["avg_cumulative_volume"] == sum(ordinary_selected) / 10
+    exact_window_values = [value for value in range(2, 12) if value != 6]
+    assert coverage["available_sessions"] == 10
+    assert coverage["baseline_sessions_used"] == 9
+    assert coverage["first_history_date"] == dates[1]
+    assert coverage["skipped_sessions"] == 1
+    assert opening["avg_cumulative_volume"] == (
+        sum(exact_window_values) / len(exact_window_values)
+    )
     assert opening["avg_opening_volume"] == (
-        sum(exact_window_opening) / len(exact_window_opening)
+        sum(exact_window_values) / len(exact_window_values)
     )
 
 
@@ -1043,10 +1051,12 @@ def test_active_sessions_used_only_counts_active_dates_inside_lookback(
     row = connection.execute(
         "SELECT * FROM volume_baseline WHERE symbol='SHS' AND minute='09:14'"
     ).fetchone()
-    assert coverage["available_sessions"] == 12
-    assert coverage["baseline_sessions_used"] == 2
-    assert coverage["active_sessions_available"] == 2
-    assert coverage["active_sessions_used"] == 2
+    assert coverage["available_sessions"] == 10
+    assert coverage["baseline_sessions_used"] == 1
+    assert coverage["active_sessions_available"] == 1
+    assert coverage["active_sessions_used"] == 1
+    assert coverage["first_history_date"] == dates[-1]
+    assert coverage["last_history_date"] == dates[-1]
     assert coverage["coverage_tier"] == "INSUFFICIENT"
     assert row is None
     connection.close()

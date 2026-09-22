@@ -12,10 +12,10 @@ from .market_session import VN_TZ, SessionType, classify_market_session, normali
 
 COVERAGE_PROOF = "SSI_DAILY_VOLUME_RECONCILED_V1"
 TRUSTED_DAILY_SOURCE = "SSI_DAILY_OHLC"
-TRUSTED_DAILY_SOURCES = frozenset({TRUSTED_DAILY_SOURCE, "SSI_STREAM"})
+TRUSTED_DAILY_SOURCES = frozenset({TRUSTED_DAILY_SOURCE})
 TRUSTED_INTRADAY_SOURCE = "SSI_REST"
 TRUSTED_REPLAY_SOURCES = frozenset({"SSI_REST", "SSI_STREAM"})
-TRUSTED_HISTORICAL_SOURCES = TRUSTED_REPLAY_SOURCES
+TRUSTED_HISTORICAL_SOURCES = frozenset({TRUSTED_INTRADAY_SOURCE})
 SAMPLE_SYMBOLS = ("HPG", "SHS", "VGI")
 TARGET_BASELINE_SESSIONS = 10
 MINIMUM_BASELINE_SESSIONS = 8
@@ -443,12 +443,33 @@ def load_candidate_market_sessions(
     lookback: int,
 ) -> list[str]:
     date.fromisoformat(as_of_date)
+    if _table_exists(daily, "trading_calendar"):
+        calendar_dates = {
+            str(row[0])
+            for row in daily.execute(
+                """
+                SELECT DISTINCT trading_date FROM trading_calendar
+                WHERE is_trading_day=1 AND trading_date < ?
+                """,
+                (as_of_date,),
+            )
+        }
+        if calendar_dates:
+            canonical_calendar_dates: list[str] = []
+            for value in calendar_dates:
+                try:
+                    if date.fromisoformat(value).isoformat() == value:
+                        canonical_calendar_dates.append(value)
+                except ValueError:
+                    continue
+            return sorted(canonical_calendar_dates)[-lookback:]
+
     observed_dates = {
         str(row[0])
         for row in daily.execute(
             """
             SELECT DISTINCT trading_date FROM daily_bars
-            WHERE source IN ('SSI_DAILY_OHLC', 'SSI_STREAM')
+            WHERE source='SSI_DAILY_OHLC'
               AND quality_status='TRUSTED' AND trading_date < ?
             """,
             (as_of_date,),
@@ -459,7 +480,7 @@ def load_candidate_market_sessions(
         for row in history.execute(
             """
             SELECT DISTINCT trading_date FROM minute_bars
-            WHERE data_source IN ('SSI_REST', 'SSI_STREAM')
+            WHERE data_source='SSI_REST'
               AND exchange IN ('HOSE', 'HNX', 'UPCOM')
               AND trading_date < ?
             """,
@@ -620,14 +641,14 @@ def prove_volume_session(
     symbol: str,
     trading_date: str,
 ) -> SessionProof:
-    """Prove canonical yearly REST or EOD-finalized STREAM history."""
+    """Prove canonical yearly REST history reconciled to SSI DailyOhlc."""
     return _prove_volume_session(
         history,
         daily,
         symbol=symbol,
         trading_date=trading_date,
         allowed_intraday_sources=TRUSTED_HISTORICAL_SOURCES,
-        require_finalized_stream=True,
+        require_finalized_stream=False,
     )
 
 
@@ -715,7 +736,7 @@ def build_volume_baseline(
             history,
             daily,
             as_of_date=as_of_date,
-            lookback=max_scan_sessions,
+            lookback=lookback,
         )
         selected_symbols = _source_symbols(history, daily, candidates, symbols)
         all_proofs: dict[str, list[SessionProof]] = {}

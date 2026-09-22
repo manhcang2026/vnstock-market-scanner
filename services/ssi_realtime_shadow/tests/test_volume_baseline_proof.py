@@ -9,6 +9,7 @@ import pytest
 from app.market_storage_schema import ensure_market_storage_schema
 from app.storage import SQLiteStore
 from app.volume_baseline import COVERAGE_PROOF, build_volume_baseline
+from app.volume_baseline_build import next_trading_session
 
 
 def _daily_db(path: Path, rows: list[tuple[str, str, str, int]]) -> None:
@@ -87,6 +88,22 @@ def _build(
     return history, daily, output, summary
 
 
+def test_next_session_prefers_populated_trading_calendar(tmp_path: Path) -> None:
+    market = tmp_path / "market.db"
+    _daily_db(market, [])
+    connection = sqlite3.connect(market)
+    connection.executemany(
+        "INSERT INTO trading_calendar VALUES (?, 'HOSE', 1, 'SSI', 'TRUSTED', 'fixed')",
+        (("2026-09-22",), ("2026-09-24",)),
+    )
+    connection.commit()
+    connection.close()
+
+    assert next_trading_session(market, "2026-09-21") == "2026-09-22"
+    with pytest.raises(ValueError, match="no proven next session"):
+        next_trading_session(market, "2026-09-24")
+
+
 def test_unproven_missing_session_is_not_zero_but_proven_missing_minute_is_zero(
     tmp_path: Path,
 ) -> None:
@@ -110,13 +127,14 @@ def test_unproven_missing_session_is_not_zero_but_proven_missing_minute_is_zero(
     assert coverage["baseline_sessions_used"] == 1
     assert summary.daily_missing_count == 1
     connection = sqlite3.connect(output)
-    # 09:17 was absent but can be zero-filled inside the one reconciled session.
+    # Proven missing minutes can be zero-filled only after minimum 8-session
+    # baseline eligibility is met; one session remains coverage-only evidence.
     row = connection.execute(
         "SELECT historical_sessions,avg_cumulative_volume FROM volume_baseline "
         "WHERE symbol='HPG' AND minute='09:17'"
     ).fetchone()
     connection.close()
-    assert row == (1, 10.0)
+    assert row is None
 
 
 def test_daily_zero_without_intraday_rows_is_a_proven_real_zero(tmp_path: Path) -> None:
@@ -132,7 +150,7 @@ def test_daily_zero_without_intraday_rows_is_a_proven_real_zero(tmp_path: Path) 
     assert connection.execute(
         "SELECT avg_cumulative_volume FROM volume_baseline "
         "WHERE symbol='VGI' AND minute='14:59'"
-    ).fetchone()[0] == 0
+    ).fetchone() is None
     connection.close()
 
 
@@ -237,7 +255,7 @@ def test_exact_previous_ten_excludes_as_of_and_does_not_reach_back(tmp_path: Pat
     assert metadata["as_of_date"] == as_of
 
 
-def test_calendar_keeps_intraday_observed_date_when_daily_is_globally_missing(
+def test_trading_calendar_exact_previous_ten_does_not_reach_back(
     tmp_path: Path,
 ) -> None:
     start = date(2026, 8, 31)
@@ -254,10 +272,24 @@ def test_calendar_keeps_intraday_observed_date_when_daily_is_globally_missing(
         for item in dates
         if item != missing_daily_date
     ]
-    _, _, output, summary = _build(
+    _, daily, output, _ = _build(
         tmp_path,
         history_rows=history_rows,
         daily_rows=daily_rows,
+        as_of_date=(date.fromisoformat(dates[-1]) + timedelta(days=1)).isoformat(),
+        symbols=["HPG"],
+    )
+    connection = sqlite3.connect(daily)
+    connection.executemany(
+        "INSERT INTO trading_calendar VALUES (?, 'HOSE', 1, 'SSI', 'TRUSTED', 'fixed')",
+        ((item,) for item in dates),
+    )
+    connection.commit()
+    connection.close()
+    summary = build_volume_baseline(
+        history_db=tmp_path / "history.db",
+        daily_db=daily,
+        output_db=output,
         as_of_date=(date.fromisoformat(dates[-1]) + timedelta(days=1)).isoformat(),
         symbols=["HPG"],
     )

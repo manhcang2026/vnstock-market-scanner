@@ -158,7 +158,6 @@ class _DayState:
     high_watermark: int = 0
     last_continuous_price: float | None = None
     buckets: dict[str, _MutableBucket] = field(default_factory=dict)
-    failures: set[str] = field(default_factory=set)
     last_structural_event_at: datetime | None = None
 
 
@@ -305,29 +304,51 @@ class AuctionSessionAccumulator:
             "OUT_OF_ORDER_EVENT",
             "OUT_OF_ORDER_REGRESSION",
         }
+        event_failures: set[str] = set()
         if structural_allowed and event.total_volume is None:
-            state.failures.add("MISSING_TOTAL_VOLUME")
+            event_failures.add("MISSING_TOTAL_VOLUME")
         if structural_allowed and event.has_gap:
-            state.failures.add("GAP")
+            event_failures.add("GAP")
         if structural_allowed and event.is_partial:
-            state.failures.add("PARTIAL")
+            event_failures.add("PARTIAL")
         if structural_allowed and event.quality_status not in {
             "TRUSTED",
             "VOLUME_REGRESSION",
         }:
-            state.failures.add("NON_TRUSTED_QUALITY")
+            event_failures.add("NON_TRUSTED_QUALITY")
         if structural_allowed and event.data_source not in SUPPORTED_SSI_SOURCES:
-            state.failures.add("UNSUPPORTED_SOURCE")
+            event_failures.add("UNSUPPORTED_SOURCE")
         if structural_allowed and event.provider_session not in SUPPORTED_PROVIDER_SESSIONS:
-            state.failures.add("UNSUPPORTED_SESSION")
+            event_failures.add("UNSUPPORTED_SESSION")
             if anomaly is None:
                 anomaly = "UNSUPPORTED_SESSION"
 
         if not structural_allowed:
             bucket = state.buckets.get(auction_type) if auction_type else None
+            if bucket is None and auction_type is not None:
+                event_at = event.event_at.isoformat()
+                bucket = _MutableBucket(
+                    symbol=event.symbol,
+                    trading_date=event.trading_date,
+                    exchange=event.exchange,
+                    auction_type=auction_type,
+                    provider_session=event.provider_session,
+                    auction_price=None,
+                    pre_auction_price=state.last_continuous_price,
+                    auction_volume=0,
+                    start_total_volume=state.high_watermark,
+                    end_total_volume=state.high_watermark,
+                    event_count=0,
+                    first_event_at=event_at,
+                    last_event_at=event_at,
+                    failures={anomaly or "OUT_OF_ORDER_EVENT"},
+                    data_sources={event.data_source},
+                )
+                state.buckets[auction_type] = bucket
             if bucket is not None:
                 bucket.event_count += 1
                 bucket.out_of_order_events += 1
+                bucket.failures.add(anomaly or "OUT_OF_ORDER_EVENT")
                 updated_at = bucket.last_event_at or event.event_at.isoformat()
                 updated.append(bucket.snapshot(updated_at))
             return AuctionAccumulatorResult(
@@ -360,7 +381,7 @@ class AuctionSessionAccumulator:
                 auction_volume=0,
                 start_total_volume=previous_high,
                 end_total_volume=previous_high,
-                failures=set(state.failures),
+                failures=set(),
             )
             state.buckets[auction_type] = bucket
         bucket.event_count += 1
@@ -373,7 +394,9 @@ class AuctionSessionAccumulator:
         bucket.data_sources.add(event.data_source)
         if anomaly == "OUT_OF_ORDER_REGRESSION":
             bucket.out_of_order_events += 1
-        bucket.failures.update(state.failures)
+        # Auction trust is session-local.  Ordinary morning/live failures do not
+        # contaminate a later auction, while evidence on the auction event does.
+        bucket.failures.update(event_failures)
         updated.append(bucket.snapshot(event_at))
         return AuctionAccumulatorResult(
             delta, state.high_watermark, anomaly, auction_type, tuple(updated)

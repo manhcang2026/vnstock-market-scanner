@@ -10,20 +10,23 @@ from app.settings import ROOT, Settings
 def _required_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SSI_CONSUMER_ID", "test-id")
     monkeypatch.setenv("SSI_CONSUMER_SECRET", "test-secret")
+    monkeypatch.setenv("DATABASE_PATH", "fixtures/hot.db")
+    monkeypatch.setenv("VOLUME_BASELINE_PATH", "fixtures/baseline.db")
+    monkeypatch.setenv("MARKET_V2_DATABASE_PATH", "fixtures/market.db")
+    monkeypatch.setenv("SSI_HISTORY_PATH", "fixtures/history.db")
 
 
-def test_volume_shadow_defaults_disabled_with_service_data_baseline(
+def test_volume_shadow_defaults_disabled_with_explicit_baseline(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _required_env(monkeypatch)
     monkeypatch.delenv("VOLUME_ENGINE_ENABLED", raising=False)
-    monkeypatch.delenv("VOLUME_BASELINE_PATH", raising=False)
     monkeypatch.delenv("VOLUME_SHADOW_SYMBOLS", raising=False)
 
     settings = Settings.from_env()
 
     assert not settings.volume_engine_enabled
-    assert settings.volume_baseline_path == ROOT / "data" / "ccc_v2_baseline.db"
+    assert settings.volume_baseline_path == ROOT / "fixtures" / "baseline.db"
     assert settings.volume_shadow_symbols == ("HPG", "SHS", "VGI")
 
 
@@ -60,19 +63,31 @@ def test_invalid_volume_shadow_boolean_fails_deterministically(
         Settings.from_env()
 
 
-def test_live_state_defaults_disabled_and_paths_resolve_under_service_root(
+def test_live_state_defaults_disabled_and_explicit_paths_resolve_under_service_root(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _required_env(monkeypatch)
     monkeypatch.delenv("LIVE_STATE_ENABLED", raising=False)
-    monkeypatch.delenv("MARKET_V2_DATABASE_PATH", raising=False)
-    monkeypatch.delenv("SSI_HISTORY_PATH", raising=False)
 
     settings = Settings.from_env()
 
     assert not settings.live_state_enabled
-    assert settings.market_v2_database_path == ROOT / "data/ccc_market_v2.db"
-    assert settings.ssi_history_path == ROOT / "data/ssi_history_2026.db"
+    assert settings.market_v2_database_path == ROOT / "fixtures/market.db"
+    assert settings.ssi_history_path == ROOT / "fixtures/history.db"
+
+
+@pytest.mark.parametrize(
+    "name",
+    ("DATABASE_PATH", "VOLUME_BASELINE_PATH", "MARKET_V2_DATABASE_PATH", "SSI_HISTORY_PATH"),
+)
+def test_database_paths_are_explicit_and_fail_closed(
+    monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    _required_env(monkeypatch)
+    monkeypatch.delenv(name)
+
+    with pytest.raises(RuntimeError, match=name):
+        Settings.from_env()
 
 
 def test_live_state_requires_volume_engine(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import inspect
 import json
+import os
 import sqlite3
+import subprocess
+import sys
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
+
+import pytest
 
 import app.daily_finalize as daily_finalize_module
 from app.auction import CLOSE_AUCTION, OPEN_AUCTION
@@ -98,7 +103,7 @@ def _insert_minute(
     quality: str = "TRUSTED",
     partial: int = 0,
     gap: int = 0,
-    source: str = SSI_STREAM,
+    source: str = SSI_REST,
     close: float = 103,
     trading_date: str = DAY,
     exchange: str = "HOSE",
@@ -198,6 +203,17 @@ def _count(path: Path, table: str) -> int:
     return value
 
 
+def _count_symbol(path: Path, table: str, symbol: str) -> int:
+    connection = sqlite3.connect(path)
+    value = int(
+        connection.execute(
+            f"SELECT COUNT(*) FROM {table} WHERE symbol=?", (symbol,)
+        ).fetchone()[0]
+    )
+    connection.close()
+    return value
+
+
 def _insert_daily_bar(path: Path, bar: DailyBar) -> None:
     connection = sqlite3.connect(path)
     connection.execute(
@@ -220,6 +236,63 @@ def _insert_daily_bar(path: Path, bar: DailyBar) -> None:
             bar.source,
             bar.quality_status,
             NOW_TEXT,
+        ),
+    )
+    connection.commit()
+    connection.close()
+
+
+def _insert_checkpoint_pair(
+    paths: DbPaths,
+    *,
+    symbol: str,
+    intraday_status: str,
+    daily_status: str,
+) -> None:
+    connection = sqlite3.connect(paths.source)
+    row_count = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM minute_bars WHERE symbol=? AND trading_date=?",
+            (symbol, DAY),
+        ).fetchone()[0]
+    )
+    connection.execute(
+        """
+        INSERT INTO historical_bootstrap_checkpoints (
+            symbol, from_date, to_date, resolution, status, row_count,
+            attempt_count, last_attempt_at, completed_at, error
+        ) VALUES (?, ?, ?, 1, ?, ?, 1, ?, ?, ?)
+        """,
+        (
+            symbol,
+            DAY,
+            DAY,
+            intraday_status,
+            row_count if intraday_status == "COMPLETED" else 0,
+            NOW_TEXT,
+            NOW_TEXT,
+            "NoDataFound" if intraday_status == "NO_DATA" else None,
+        ),
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS eod_daily_checkpoints (
+            symbol TEXT NOT NULL,
+            trading_date TEXT NOT NULL,
+            status TEXT NOT NULL,
+            payload_json TEXT,
+            error TEXT,
+            PRIMARY KEY(symbol, trading_date)
+        )
+        """
+    )
+    connection.execute(
+        "INSERT INTO eod_daily_checkpoints VALUES (?, ?, ?, NULL, ?)",
+        (
+            symbol,
+            DAY,
+            daily_status,
+            "SSINoDataFound" if daily_status == "NO_DATA" else None,
         ),
     )
     connection.commit()
@@ -307,7 +380,7 @@ def test_completed_trusted_session_finalizes(tmp_path: Path) -> None:
     assert result.minute_rows_inserted == 1
 
 
-def test_healthy_stream_replaces_rest_blocked_and_finalizes_canonically(
+def test_stream_primary_cannot_replace_rest_blocked(
     tmp_path: Path,
 ) -> None:
     paths = _make_paths(tmp_path)
@@ -326,59 +399,22 @@ def test_healthy_stream_replaces_rest_blocked_and_finalizes_canonically(
     _insert_minute(
         paths.source, minute="14:59", volume=60, close=104, exchange="UPCOM"
     )
-    result = finalize_stream_day(
-        source_path=paths.source,
-        history_path=paths.history,
-        market_path=paths.market,
-        trading_date=DAY,
-        dry_run=False,
-        now=NOW,
-        minimum_symbols=1,
-        minimum_minutes=2,
-    )
-
-    assert result.status == "PASS"
-    assert (result.minute_rows_inserted, result.daily_rows_inserted) == (2, 1)
-    market = sqlite3.connect(paths.market)
-    market.row_factory = sqlite3.Row
-    daily = market.execute(
-        """
-        SELECT open, high, low, close, volume, value, source, quality_status
-        FROM daily_bars WHERE symbol='FPT' AND trading_date=?
-        """,
-        (DAY,),
-    ).fetchone()
-    assert tuple(daily) == (
-        100.0,
-        105.0,
-        99.0,
-        104.0,
-        100,
-        None,
-        SSI_STREAM,
-        "TRUSTED",
-    )
-    history = sqlite3.connect(paths.history)
-    history.row_factory = sqlite3.Row
-    assert history.execute(
-        "SELECT status FROM daily_finalize_runs WHERE trading_date=?", (DAY,)
-    ).fetchone()[0] == "PASS"
-    assert prove_volume_session(
-        history, market, symbol="FPT", trading_date=DAY
-    ).proven
-    history.close()
-    market.close()
-    completeness = daily_finalize_module.canonical_day_completeness(
-        source_path=paths.source,
-        history_path=paths.history,
-        market_path=paths.market,
-        trading_date=DAY,
-    )
-    assert completeness.complete
-    assert completeness.complete_symbols == ("FPT",)
+    with pytest.raises(RuntimeError, match="stream-primary EOD is disabled"):
+        finalize_stream_day(
+            source_path=paths.source,
+            history_path=paths.history,
+            market_path=paths.market,
+            trading_date=DAY,
+            dry_run=False,
+            now=NOW,
+            minimum_symbols=1,
+            minimum_minutes=2,
+        )
+    assert _count(paths.history, "minute_bars") == 0
+    assert _count(paths.market, "daily_bars") == 0
 
 
-def test_insufficient_stream_with_rest_blocked_still_fails(tmp_path: Path) -> None:
+def test_insufficient_stream_path_is_disabled(tmp_path: Path) -> None:
     paths = _make_paths(tmp_path)
     _run(paths, bars=())
     connection = sqlite3.connect(paths.history)
@@ -390,31 +426,17 @@ def test_insufficient_stream_with_rest_blocked_still_fails(tmp_path: Path) -> No
     connection.close()
     _insert_minute(paths.source, minute="14:59", exchange="UPCOM")
 
-    result = finalize_stream_day(
-        source_path=paths.source,
-        history_path=paths.history,
-        market_path=paths.market,
-        trading_date=DAY,
-        dry_run=False,
-        now=NOW,
-    )
-
-    assert result.status == "BLOCKED"
-    assert "STREAM_SYMBOLS<500" in result.symbols[0].reasons
-    assert "STREAM_MINUTES<200" in result.symbols[0].reasons
+    with pytest.raises(RuntimeError, match="stream-primary EOD is disabled"):
+        finalize_stream_day(
+            source_path=paths.source,
+            history_path=paths.history,
+            market_path=paths.market,
+            trading_date=DAY,
+            dry_run=False,
+            now=NOW,
+        )
     assert _count(paths.history, "minute_bars") == 0
     assert _count(paths.market, "daily_bars") == 0
-    connection = sqlite3.connect(paths.history)
-    row = connection.execute(
-        "SELECT status, details_json FROM daily_finalize_runs WHERE trading_date=?",
-        (DAY,),
-    ).fetchone()
-    connection.close()
-    plan = daily_finalize_module.repair_plan_from_details(
-        json.loads(row[1]), status=row[0]
-    )
-    assert not plan.bounded
-    assert plan.reason == "GLOBAL_STREAM_COVERAGE_FAILURE"
 
 
 def test_stream_coverage_accepts_production_shape_and_exact_boundaries() -> None:
@@ -433,21 +455,307 @@ def test_stream_coverage_accepts_production_shape_and_exact_boundaries() -> None
     ) == ()
 
 
-def test_wrapper_is_stream_first_and_rest_is_strictly_targeted() -> None:
+def test_wrapper_is_rest_canonical_and_rebuilds_only_after_pass() -> None:
     wrapper = (
         Path(__file__).resolve().parents[1]
         / "ops"
         / "systemd"
         / "ccc-ssi-daily-finalize-wrapper.sh"
     ).read_text(encoding="utf-8")
-    stream_position = wrapper.index("--stream-primary")
     bootstrap_position = wrapper.index("app.historical_bootstrap")
-    assert stream_position < wrapper.index("exit 0", stream_position) < bootstrap_position
-    assert '--symbols "$REPAIR_SYMBOLS"' in wrapper
-    assert "No bounded REST repair set; failing closed" in wrapper
-    assert wrapper.count("canonical_day_completeness") >= 2
+    finalize_position = wrapper.index("app.daily_finalize")
+    baseline_position = wrapper.index("app.volume_baseline_build")
+    assert "--stream-primary" not in wrapper
+    assert bootstrap_position < finalize_position < baseline_position
+    assert 'REST_STAGE_DB="$(container_env SSI_EOD_STAGING_PATH)"' in wrapper
+    assert 'HOT_DB="$(container_env DATABASE_PATH)"' in wrapper
+    assert 'DAILY_JSON="$(container_env SSI_EOD_DAILY_JSON_PATH)"' in wrapper
+    assert "from app.settings import Settings" in wrapper
+    assert "from app.universe import load_universe" in wrapper
+    assert "settings = Settings.from_env()" in wrapper
+    assert "symbols = sorted(load_universe(settings))" in wrapper
+    assert "latest_quotes" not in wrapper
+    assert "ssi_history_2026.db" not in wrapper
+    assert "ccc_market_v2.db" not in wrapper
+    assert "--auction-source \"$HOT_DB\"" in wrapper
     assert "--market \"$MARKET_DB\"" in wrapper
     assert "--write" in wrapper
+
+
+def test_wrapper_eod_universe_does_not_shrink_to_hot_quote_coverage(
+    tmp_path: Path,
+) -> None:
+    wrapper = (
+        Path(__file__).resolve().parents[1]
+        / "ops"
+        / "systemd"
+        / "ccc-ssi-daily-finalize-wrapper.sh"
+    ).read_text(encoding="utf-8")
+    program = wrapper.split("<<'EOD_UNIVERSE_PY'\n", 1)[1].split(
+        "\nEOD_UNIVERSE_PY", 1
+    )[0]
+    universe_file = tmp_path / "universe.txt"
+    universe_file.write_text("AAA\nBBB\nCCC\n", encoding="utf-8")
+    hot_db = tmp_path / "hot.db"
+    connection = sqlite3.connect(hot_db)
+    connection.execute(
+        "CREATE TABLE latest_quotes (symbol TEXT, trading_date TEXT)"
+    )
+    connection.execute("INSERT INTO latest_quotes VALUES ('AAA', ?)", (DAY,))
+    connection.commit()
+    connection.close()
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "DATABASE_PATH": str(hot_db),
+            "MARKET_V2_DATABASE_PATH": str(tmp_path / "market.db"),
+            "SSI_HISTORY_PATH": str(tmp_path / "history.db"),
+            "VOLUME_BASELINE_PATH": str(tmp_path / "baseline.db"),
+            "UNIVERSE_FILE": str(universe_file),
+            "MIN_UNIVERSE_SIZE": "3",
+            "SSI_CONSUMER_ID": "test-id",
+            "SSI_CONSUMER_SECRET": "test-secret",
+            "VOLUME_ENGINE_ENABLED": "false",
+            "LIVE_STATE_ENABLED": "false",
+        }
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", program],
+        cwd=Path(__file__).resolve().parents[1],
+        env=environment,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.stdout.strip() == "AAA,BBB,CCC"
+
+
+def test_wrapper_requires_six_absolute_pairwise_distinct_eod_paths() -> None:
+    wrapper = (
+        Path(__file__).resolve().parents[1]
+        / "ops"
+        / "systemd"
+        / "ccc-ssi-daily-finalize-wrapper.sh"
+    ).read_text(encoding="utf-8")
+    required = (
+        "DATABASE_PATH",
+        "MARKET_V2_DATABASE_PATH",
+        "SSI_HISTORY_PATH",
+        "VOLUME_BASELINE_PATH",
+        "SSI_EOD_STAGING_PATH",
+        "SSI_EOD_DAILY_JSON_PATH",
+    )
+    for name in required:
+        assert f"container_env {name}" in wrapper
+        assert name in wrapper.split("EOD_PATH_NAMES=(", 1)[1].split(")", 1)[0]
+    validation_position = wrapper.index("EOD_PATH_VALUES=(")
+    universe_position = wrapper.index("EOD_UNIVERSE_PY")
+    assert validation_position < universe_position < wrapper.index(
+        "app.historical_bootstrap"
+    )
+    assert 'if [[ "$path" != /* ]]' in wrapper
+    assert "for ((j = 0; j < i; j++)); do" in wrapper
+    assert '[[ "$path" == "${EOD_PATH_VALUES[$j]}" ]]' in wrapper
+
+
+def _wrapper_daily_namespace() -> dict[str, object]:
+    wrapper = (
+        Path(__file__).resolve().parents[1]
+        / "ops"
+        / "systemd"
+        / "ccc-ssi-daily-finalize-wrapper.sh"
+    ).read_text(encoding="utf-8")
+    program = wrapper.split("<<'EOD_DAILY_PY'\n", 1)[1].split(
+        "\nEOD_DAILY_PY", 1
+    )[0]
+    namespace: dict[str, object] = {"__name__": "wrapper_daily_test"}
+    exec(compile(program, "<wrapper-daily-fetch>", "exec"), namespace)
+    return namespace
+
+
+def _wrapper_validation_connection(
+    namespace: dict[str, object],
+    *,
+    intraday_status: str,
+    checkpoint_rows: int,
+    staged_rows: int,
+    daily_status: str,
+) -> sqlite3.Connection:
+    connection = sqlite3.connect(":memory:")
+    connection.executescript(
+        """
+        CREATE TABLE historical_bootstrap_checkpoints (
+            symbol TEXT NOT NULL,
+            from_date TEXT NOT NULL,
+            to_date TEXT NOT NULL,
+            resolution INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            row_count INTEGER NOT NULL
+        );
+        CREATE TABLE minute_bars (
+            symbol TEXT NOT NULL,
+            trading_date TEXT NOT NULL,
+            volume INTEGER NOT NULL
+        );
+        """
+    )
+    connection.execute(
+        "INSERT INTO historical_bootstrap_checkpoints VALUES (?, ?, ?, 1, ?, ?)",
+        ("AAA", DAY, DAY, intraday_status, checkpoint_rows),
+    )
+    connection.executemany(
+        "INSERT INTO minute_bars VALUES ('AAA', ?, 1)",
+        [(DAY,)] * staged_rows,
+    )
+    namespace["ensure_daily_checkpoint_schema"](connection)
+    payload = None
+    if daily_status == "COMPLETED":
+        payload = json.dumps(
+            {
+                "Symbol": "AAA",
+                "TradingDate": DAY,
+                "Market": "HOSE",
+                "Open": 100,
+                "High": 105,
+                "Low": 99,
+                "Close": 103,
+                "Volume": staged_rows,
+            }
+        )
+    namespace["upsert_daily_checkpoint"](
+        connection,
+        "AAA",
+        DAY,
+        daily_status,
+        payload=payload,
+    )
+    return connection
+
+
+def test_wrapper_accepts_exact_completed_checkpoint_row_count() -> None:
+    namespace = _wrapper_daily_namespace()
+    connection = _wrapper_validation_connection(
+        namespace,
+        intraday_status="COMPLETED",
+        checkpoint_rows=3,
+        staged_rows=3,
+        daily_status="COMPLETED",
+    )
+
+    payloads = namespace["validated_daily_payloads"](
+        connection, ("AAA",), DAY, date.fromisoformat(DAY)
+    )
+
+    connection.close()
+    assert len(payloads) == 1
+
+
+def test_wrapper_rejects_checkpoint_count_above_staged_rows() -> None:
+    namespace = _wrapper_daily_namespace()
+    connection = _wrapper_validation_connection(
+        namespace,
+        intraday_status="COMPLETED",
+        checkpoint_rows=100,
+        staged_rows=99,
+        daily_status="COMPLETED",
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="INTRADAY_ROW_COUNT_MISMATCH:AAA:checkpoint=100:staged=99",
+    ):
+        namespace["validated_daily_payloads"](
+            connection, ("AAA",), DAY, date.fromisoformat(DAY)
+        )
+    connection.close()
+
+
+def test_wrapper_rejects_checkpoint_count_below_staged_rows() -> None:
+    namespace = _wrapper_daily_namespace()
+    connection = _wrapper_validation_connection(
+        namespace,
+        intraday_status="COMPLETED",
+        checkpoint_rows=99,
+        staged_rows=100,
+        daily_status="COMPLETED",
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="INTRADAY_ROW_COUNT_MISMATCH:AAA:checkpoint=99:staged=100",
+    ):
+        namespace["validated_daily_payloads"](
+            connection, ("AAA",), DAY, date.fromisoformat(DAY)
+        )
+    connection.close()
+
+
+def test_wrapper_rejects_no_data_checkpoint_with_staged_rows() -> None:
+    namespace = _wrapper_daily_namespace()
+    connection = _wrapper_validation_connection(
+        namespace,
+        intraday_status="NO_DATA",
+        checkpoint_rows=0,
+        staged_rows=1,
+        daily_status="NO_DATA",
+    )
+
+    with pytest.raises(RuntimeError, match="INTRADAY_NO_DATA_WITH_ROWS:AAA"):
+        namespace["validated_daily_payloads"](
+            connection, ("AAA",), DAY, date.fromisoformat(DAY)
+        )
+    connection.close()
+
+
+def test_successful_empty_daily_response_is_failed_not_no_data() -> None:
+    namespace = _wrapper_daily_namespace()
+    connection = sqlite3.connect(":memory:")
+    namespace["ensure_daily_checkpoint_schema"](connection)
+
+    class EmptyClient:
+        @staticmethod
+        def fetch_daily_ohlc(_symbol, _start, _end):
+            return []
+
+    with pytest.raises(RuntimeError, match="without explicit NoDataFound"):
+        namespace["fetch_daily_checkpoint"](
+            connection, EmptyClient(), "AAA", DAY, date.fromisoformat(DAY)
+        )
+    row = connection.execute(
+        "SELECT status, error FROM eod_daily_checkpoints"
+    ).fetchone()
+    connection.close()
+    assert row[0] == "FAILED"
+    assert "EMPTY_OR_AMBIGUOUS_RESPONSE" in row[1]
+
+
+def test_daily_no_data_checkpoint_is_persisted_and_skipped_on_rerun() -> None:
+    namespace = _wrapper_daily_namespace()
+    connection = sqlite3.connect(":memory:")
+    namespace["ensure_daily_checkpoint_schema"](connection)
+
+    class NoDataClient:
+        calls = 0
+
+        def fetch_daily_ohlc(self, _symbol, _start, _end):
+            self.calls += 1
+            raise namespace["SSINoDataFound"]("NoDataFound")
+
+    client = NoDataClient()
+    first = namespace["fetch_daily_checkpoint"](
+        connection, client, "AAA", DAY, date.fromisoformat(DAY)
+    )
+    second = namespace["fetch_daily_checkpoint"](
+        connection, client, "AAA", DAY, date.fromisoformat(DAY)
+    )
+    row = connection.execute(
+        "SELECT status, payload_json, error FROM eod_daily_checkpoints"
+    ).fetchone()
+    connection.close()
+    assert (first, second, client.calls) == ("NO_DATA", "NO_DATA", 1)
+    assert row[0] == "NO_DATA"
+    assert row[1] is None
+    assert "SSINoDataFound" in row[2]
 
 
 def test_partial_stream_derives_only_non_trusted_repair_symbols(tmp_path: Path) -> None:
@@ -540,11 +848,11 @@ def test_rest_pass_completeness_requires_and_accepts_canonical_outputs(
     ) == "REST_PASS"
 
 
-def test_finalized_minute_source_remains_ssi_stream(tmp_path: Path) -> None:
+def test_finalized_minute_source_is_ssi_rest(tmp_path: Path) -> None:
     paths = _make_paths(tmp_path)
     _insert_minute(paths.source)
     _run(paths)
-    assert _history_row(paths) == (SSI_STREAM, "TRUSTED", 0, 0, 100)
+    assert _history_row(paths) == (SSI_REST, "TRUSTED", 0, 0, 100)
 
 
 def test_identical_rerun_is_noop(tmp_path: Path) -> None:
@@ -627,7 +935,7 @@ def test_partial_stream_row_cannot_self_validate_as_trusted(tmp_path: Path) -> N
     assert _count(paths.market, "daily_bars") == 0
 
 
-def test_idempotent_stream_pass_rechecks_raw_trust_invariant(tmp_path: Path) -> None:
+def test_idempotent_rest_pass_relies_on_immutable_canonical_history(tmp_path: Path) -> None:
     paths = _make_paths(tmp_path)
     _insert_minute(paths.source)
     assert _run(paths).status == "PASS"
@@ -650,8 +958,8 @@ def test_idempotent_stream_pass_rechecks_raw_trust_invariant(tmp_path: Path) -> 
         market_path=paths.market,
         trading_date=DAY,
     )
-    assert not proof.complete
-    assert proof.unsafe_stream_source == ("FPT",)
+    assert proof.complete
+    assert proof.unsafe_stream_source == ()
 
 
 def test_unresolved_event_anomaly_does_not_settle(tmp_path: Path) -> None:
@@ -669,6 +977,280 @@ def test_daily_ohlc_is_persisted_idempotently(tmp_path: Path) -> None:
     second = _run(paths)
     assert (first.daily_rows_inserted, second.daily_rows_existing) == (1, 1)
     assert _count(paths.market, "daily_bars") == 1
+
+
+def test_intraday_no_data_and_official_zero_daily_settles_proven_zero(
+    tmp_path: Path,
+) -> None:
+    paths = _make_paths(tmp_path)
+    _insert_checkpoint_pair(
+        paths,
+        symbol="FPT",
+        intraday_status="NO_DATA",
+        daily_status="COMPLETED",
+    )
+
+    result = _run(paths, bars=(_daily(volume=0),))
+
+    assert result.status == "PASS"
+    assert result.symbols_trusted == 1
+    assert result.symbols[0].represented_volume == 0
+    assert result.symbols[0].daily_volume == 0
+    assert result.daily_rows_inserted == 1
+    assert result.minute_rows_inserted == 0
+    assert _count(paths.history, "minute_bars") == 0
+    assert _count(paths.market, "daily_bars") == 1
+
+
+def test_canonical_completeness_accepts_official_zero_daily_without_minutes(
+    tmp_path: Path,
+) -> None:
+    paths = _make_paths(tmp_path)
+    _insert_checkpoint_pair(
+        paths,
+        symbol="FPT",
+        intraday_status="NO_DATA",
+        daily_status="COMPLETED",
+    )
+    _run(paths, bars=(_daily(volume=0),))
+
+    proof = daily_finalize_module.canonical_day_completeness(
+        source_path=paths.source,
+        history_path=paths.history,
+        market_path=paths.market,
+        trading_date=DAY,
+    )
+
+    assert proof.complete
+    assert proof.complete_symbols == ("FPT",)
+    assert proof.missing_history == ()
+
+
+def test_paired_no_data_is_unavailable_while_valid_symbol_settles(
+    tmp_path: Path,
+) -> None:
+    paths = _make_paths(tmp_path)
+    _insert_minute(paths.source, symbol="FPT")
+    _insert_checkpoint_pair(
+        paths,
+        symbol="FPT",
+        intraday_status="COMPLETED",
+        daily_status="COMPLETED",
+    )
+    _insert_checkpoint_pair(
+        paths,
+        symbol="ZZZ",
+        intraday_status="NO_DATA",
+        daily_status="NO_DATA",
+    )
+
+    result = _run(paths, bars=(_daily(),))
+    connection = sqlite3.connect(paths.source)
+    connection.execute("DELETE FROM historical_bootstrap_checkpoints")
+    connection.execute("DELETE FROM eod_daily_checkpoints")
+    connection.commit()
+    connection.close()
+    proof = daily_finalize_module.canonical_day_completeness(
+        source_path=paths.source,
+        history_path=paths.history,
+        market_path=paths.market,
+        trading_date=DAY,
+    )
+
+    by_symbol = {item.symbol: item for item in result.symbols}
+    assert result.status == "PASS"
+    assert (result.symbols_trusted, result.symbols_unavailable) == (1, 1)
+    assert by_symbol["FPT"].status == "TRUSTED"
+    assert by_symbol["ZZZ"].status == "UNAVAILABLE"
+    assert by_symbol["ZZZ"].reasons == ("PROVIDER_NO_DATA",)
+    assert _count(paths.history, "minute_bars") == 1
+    assert _count(paths.market, "daily_bars") == 1
+    assert proof.complete
+    assert proof.expected_symbols == ("FPT", "ZZZ")
+    assert proof.complete_symbols == ("FPT",)
+    assert proof.provider_unavailable == ("ZZZ",)
+    assert _count_symbol(paths.source, "minute_bars", "ZZZ") == 0
+    assert _count_symbol(paths.history, "minute_bars", "ZZZ") == 0
+    assert _count_symbol(paths.market, "daily_bars", "ZZZ") == 0
+
+
+def test_non_provider_unavailable_journal_reason_does_not_complete_day(
+    tmp_path: Path,
+) -> None:
+    paths = _make_paths(tmp_path)
+    _insert_minute(paths.source, symbol="FPT")
+    result = _run(paths, bars=(_daily(),))
+    assert result.status == "PASS"
+
+    connection = sqlite3.connect(paths.history)
+    details = json.loads(
+        connection.execute(
+            "SELECT details_json FROM daily_finalize_runs WHERE trading_date=?",
+            (DAY,),
+        ).fetchone()[0]
+    )
+    details.append(
+        {
+            "symbol": "ZZZ",
+            "status": "UNAVAILABLE",
+            "reasons": ["SOURCE_MISSING"],
+        }
+    )
+    connection.execute(
+        "UPDATE daily_finalize_runs SET details_json=? WHERE trading_date=?",
+        (json.dumps(details), DAY),
+    )
+    connection.commit()
+    connection.close()
+
+    proof = daily_finalize_module.canonical_day_completeness(
+        source_path=paths.source,
+        history_path=paths.history,
+        market_path=paths.market,
+        trading_date=DAY,
+    )
+
+    assert not proof.complete
+    assert proof.complete_symbols == ("FPT",)
+    assert proof.provider_unavailable == ()
+    assert proof.missing_daily_bars == ("ZZZ",)
+
+
+def test_paired_no_data_alone_is_explicitly_complete_but_not_trusted(
+    tmp_path: Path,
+) -> None:
+    paths = _make_paths(tmp_path)
+    _insert_checkpoint_pair(
+        paths,
+        symbol="ZZZ",
+        intraday_status="NO_DATA",
+        daily_status="NO_DATA",
+    )
+
+    proof = daily_finalize_module.canonical_day_completeness(
+        source_path=paths.source,
+        history_path=paths.history,
+        market_path=paths.market,
+        trading_date=DAY,
+    )
+
+    assert proof.complete
+    assert proof.expected_symbols == ("ZZZ",)
+    assert proof.complete_symbols == ()
+    assert proof.provider_unavailable == ("ZZZ",)
+    assert proof.missing_daily_bars == ()
+
+
+def test_inconsistent_checkpoint_pair_is_not_provider_unavailable(
+    tmp_path: Path,
+) -> None:
+    paths = _make_paths(tmp_path)
+    _insert_checkpoint_pair(
+        paths,
+        symbol="FPT",
+        intraday_status="COMPLETED",
+        daily_status="NO_DATA",
+    )
+
+    proof = daily_finalize_module.canonical_day_completeness(
+        source_path=paths.source,
+        history_path=paths.history,
+        market_path=paths.market,
+        trading_date=DAY,
+    )
+
+    assert not proof.complete
+    assert proof.expected_symbols == ("FPT",)
+    assert proof.complete_symbols == ()
+    assert proof.provider_unavailable == ()
+    assert proof.unsafe_history == ("FPT",)
+
+
+def test_intraday_no_data_with_nonzero_daily_is_blocked(tmp_path: Path) -> None:
+    paths = _make_paths(tmp_path)
+    _insert_checkpoint_pair(
+        paths,
+        symbol="FPT",
+        intraday_status="NO_DATA",
+        daily_status="COMPLETED",
+    )
+
+    result = _run(paths, bars=(_daily(volume=100),))
+
+    assert result.status == "BLOCKED"
+    assert result.symbols[0].reasons == ("VOLUME_MISMATCH",)
+    assert _count(paths.history, "minute_bars") == 0
+    assert _count(paths.market, "daily_bars") == 0
+
+
+def test_intraday_completed_with_daily_no_data_is_blocked(tmp_path: Path) -> None:
+    paths = _make_paths(tmp_path)
+    _insert_minute(paths.source)
+    _insert_checkpoint_pair(
+        paths,
+        symbol="FPT",
+        intraday_status="COMPLETED",
+        daily_status="NO_DATA",
+    )
+
+    result = _run(paths, bars=())
+
+    assert result.status == "BLOCKED"
+    assert result.symbols[0].reasons == ("DAILY_NO_DATA_WITH_INTRADAY",)
+    assert _count(paths.history, "minute_bars") == 0
+    assert _count(paths.market, "daily_bars") == 0
+
+
+def test_failed_eod_checkpoint_pair_is_blocked(tmp_path: Path) -> None:
+    paths = _make_paths(tmp_path)
+    _insert_checkpoint_pair(
+        paths,
+        symbol="FPT",
+        intraday_status="FAILED",
+        daily_status="NO_DATA",
+    )
+
+    result = _run(paths, bars=())
+
+    assert result.status == "BLOCKED"
+    assert result.symbols[0].reasons == ("CHECKPOINT_FAILED",)
+    assert _count(paths.history, "minute_bars") == 0
+    assert _count(paths.market, "daily_bars") == 0
+
+
+def test_degraded_atc_does_not_block_valid_rest_daily_settlement(
+    tmp_path: Path,
+) -> None:
+    paths = _make_paths(tmp_path)
+    _insert_minute(paths.source)
+    _insert_auction(paths.source, quality="DEGRADED")
+
+    result = _run(paths)
+
+    assert result.status == "PASS"
+    assert result.symbols_trusted == 1
+    assert result.atc_proven_inserted == 0
+    assert result.atc_conflicts == 0
+    assert _count(paths.history, "minute_bars") == 1
+    assert _count(paths.market, "daily_bars") == 1
+    assert _count(paths.market, "auction_session_history") == 0
+
+
+def test_missing_auction_does_not_block_valid_rest_daily_settlement(
+    tmp_path: Path,
+) -> None:
+    paths = _make_paths(tmp_path)
+    _insert_minute(paths.source)
+
+    result = _run(paths)
+
+    assert result.status == "PASS"
+    assert result.symbols_trusted == 1
+    assert result.ato_proven_inserted == 0
+    assert result.atc_proven_inserted == 0
+    assert _count(paths.history, "minute_bars") == 1
+    assert _count(paths.market, "daily_bars") == 1
+    assert _count(paths.market, "auction_session_history") == 0
 
 
 def test_atc_stream_bucket_creates_proven_history(tmp_path: Path) -> None:
@@ -739,13 +1321,41 @@ def test_ato_requires_explicit_provider_session_evidence(tmp_path: Path) -> None
     assert row == (OPEN_AUCTION, "ATO", PROVEN)
 
 
-def test_time_only_ato_inference_is_rejected(tmp_path: Path) -> None:
+def test_wrong_provider_session_auction_is_ignored_without_blocking_rest(
+    tmp_path: Path,
+) -> None:
     paths = _make_paths(tmp_path)
     _insert_minute(paths.source)
     _insert_auction(paths.source, auction_type=OPEN_AUCTION, provider_session="LO")
     result = _run(paths)
-    assert result.ato_conflicts == 1
+    assert result.status == "PASS"
+    assert result.symbols_trusted == 1
+    assert result.ato_conflicts == 0
     assert _count(paths.market, "auction_session_history") == 0
+
+
+def test_conflicting_new_proven_auction_still_blocks_symbol(tmp_path: Path) -> None:
+    paths = _make_paths(tmp_path)
+    _insert_minute(paths.source)
+    _insert_auction(paths.source, volume=40)
+    connection = sqlite3.connect(paths.market)
+    store_auction_history_row(
+        connection,
+        _auction_history_row(DAY, auction_type=CLOSE_AUCTION, quality=PROVEN),
+        recorded_at=NOW_TEXT,
+    )
+    connection.commit()
+    connection.close()
+
+    result = _run(paths)
+
+    assert result.status == "BLOCKED"
+    assert result.symbols_blocked == 1
+    assert result.atc_conflicts == 1
+    assert result.symbols[0].reasons == ("AUCTION_CONFLICT",)
+    assert _count(paths.history, "minute_bars") == 0
+    assert _count(paths.market, "daily_bars") == 0
+    assert _count(paths.market, "auction_session_history") == 1
 
 
 def test_auction_rerun_is_idempotent(tmp_path: Path) -> None:

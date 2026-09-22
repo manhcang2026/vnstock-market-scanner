@@ -42,8 +42,16 @@ def test_ready_fixture_reports_locked_versions_and_ato_partial_warning(
     assert report["config_version"] == "cfg-20260922-beta-002"
     assert report["engine_version"] == "2.0.1-beta"
     assert report["market_schema_version"] == 3
+    assert report["db_quick_check"] == {
+        "hot": "ok",
+        "market": "ok",
+        "history": "ok",
+        "baseline": "ok",
+    }
+    assert report["configured_paths"]["hot"] == str(paths["hot_db"].resolve())
     assert report["baseline_symbols_exact10"] == 1
     assert report["baseline_symbols_usable"] == 1
+    assert report["next_session_baseline_ready"] is True
     assert "ATO_EXACT10_PARTIAL_EXPECTED:no_historical_bootstrap" in report["warnings"]
     assert main([
         "--trading-date", DAY,

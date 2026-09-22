@@ -15,10 +15,11 @@ from app.ssi_historical import (
     SSIHistoricalClient,
     SSIHistoricalError,
     SSINoDataFound,
+    SSIRateLimitCircuitOpen,
     normalize_historical_record,
     normalize_historical_rows,
 )
-from app.storage import SQLiteStore
+from app.storage import HistoricalCanonicalConflict, SQLiteStore
 
 
 class FakeResponse:
@@ -364,7 +365,9 @@ def test_historical_insert_is_idempotent_and_keeps_direct_volume(tmp_path: Path)
         updated_at="2026-09-12T09:15:01+07:00",
     )
     assert store.insert_historical_bar(**kwargs) is True
-    assert store.insert_historical_bar(**{**kwargs, "volume": 111}) is False
+    assert store.insert_historical_bar(**kwargs) is False
+    with pytest.raises(HistoricalCanonicalConflict):
+        store.insert_historical_bar(**{**kwargs, "volume": 111})
     saved = store._conn.execute(
         "SELECT volume, quality_status, data_source, event_count FROM minute_bars"
     ).fetchone()
@@ -400,19 +403,20 @@ def test_rest_never_overwrites_existing_stream_rows(
         gap_to="09:15:00" if has_gap else None,
         updated_at="original",
     )
-    assert store.insert_historical_bar(
-        trading_date="2026-09-12",
-        minute="09:15",
-        symbol="HPG",
-        exchange="HOSE",
-        open_price=99,
-        high=99,
-        low=99,
-        close=99,
-        volume=9999,
-        provider_time="09:15:00",
-        updated_at="replacement",
-    ) is False
+    with pytest.raises(HistoricalCanonicalConflict):
+        store.insert_historical_bar(
+            trading_date="2026-09-12",
+            minute="09:15",
+            symbol="HPG",
+            exchange="HOSE",
+            open_price=99,
+            high=99,
+            low=99,
+            close=99,
+            volume=9999,
+            provider_time="09:15:00",
+            updated_at="replacement",
+        )
     saved = store._conn.execute(
         "SELECT open, volume, quality_status, is_partial, has_gap, updated_at, data_source FROM minute_bars"
     ).fetchone()
@@ -1182,6 +1186,114 @@ def test_repeated_429_stops_after_configured_limit_and_marks_failed(
     assert sleeps == [2.0, 3.0]
     assert retried.retry_count == 2
     store.close()
+
+
+def test_429_circuit_aborts_batch_and_rerun_resumes_unattempted_symbols(
+    tmp_path: Path,
+) -> None:
+    first_session = FakeSession(
+        [
+            token_response(),
+            FakeResponse(
+                200,
+                {"status": 200, "data": [row(symbol="AAA")], "totalRecord": 1},
+            ),
+            FakeResponse(429, {}),
+            FakeResponse(429, {}),
+        ]
+    )
+    store = SQLiteStore(tmp_path / "batch-circuit.db")
+    bootstrap_args = dict(
+        store=store,
+        symbols=["AAA", "BBB", "CCC", "DDD"],
+        exchange_map={symbol: "HOSE" for symbol in ("AAA", "BBB", "CCC", "DDD")},
+        from_date=date(2026, 9, 12),
+        to_date=date(2026, 9, 12),
+        output=lambda _: None,
+    )
+
+    with pytest.raises(SSIRateLimitCircuitOpen, match="circuit open"):
+        run_bootstrap(
+            client=client(
+                first_session,
+                max_attempts=6,
+                max_consecutive_rate_limits=2,
+            ),
+            **bootstrap_args,
+        )
+
+    first_data_symbols = [
+        call["params"]["symbol"]
+        for call in first_session.calls
+        if call["method"] == "GET"
+    ]
+    aaa = store.get_historical_checkpoint("AAA", "2026-09-12", "2026-09-12", 1)
+    bbb = store.get_historical_checkpoint("BBB", "2026-09-12", "2026-09-12", 1)
+    ccc = store.get_historical_checkpoint("CCC", "2026-09-12", "2026-09-12", 1)
+    ddd = store.get_historical_checkpoint("DDD", "2026-09-12", "2026-09-12", 1)
+
+    assert first_data_symbols == ["AAA", "BBB", "BBB"]
+    assert aaa is not None and aaa.status == "COMPLETED"
+    assert bbb is not None and bbb.status == "FAILED"
+    assert "SSIRateLimitCircuitOpen" in (bbb.error or "")
+    assert "circuit open" in (bbb.error or "")
+    assert ccc is None and ddd is None
+
+    resumed_session = FakeSession(
+        [
+            token_response(),
+            *[
+                FakeResponse(
+                    200,
+                    {
+                        "status": 200,
+                        "data": [row(symbol=symbol)],
+                        "totalRecord": 1,
+                    },
+                )
+                for symbol in ("BBB", "CCC", "DDD")
+            ],
+        ]
+    )
+    resumed = run_bootstrap(
+        client=client(resumed_session),
+        **bootstrap_args,
+    )
+    resumed_data_symbols = [
+        call["params"]["symbol"]
+        for call in resumed_session.calls
+        if call["method"] == "GET"
+    ]
+
+    assert resumed.skipped_completed == 1
+    assert resumed.completed == 3
+    assert resumed.failed == 0
+    assert resumed_data_symbols == ["BBB", "CCC", "DDD"]
+    for symbol in ("AAA", "BBB", "CCC", "DDD"):
+        checkpoint = store.get_historical_checkpoint(
+            symbol, "2026-09-12", "2026-09-12", 1
+        )
+        assert checkpoint is not None and checkpoint.status == "COMPLETED"
+    store.close()
+
+
+def test_429_circuit_breaker_opens_before_retry_budget_is_exhausted() -> None:
+    sleeps: list[float] = []
+    session = FakeSession(
+        [token_response(), FakeResponse(429, {}), FakeResponse(429, {})]
+    )
+    guarded = client(
+        session,
+        sleep=sleeps.append,
+        max_attempts=6,
+        max_consecutive_rate_limits=2,
+    )
+
+    with pytest.raises(SSIRateLimitCircuitOpen, match="circuit open"):
+        guarded.fetch_intraday_ohlc("HPG", "12/09/2026", "12/09/2026")
+
+    assert len(session.calls) == 3  # token + two bounded data requests
+    assert len(sleeps) == 1
 
 
 def test_5xx_transient_retry_then_succeeds() -> None:

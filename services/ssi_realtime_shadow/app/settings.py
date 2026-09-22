@@ -76,7 +76,10 @@ class Settings:
     def from_env(cls) -> "Settings":
         universe_raw = _env("UNIVERSE_FILE", "")
         universe_file = Path(universe_raw).expanduser() if universe_raw else None
-        db_raw = _env("DATABASE_PATH", str(ROOT / "data" / "ssi_shadow.db"))
+        db_raw = _env("DATABASE_PATH", required=True)
+        baseline_raw = _env("VOLUME_BASELINE_PATH", required=True)
+        market_raw = _env("MARKET_V2_DATABASE_PATH", required=True)
+        history_raw = _env("SSI_HISTORY_PATH", required=True)
         volume_engine_enabled = _env_bool("VOLUME_ENGINE_ENABLED", False)
         live_state_enabled = _env_bool("LIVE_STATE_ENABLED", False)
         if live_state_enabled and not volume_engine_enabled:
@@ -102,16 +105,13 @@ class Settings:
             volume_engine_enabled=volume_engine_enabled,
             live_state_enabled=live_state_enabled,
             volume_baseline_path=_service_path(
-                _env(
-                    "VOLUME_BASELINE_PATH",
-                    str(ROOT / "data" / "ccc_v2_baseline.db"),
-                )
+                baseline_raw
             ),
             market_v2_database_path=_service_path(
-                _env("MARKET_V2_DATABASE_PATH", "data/ccc_market_v2.db")
+                market_raw
             ),
             ssi_history_path=_service_path(
-                _env("SSI_HISTORY_PATH", "data/ssi_history_2026.db")
+                history_raw
             ),
             volume_shadow_symbols=_symbol_list(
                 _env("VOLUME_SHADOW_SYMBOLS", "HPG,SHS,VGI")

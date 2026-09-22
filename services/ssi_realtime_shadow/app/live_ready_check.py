@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sqlite3
 from datetime import date
 from pathlib import Path
@@ -32,6 +33,11 @@ def _tables(connection: sqlite3.Connection) -> set[str]:
             "SELECT name FROM sqlite_master WHERE type='table'"
         )
     }
+
+
+def _quick_check(connection: sqlite3.Connection) -> str:
+    row = connection.execute("PRAGMA quick_check").fetchone()
+    return str(row[0]) if row is not None else "missing"
 
 
 def _schema_version(connection: sqlite3.Connection) -> int | None:
@@ -77,6 +83,14 @@ def inspect_live_readiness(
         raise ValueError("target trading date must be canonical YYYY-MM-DD")
     result: dict[str, Any] = {
         "target_trading_date": target_trading_date,
+        "configured_paths": {
+            "hot": str(hot_db.resolve()),
+            "market": str(market_db.resolve()),
+            "history": str(history_db.resolve()),
+            "baseline": str(baseline_db.resolve()),
+        },
+        "db_quick_check": {},
+        "active_trading_date": None,
         "signal_config_ok": False,
         "contract_version": None,
         "config_version": None,
@@ -102,6 +116,13 @@ def inspect_live_readiness(
         "ma200_ready_symbols": 0,
         "auction_ato_exact10_symbols": 0,
         "auction_atc_exact10_symbols": 0,
+        "live_metrics_total": 0,
+        "live_metrics_trusted": 0,
+        "live_metrics_untrusted": 0,
+        "auction_bucket_coverage": {},
+        "latest_eod_status": None,
+        "latest_eod_date": None,
+        "next_session_baseline_ready": False,
         "blocking_errors": [],
         "warnings": [],
         "ready_for_live_signal": False,
@@ -124,6 +145,9 @@ def inspect_live_readiness(
         try:
             hot = _readonly(hot_db)
             try:
+                result["db_quick_check"]["hot"] = _quick_check(hot)
+                if result["db_quick_check"]["hot"] != "ok":
+                    blocking.append("HOT_DB_QUICK_CHECK_FAILED")
                 required_tables = {
                     "minute_bars", "latest_quotes", "auction_session_buckets"
                 }
@@ -139,6 +163,30 @@ def inspect_live_readiness(
                         "exchange", "updated_at",
                     } <= _columns(hot, "latest_quotes")
                 )
+                if result["hot_schema_ok"]:
+                    row = hot.execute(
+                        """
+                        SELECT MAX(trading_date) FROM (
+                            SELECT trading_date FROM minute_bars
+                            UNION ALL
+                            SELECT trading_date FROM latest_quotes
+                        )
+                        """
+                    ).fetchone()
+                    result["active_trading_date"] = row[0] if row else None
+                    coverage: dict[str, dict[str, int]] = {}
+                    for bucket in hot.execute(
+                        """
+                        SELECT auction_type, quality_status, COUNT(*)
+                        FROM auction_session_buckets
+                        WHERE trading_date=(SELECT MAX(trading_date) FROM auction_session_buckets)
+                        GROUP BY auction_type, quality_status
+                        """
+                    ):
+                        coverage.setdefault(str(bucket[0]), {})[str(bucket[1])] = int(
+                            bucket[2]
+                        )
+                    result["auction_bucket_coverage"] = coverage
             finally:
                 hot.close()
             if not result["hot_schema_ok"]:
@@ -153,6 +201,9 @@ def inspect_live_readiness(
     if market_db.is_file():
         try:
             market = _readonly(market_db)
+            result["db_quick_check"]["market"] = _quick_check(market)
+            if result["db_quick_check"]["market"] != "ok":
+                blocking.append("MARKET_DB_QUICK_CHECK_FAILED")
             result["market_schema_version"] = _schema_version(market)
             if result["market_schema_version"] != STORAGE_SCHEMA_VERSION:
                 blocking.append("MARKET_SCHEMA_VERSION_MISMATCH")
@@ -167,6 +218,21 @@ def inspect_live_readiness(
                     result["ma200_ready_symbols"] += int(ma.ma200 is not None)
             else:
                 blocking.append("MARKET_DAILY_BARS_MISSING")
+            if "stock_state_current" in _tables(market):
+                row = market.execute(
+                    """
+                    SELECT COUNT(*),
+                           COALESCE(SUM(CASE WHEN metrics_trusted=1 THEN 1 ELSE 0 END),0)
+                    FROM stock_state_current
+                    """
+                ).fetchone()
+                total = int(row[0]) if row else 0
+                trusted = int(row[1]) if row else 0
+                result["live_metrics_total"] = total
+                result["live_metrics_trusted"] = trusted
+                result["live_metrics_untrusted"] = total - trusted
+                if total and not trusted:
+                    blocking.append("LIVE_METRICS_ALL_UNTRUSTED")
         except sqlite3.Error as exc:
             blocking.append(f"MARKET_DB_UNREADABLE:{type(exc).__name__}")
             if market is not None:
@@ -179,6 +245,9 @@ def inspect_live_readiness(
     if history_db.is_file():
         try:
             history = _readonly(history_db)
+            result["db_quick_check"]["history"] = _quick_check(history)
+            if result["db_quick_check"]["history"] != "ok":
+                blocking.append("HISTORY_DB_QUICK_CHECK_FAILED")
             if "minute_bars" not in _tables(history):
                 warnings.append("HISTORY_MINUTE_BARS_MISSING")
             else:
@@ -189,16 +258,38 @@ def inspect_live_readiness(
                 result["history_max_date"] = row[1] if row else None
                 if result["history_min_date"] is None:
                     warnings.append("HISTORY_EMPTY:auction_metrics_unavailable")
+            if "daily_finalize_runs" in _tables(history):
+                row = history.execute(
+                    """
+                    SELECT trading_date, status FROM daily_finalize_runs
+                    ORDER BY trading_date DESC LIMIT 1
+                    """
+                ).fetchone()
+                if row is not None:
+                    result["latest_eod_date"] = str(row[0])
+                    result["latest_eod_status"] = str(row[1])
+                    if str(row[1]).upper() not in {"PASS", "REST_PASS"}:
+                        blocking.append("LATEST_EOD_NOT_PASS")
         except sqlite3.Error as exc:
-            warnings.append(f"HISTORY_DB_UNREADABLE:{type(exc).__name__}")
+            blocking.append(f"HISTORY_DB_UNREADABLE:{type(exc).__name__}")
             if history is not None:
                 history.close()
                 history = None
     else:
+        blocking.append("HISTORY_DB_MISSING")
         warnings.append("HISTORY_DB_MISSING:auction_metrics_unavailable")
 
     if baseline_db.is_file():
         try:
+            baseline_connection = _readonly(baseline_db)
+            try:
+                result["db_quick_check"]["baseline"] = _quick_check(
+                    baseline_connection
+                )
+            finally:
+                baseline_connection.close()
+            if result["db_quick_check"]["baseline"] != "ok":
+                blocking.append("BASELINE_DB_QUICK_CHECK_FAILED")
             baseline = load_volume_baseline(baseline_db)
             exact = sum(
                 item.usable
@@ -253,6 +344,9 @@ def inspect_live_readiness(
                 blocking.append("BASELINE_HAS_NO_USABLE_SYMBOLS")
             if partial:
                 warnings.append(f"BASELINE_PARTIAL_SYMBOLS:{partial}")
+            result["next_session_baseline_ready"] = bool(
+                baseline.as_of_date == target_trading_date and usable > 0
+            )
         except Exception as exc:
             blocking.append(f"BASELINE_INVALID:{type(exc).__name__}")
     else:
@@ -313,21 +407,34 @@ def inspect_live_readiness(
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--trading-date", required=True)
-    parser.add_argument("--hot-db", type=Path, default=ROOT / "data/ssi_shadow.db")
+    parser.add_argument("--hot-db", type=Path, default=os.getenv("DATABASE_PATH"))
     parser.add_argument(
-        "--market-db", type=Path, default=ROOT / "data/ccc_market_v2.db"
+        "--market-db", type=Path, default=os.getenv("MARKET_V2_DATABASE_PATH")
     )
     parser.add_argument(
-        "--history-db", type=Path, default=ROOT / "data/ssi_history_2026.db"
+        "--history-db", type=Path, default=os.getenv("SSI_HISTORY_PATH")
     )
     parser.add_argument(
-        "--baseline-db", type=Path, default=ROOT / "data/ccc_v2_baseline.db"
+        "--baseline-db", type=Path, default=os.getenv("VOLUME_BASELINE_PATH")
     )
     return parser
 
 
 def main(argv: Iterable[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
+    parser = _parser()
+    args = parser.parse_args(argv)
+    missing = [
+        name
+        for name, value in (
+            ("DATABASE_PATH/--hot-db", args.hot_db),
+            ("MARKET_V2_DATABASE_PATH/--market-db", args.market_db),
+            ("SSI_HISTORY_PATH/--history-db", args.history_db),
+            ("VOLUME_BASELINE_PATH/--baseline-db", args.baseline_db),
+        )
+        if value is None
+    ]
+    if missing:
+        parser.error("missing explicit database configuration: " + ", ".join(missing))
     report = inspect_live_readiness(
         target_trading_date=args.trading_date,
         hot_db=args.hot_db,

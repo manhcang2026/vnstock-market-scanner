@@ -1,10 +1,10 @@
-"""Deterministic EOD settlement from SSI hot state into canonical history.
+"""Deterministic REST-canonical EOD settlement.
 
 The transaction boundary is one symbol/session. A symbol is fully preflighted
 before its minute, daily, and auction rows are committed. Other symbols can
 therefore settle when one symbol is corrupt, and a retry is idempotent. Raw
-event anomalies remain in the EOD journal; accepted historical minute rows are
-the settled representation and retain the provider identity ``SSI_STREAM``.
+FastConnect is accepted only as explicit ATO/ATC provider-session proof.  SSI
+REST IntradayOhlc and DailyOhlc own ordinary canonical history.
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ MAX_STREAM_FIRST_MINUTE = "09:15"
 MIN_STREAM_LAST_MINUTE = "14:45"
 MAX_TARGETED_REPAIR_SYMBOLS = 50
 SETTLEABLE_EVENT_QUALITIES = frozenset({"TRUSTED"})
-CANONICAL_MINUTE_SOURCES = frozenset({"SSI_REST", "SSI_STREAM"})
+CANONICAL_MINUTE_SOURCES = frozenset({"SSI_REST"})
 MINUTE_COLUMNS = (
     "trading_date",
     "minute",
@@ -152,6 +152,7 @@ class CanonicalDayCompleteness:
     complete: bool
     expected_symbols: tuple[str, ...]
     complete_symbols: tuple[str, ...]
+    provider_unavailable: tuple[str, ...]
     missing_daily_bars: tuple[str, ...]
     missing_history: tuple[str, ...]
     unsafe_daily_bars: tuple[str, ...]
@@ -490,7 +491,7 @@ def _settled_minute_values(row: sqlite3.Row, symbol: str, exchange: str) -> tupl
         0,
         None,
         None,
-        SSI_STREAM,
+        "SSI_REST",
         row["provider_time"],
         str(row["updated_at"]),
     )
@@ -534,6 +535,40 @@ def _auction_rows(
         """,
         (symbol, trading_date),
     ).fetchall()
+
+
+def _eod_checkpoint_pairs(
+    source: sqlite3.Connection, trading_date: str
+) -> dict[str, tuple[str | None, str | None]]:
+    """Return explicit intraday/daily EOD states when the wrapper supplied them."""
+    if not _table_exists(source, "eod_daily_checkpoints"):
+        return {}
+    intraday = {
+        str(row["symbol"] or "").strip().upper(): str(row["status"] or "").upper()
+        for row in source.execute(
+            """
+            SELECT symbol, status FROM historical_bootstrap_checkpoints
+            WHERE from_date=? AND to_date=? AND resolution=1
+            """,
+            (trading_date, trading_date),
+        )
+        if str(row["symbol"] or "").strip()
+    }
+    daily = {
+        str(row["symbol"] or "").strip().upper(): str(row["status"] or "").upper()
+        for row in source.execute(
+            """
+            SELECT symbol, status FROM eod_daily_checkpoints
+            WHERE trading_date=?
+            """,
+            (trading_date,),
+        )
+        if str(row["symbol"] or "").strip()
+    }
+    return {
+        symbol: (intraday.get(symbol), daily.get(symbol))
+        for symbol in sorted(set(intraday) | set(daily))
+    }
 
 
 def _proven_auction(row: sqlite3.Row) -> AuctionHistoryRow:
@@ -628,10 +663,54 @@ def _settle_symbol(
     daily_bar: DailyBar | None,
     recorded_at: str,
     dry_run: bool,
+    auction_source: sqlite3.Connection,
+    intraday_no_data: bool = False,
 ) -> SymbolFinalizeResult:
     if daily_bar is None:
         return _empty_symbol_result(symbol, "UNAVAILABLE", ("DAILY_MISSING",), rows, None)
     if not rows:
+        if intraday_no_data:
+            if daily_bar.volume != 0:
+                return _empty_symbol_result(
+                    symbol,
+                    "BLOCKED",
+                    ("VOLUME_MISMATCH",),
+                    rows,
+                    daily_bar.volume,
+                )
+            daily_outcome = _daily_outcome(connection, daily_bar)
+            if daily_outcome == "CONFLICT":
+                return _replace_result(
+                    _empty_symbol_result(
+                        symbol,
+                        "BLOCKED",
+                        ("DAILY_CONFLICT",),
+                        rows,
+                        daily_bar.volume,
+                    ),
+                    daily_conflicts=1,
+                )
+            if not dry_run and daily_outcome == "INSERT":
+                connection.execute("BEGIN IMMEDIATE")
+                try:
+                    connection.execute(
+                        """
+                        INSERT INTO daily_bars (
+                            symbol, trading_date, exchange, open, high, low, close,
+                            volume, value, source, quality_status, finalized_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        _daily_values(daily_bar) + (recorded_at,),
+                    )
+                    connection.commit()
+                except Exception:
+                    connection.rollback()
+                    raise
+            return _replace_result(
+                _empty_symbol_result(symbol, "TRUSTED", (), rows, daily_bar.volume),
+                daily_rows_inserted=daily_outcome == "INSERT",
+                daily_rows_existing=daily_outcome == "EXISTING",
+            )
         return _empty_symbol_result(
             symbol, "UNAVAILABLE", ("SOURCE_MISSING",), rows, daily_bar.volume
         )
@@ -654,8 +733,8 @@ def _settle_symbol(
             continue
         if row_exchange != daily_bar.exchange:
             reasons.append("EXCHANGE_MISMATCH")
-        if str(row["data_source"] or "").upper() != SSI_STREAM:
-            reasons.append("NON_STREAM_SOURCE")
+        if str(row["data_source"] or "").upper() != "SSI_REST":
+            reasons.append("NON_REST_SOURCE")
         if str(row["minute"] or "") not in valid_minutes:
             reasons.append("INVALID_MARKET_MINUTE")
         if not _valid_ohlcv(row):
@@ -685,6 +764,7 @@ def _settle_symbol(
         )
 
     minute_inserted = minute_identical = minute_conflicts = 0
+    new_settled_rows: list[tuple[object, ...]] = []
     for settled in settled_rows:
         existing = connection.execute(
             """
@@ -697,6 +777,7 @@ def _settle_symbol(
         ).fetchone()
         if existing is None:
             minute_inserted += 1
+            new_settled_rows.append(settled)
         elif _same_canonical_minute(existing, settled):
             minute_identical += 1
         else:
@@ -711,15 +792,21 @@ def _settle_symbol(
 
     auctions: list[tuple[AuctionHistoryRow, str]] = []
     ato_conflicts = atc_conflicts = 0
-    for raw_bucket in _auction_rows(source, symbol, trading_date):
+    for raw_bucket in _auction_rows(auction_source, symbol, trading_date):
         auction_type = str(raw_bucket["auction_type"] or "").upper()
         try:
             auction = _proven_auction(raw_bucket)
+        except (TypeError, ValueError):
+            # Hot auction evidence is optional.  Buckets that cannot prove the
+            # required provider session are not promoted into canonical history
+            # and must not block otherwise valid REST/Daily settlement.
+            continue
+        try:
             outcome = store_auction_history_row(
                 connection, auction, recorded_at=recorded_at, dry_run=True
             )
             auctions.append((auction, outcome))
-        except (AuctionHistoryConflict, TypeError, ValueError):
+        except AuctionHistoryConflict:
             if auction_type == OPEN_AUCTION:
                 ato_conflicts += 1
             else:
@@ -757,12 +844,11 @@ def _settle_symbol(
                     """,
                     _daily_values(daily_bar) + (recorded_at,),
                 )
-            for settled in settled_rows:
+            for settled in new_settled_rows:
                 connection.execute(
                     f"""
                     INSERT INTO history.minute_bars ({', '.join(MINUTE_COLUMNS)})
                     VALUES ({', '.join('?' for _ in MINUTE_COLUMNS)})
-                    ON CONFLICT(trading_date, minute, symbol) DO NOTHING
                     """,
                     settled,
                 )
@@ -821,13 +907,17 @@ def _build_result(
     trusted = sum(result.status == "TRUSTED" for result in symbols)
     blocked = sum(result.status == "BLOCKED" for result in symbols)
     unavailable = sum(result.status == "UNAVAILABLE" for result in symbols)
+    proven_unavailable = sum(
+        result.status == "UNAVAILABLE" and result.reasons == ("PROVIDER_NO_DATA",)
+        for result in symbols
+    )
     canonical_conflicts = sum(
         _sum(symbols, field)
         for field in ("minute_conflicts", "daily_conflicts", "ato_conflicts", "atc_conflicts")
     )
     if canonical_conflicts:
         status = "BLOCKED"
-    elif trusted == len(symbols) and symbols:
+    elif trusted + proven_unavailable == len(symbols) and symbols:
         status = "DRY_RUN_PASS" if dry_run else "PASS"
     elif trusted:
         status = "PARTIAL"
@@ -1000,23 +1090,36 @@ def rest_repair_status(
 
 def _journal_symbol_states(
     history: sqlite3.Connection, trading_date: str
-) -> tuple[set[str], set[str]]:
+) -> tuple[set[str], set[str], set[str]]:
     if not _table_exists(history, "daily_finalize_runs"):
-        return set(), set()
+        return set(), set(), set()
+    columns = {
+        str(row["name"])
+        for row in history.execute("PRAGMA table_info(daily_finalize_runs)")
+    }
+    selected = ["details_json"]
+    selected.extend(name for name in ("status", "mode") if name in columns)
     row = history.execute(
-        "SELECT details_json FROM daily_finalize_runs WHERE trading_date=?",
+        f"SELECT {', '.join(selected)} FROM daily_finalize_runs WHERE trading_date=?",
         (trading_date,),
     ).fetchone()
     if row is None:
-        return set(), set()
+        return set(), set(), set()
     try:
         details = json.loads(str(row["details_json"] or ""))
     except (TypeError, ValueError):
-        return set(), set()
+        return set(), set(), set()
     if not isinstance(details, list):
-        return set(), set()
+        return set(), set(), set()
+    successful_write = (
+        "status" in columns
+        and "mode" in columns
+        and str(row["status"] or "").strip().upper() == "PASS"
+        and str(row["mode"] or "").strip().upper() == "WRITE"
+    )
     journal_symbols: set[str] = set()
     trusted_symbols: set[str] = set()
+    provider_unavailable: set[str] = set()
     for item in details:
         if not isinstance(item, dict):
             continue
@@ -1029,7 +1132,16 @@ def _journal_symbol_states(
             and not item.get("reasons")
         ):
             trusted_symbols.add(symbol)
-    return journal_symbols, trusted_symbols
+        reasons = item.get("reasons")
+        if (
+            successful_write
+            and str(item.get("status") or "").strip().upper() == "UNAVAILABLE"
+            and isinstance(reasons, list)
+            and tuple(str(reason).strip().upper() for reason in reasons)
+            == ("PROVIDER_NO_DATA",)
+        ):
+            provider_unavailable.add(symbol)
+    return journal_symbols, trusted_symbols, provider_unavailable
 
 
 def _safe_canonical_history_row(
@@ -1114,13 +1226,23 @@ def canonical_day_completeness(
             if _table_exists(market, "daily_bars")
             else set()
         )
-        journal_symbols, trusted_journal_symbols = _journal_symbol_states(
-            history, trading_date
-        )
+        (
+            journal_symbols,
+            trusted_journal_symbols,
+            journal_provider_unavailable,
+        ) = _journal_symbol_states(history, trading_date)
+        checkpoint_pairs = _eod_checkpoint_pairs(source, trading_date)
         expected = tuple(
-            sorted(source_symbols | history_symbols | daily_symbols | journal_symbols)
+            sorted(
+                source_symbols
+                | history_symbols
+                | daily_symbols
+                | journal_symbols
+                | set(checkpoint_pairs)
+            )
         )
         complete_symbols: list[str] = []
+        provider_unavailable: list[str] = []
         missing_daily: list[str] = []
         missing_history: list[str] = []
         unsafe_daily: list[str] = []
@@ -1130,6 +1252,35 @@ def canonical_day_completeness(
         unsafe_stream_source: list[str] = []
 
         for symbol in expected:
+            checkpoint_pair = checkpoint_pairs.get(symbol)
+            explicit_provider_unavailable = checkpoint_pair == (
+                "NO_DATA",
+                "NO_DATA",
+            )
+            durable_provider_unavailable = (
+                checkpoint_pair is None and symbol in journal_provider_unavailable
+            )
+            if explicit_provider_unavailable or durable_provider_unavailable:
+                if symbol in (source_symbols | history_symbols | daily_symbols):
+                    unsafe_history.append(symbol)
+                else:
+                    provider_unavailable.append(symbol)
+                continue
+            if symbol in journal_provider_unavailable:
+                unsafe_history.append(symbol)
+                continue
+            if checkpoint_pair is not None and checkpoint_pair not in {
+                ("COMPLETED", "COMPLETED"),
+                ("NO_DATA", "COMPLETED"),
+            }:
+                unsafe_history.append(symbol)
+                continue
+            if checkpoint_pair == ("NO_DATA", "COMPLETED") and symbol in (
+                source_symbols | history_symbols
+            ):
+                unsafe_history.append(symbol)
+                continue
+
             daily_row = (
                 market.execute(
                     """
@@ -1151,13 +1302,17 @@ def canonical_day_completeness(
                 daily_source = str(daily_row["source"] or "").strip().upper()
                 if (
                     not _valid_ohlcv(daily_row)
-                    or daily_source not in {DAILY_SOURCE, SSI_STREAM}
+                    or daily_source != DAILY_SOURCE
                     or str(daily_row["quality_status"] or "").strip().upper()
                     != TRUSTED_QUALITY
                 ):
                     raise ValueError
             except (TypeError, ValueError):
                 unsafe_daily.append(symbol)
+                continue
+
+            if checkpoint_pair == ("NO_DATA", "COMPLETED") and daily_volume != 0:
+                volume_mismatches.append(symbol)
                 continue
 
             rows = (
@@ -1173,6 +1328,12 @@ def canonical_day_completeness(
                 else []
             )
             if not rows:
+                if daily_volume == 0 and checkpoint_pair != (
+                    "COMPLETED",
+                    "COMPLETED",
+                ):
+                    complete_symbols.append(symbol)
+                    continue
                 missing_history.append(symbol)
                 continue
             valid_minutes = {point.minute for point in volume_market_grid(exchange)}
@@ -1187,63 +1348,16 @@ def canonical_day_completeness(
             if sum(int(row["volume"]) for row in rows) != daily_volume:
                 volume_mismatches.append(symbol)
                 continue
-            stream_backed = (
-                daily_source == SSI_STREAM
-                or any(
-                    str(row["data_source"] or "").strip().upper() == SSI_STREAM
-                    for row in rows
-                )
-            )
-            if stream_backed:
-                if symbol not in trusted_journal_symbols:
-                    unfinalized_stream.append(symbol)
-                    continue
-                source_rows = source.execute(
-                    f"""
-                    SELECT {', '.join(MINUTE_COLUMNS)}
-                    FROM minute_bars WHERE symbol=? AND trading_date=?
-                    ORDER BY minute
-                    """,
-                    (symbol, trading_date),
-                ).fetchall()
-                try:
-                    source_is_safe = bool(source_rows) and all(
-                        _safe_canonical_history_row(
-                            row, exchange=exchange, valid_minutes=valid_minutes
-                        )
-                        and str(row["data_source"] or "").strip().upper()
-                        == SSI_STREAM
-                        for row in source_rows
-                    )
-                    source_matches_history = tuple(
-                        _minute_core(row) for row in source_rows
-                    ) == tuple(_minute_core(row) for row in rows)
-                    stream_daily_matches = (
-                        daily_source != SSI_STREAM
-                        or (
-                            float(daily_row["open"]) == float(source_rows[0]["open"])
-                            and float(daily_row["high"])
-                            == max(float(row["high"]) for row in source_rows)
-                            and float(daily_row["low"])
-                            == min(float(row["low"]) for row in source_rows)
-                            and float(daily_row["close"])
-                            == float(source_rows[-1]["close"])
-                        )
-                    )
-                except (IndexError, TypeError, ValueError):
-                    source_is_safe = source_matches_history = stream_daily_matches = False
-                if not (
-                    source_is_safe and source_matches_history and stream_daily_matches
-                ):
-                    unsafe_stream_source.append(symbol)
-                    continue
             complete_symbols.append(symbol)
 
-        complete = bool(expected) and len(complete_symbols) == len(expected)
+        complete = bool(expected) and (
+            len(complete_symbols) + len(provider_unavailable) == len(expected)
+        )
         return CanonicalDayCompleteness(
             complete=complete,
             expected_symbols=expected,
             complete_symbols=tuple(complete_symbols),
+            provider_unavailable=tuple(provider_unavailable),
             missing_daily_bars=tuple(missing_daily),
             missing_history=tuple(missing_history),
             unsafe_daily_bars=tuple(unsafe_daily),
@@ -1267,6 +1381,7 @@ def finalize_day(
     daily_bars: Iterable[DailyBar],
     dry_run: bool = True,
     now: datetime | None = None,
+    auction_source_path: Path | None = None,
     _allowed_daily_sources: frozenset[str] = frozenset({DAILY_SOURCE}),
     _day_block_reasons: tuple[str, ...] = (),
 ) -> FinalizeResult:
@@ -1280,6 +1395,11 @@ def finalize_day(
     for path in resolved:
         if not path.is_file():
             raise FileNotFoundError(f"Required SQLite database does not exist: {path}")
+    resolved_auction = Path(auction_source_path or source_path).resolve()
+    if not resolved_auction.is_file():
+        raise FileNotFoundError(
+            f"Required auction evidence database does not exist: {resolved_auction}"
+        )
 
     moment = now or datetime.now(VN_TZ)
     started_at = canonical_timestamp(moment)
@@ -1287,6 +1407,7 @@ def finalize_day(
         daily_bars, trading_date, allowed_sources=_allowed_daily_sources
     )
     source = _connect_existing(resolved[0], read_only=True)
+    auction_source = _connect_existing(resolved_auction, read_only=True)
     connection = _connect_existing(resolved[2])
     try:
         if not dry_run:
@@ -1306,22 +1427,117 @@ def finalize_day(
 
         rows_by_symbol = _load_source_rows(source, trading_date)
         audit = audit_day(rows_by_symbol, trading_date)
-        universe = sorted(set(rows_by_symbol) | set(canonical_daily))
+        checkpoint_pairs = _eod_checkpoint_pairs(source, trading_date)
+        universe = sorted(
+            set(rows_by_symbol) | set(canonical_daily) | set(checkpoint_pairs)
+        )
         symbol_results: list[SymbolFinalizeResult] = []
         for symbol in universe:
+            rows = rows_by_symbol.get(symbol, [])
+            daily_bar = canonical_daily.get(symbol)
             if _day_block_reasons:
                 symbol_results.append(
                     _empty_symbol_result(
                         symbol,
                         "BLOCKED",
                         _day_block_reasons,
-                        rows_by_symbol.get(symbol, []),
-                        canonical_daily.get(symbol).volume
-                        if symbol in canonical_daily
-                        else None,
+                        rows,
+                        daily_bar.volume if daily_bar is not None else None,
                     )
                 )
                 continue
+            pair = checkpoint_pairs.get(symbol)
+            intraday_no_data = False
+            if pair is not None:
+                intraday_status, daily_status = pair
+                valid_statuses = {"COMPLETED", "NO_DATA"}
+                if (
+                    intraday_status not in valid_statuses
+                    or daily_status not in valid_statuses
+                ):
+                    reason = (
+                        "CHECKPOINT_FAILED"
+                        if "FAILED" in pair
+                        else "CHECKPOINT_INCOMPLETE"
+                    )
+                    symbol_results.append(
+                        _empty_symbol_result(
+                            symbol,
+                            "BLOCKED",
+                            (reason,),
+                            rows,
+                            daily_bar.volume if daily_bar is not None else None,
+                        )
+                    )
+                    continue
+                if intraday_status == "NO_DATA" and daily_status == "NO_DATA":
+                    if rows or daily_bar is not None:
+                        symbol_results.append(
+                            _empty_symbol_result(
+                                symbol,
+                                "BLOCKED",
+                                ("CHECKPOINT_DATA_CONFLICT",),
+                                rows,
+                                daily_bar.volume if daily_bar is not None else None,
+                            )
+                        )
+                    else:
+                        symbol_results.append(
+                            _empty_symbol_result(
+                                symbol,
+                                "UNAVAILABLE",
+                                ("PROVIDER_NO_DATA",),
+                                rows,
+                                None,
+                            )
+                        )
+                    continue
+                if daily_status == "NO_DATA":
+                    symbol_results.append(
+                        _empty_symbol_result(
+                            symbol,
+                            "BLOCKED",
+                            ("DAILY_NO_DATA_WITH_INTRADAY",),
+                            rows,
+                            daily_bar.volume if daily_bar is not None else None,
+                        )
+                    )
+                    continue
+                if daily_bar is None:
+                    symbol_results.append(
+                        _empty_symbol_result(
+                            symbol,
+                            "BLOCKED",
+                            ("DAILY_CHECKPOINT_PAYLOAD_MISSING",),
+                            rows,
+                            None,
+                        )
+                    )
+                    continue
+                if intraday_status == "NO_DATA":
+                    if rows:
+                        symbol_results.append(
+                            _empty_symbol_result(
+                                symbol,
+                                "BLOCKED",
+                                ("CHECKPOINT_DATA_CONFLICT",),
+                                rows,
+                                daily_bar.volume,
+                            )
+                        )
+                        continue
+                    intraday_no_data = True
+                elif not rows:
+                    symbol_results.append(
+                        _empty_symbol_result(
+                            symbol,
+                            "BLOCKED",
+                            ("SOURCE_MISSING",),
+                            rows,
+                            daily_bar.volume,
+                        )
+                    )
+                    continue
             try:
                 symbol_results.append(
                     _settle_symbol(
@@ -1329,10 +1545,12 @@ def finalize_day(
                         source,
                         symbol=symbol,
                         trading_date=trading_date,
-                        rows=rows_by_symbol.get(symbol, []),
-                        daily_bar=canonical_daily.get(symbol),
+                        rows=rows,
+                        daily_bar=daily_bar,
                         recorded_at=started_at,
                         dry_run=dry_run,
+                        auction_source=auction_source,
+                        intraday_no_data=intraday_no_data,
                     )
                 )
             except Exception as exc:
@@ -1342,10 +1560,8 @@ def finalize_day(
                         symbol,
                         "BLOCKED",
                         (f"WRITE_FAILURE:{type(exc).__name__}",),
-                        rows_by_symbol.get(symbol, []),
-                        canonical_daily.get(symbol).volume
-                        if symbol in canonical_daily
-                        else None,
+                        rows,
+                        daily_bar.volume if daily_bar is not None else None,
                     )
                 )
         result = _build_result(
@@ -1361,6 +1577,7 @@ def finalize_day(
         return result
     finally:
         source.close()
+        auction_source.close()
         connection.close()
 
 
@@ -1375,26 +1592,9 @@ def finalize_stream_day(
     minimum_symbols: int = MIN_STREAM_SYMBOLS,
     minimum_minutes: int = MIN_STREAM_MINUTES,
 ) -> FinalizeResult:
-    """Finalize a sufficiently complete current day directly from SSI stream data."""
-    source = _connect_existing(source_path, read_only=True)
-    try:
-        rows_by_symbol = _load_source_rows(source, trading_date)
-    finally:
-        source.close()
-    return finalize_day(
-        source_path=source_path,
-        history_path=history_path,
-        market_path=market_path,
-        trading_date=trading_date,
-        daily_bars=_stream_daily_bars(rows_by_symbol, trading_date),
-        dry_run=dry_run,
-        now=now,
-        _allowed_daily_sources=frozenset({STREAM_DAILY_SOURCE}),
-        _day_block_reasons=_stream_coverage_reasons(
-            rows_by_symbol,
-            minimum_symbols=minimum_symbols,
-            minimum_minutes=minimum_minutes,
-        ),
+    """The superseded stream-primary path is intentionally fail-closed."""
+    raise RuntimeError(
+        "stream-primary EOD is disabled; use SSI REST IntradayOhlc + DailyOhlc"
     )
 
 
@@ -1427,9 +1627,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--history", type=Path, required=True)
     parser.add_argument("--market", type=Path, required=True)
-    source = parser.add_mutually_exclusive_group(required=True)
-    source.add_argument("--daily-json", type=Path)
-    source.add_argument("--stream-primary", action="store_true")
+    parser.add_argument("--auction-source", type=Path, required=True)
+    parser.add_argument("--daily-json", type=Path, required=True)
     parser.add_argument("--date", type=_parse_date, required=True)
     parser.add_argument("--write", action="store_true")
     return parser
@@ -1450,20 +1649,14 @@ def main(argv: list[str] | None = None) -> int:
         "trading_date": args.date.isoformat(),
         "dry_run": not args.write,
         "now": now,
+        "auction_source_path": args.auction_source,
     }
-    if args.stream_primary:
-        result = finalize_stream_day(**kwargs)
-    else:
-        result = finalize_day(
-            **kwargs,
-            daily_bars=_load_daily_json(args.daily_json, args.date.isoformat()),
-        )
-    print(json.dumps(asdict(result), ensure_ascii=False, sort_keys=True))
-    successful = (
-        {"PASS", "DRY_RUN_PASS"}
-        if args.stream_primary
-        else {"PASS", "DRY_RUN_PASS", "PARTIAL"}
+    result = finalize_day(
+        **kwargs,
+        daily_bars=_load_daily_json(args.daily_json, args.date.isoformat()),
     )
+    print(json.dumps(asdict(result), ensure_ascii=False, sort_keys=True))
+    successful = {"PASS", "DRY_RUN_PASS"}
     return 0 if result.status in successful else 2
 
 

@@ -37,6 +37,10 @@ class SSIHTTPError(SSIHistoricalError):
         self.status_code = status_code
 
 
+class SSIRateLimitCircuitOpen(SSIHTTPError):
+    """Repeated provider rate limits require the current batch to abort."""
+
+
 class SSINoDataFound(SSIHistoricalError):
     """SSI explicitly reported that the bounded request has no data."""
 
@@ -236,6 +240,7 @@ class SSIHistoricalClient:
         initial_retry_delay: float = 1,
         max_retry_delay: float = 60,
         retry_jitter_ratio: float = 0,
+        max_consecutive_rate_limits: int = 8,
         telemetry_sink: Callable[[SSIRequestTelemetry], None] | None = None,
     ) -> None:
         if not consumer_id or not consumer_secret:
@@ -252,6 +257,8 @@ class SSIHistoricalClient:
             raise ValueError("initial_retry_delay must not exceed max_retry_delay")
         if retry_jitter_ratio < 0:
             raise ValueError("retry_jitter_ratio must not be negative")
+        if max_consecutive_rate_limits < 1:
+            raise ValueError("max_consecutive_rate_limits must be positive")
         if max_pages_per_range > MAX_PAGE_INDEX:
             raise ValueError(
                 f"max_pages_per_range must not exceed SSI pageIndex limit "
@@ -272,10 +279,12 @@ class SSIHistoricalClient:
         self.initial_retry_delay = initial_retry_delay
         self.max_retry_delay = max_retry_delay
         self.retry_jitter_ratio = retry_jitter_ratio
+        self.max_consecutive_rate_limits = max_consecutive_rate_limits
         self.telemetry_sink = telemetry_sink
         self._access_token: str | None = None
         self._request_count = 0
         self.retry_count = 0
+        self._consecutive_rate_limits = 0
 
     def _url(self, path: str) -> str:
         return self.base_url + path.lstrip("/")
@@ -465,6 +474,21 @@ class SSIHistoricalClient:
                     )
                     self.retry_count += 1
                     continue
+            if response.status_code == 429:
+                self._consecutive_rate_limits += 1
+                if self._consecutive_rate_limits >= self.max_consecutive_rate_limits:
+                    self._emit_telemetry(
+                        path=path,
+                        response=response,
+                        duration_ms=(time_module.monotonic() - started_at) * 1000,
+                        attempt=attempt,
+                        will_retry=False,
+                    )
+                    raise SSIRateLimitCircuitOpen(
+                        429,
+                        "SSI HTTP 429 circuit open after "
+                        f"{self._consecutive_rate_limits} consecutive rate limits",
+                    )
             if response.status_code in RETRYABLE_STATUS_CODES and attempt < self.max_attempts:
                 self._emit_telemetry(
                     path=path,
@@ -541,6 +565,27 @@ class SSIHistoricalClient:
                     raise SSINoDataFound(f"NoDataFound for {path}")
                 provider_code = self._provider_status_code(provider_status)
                 provider_retryable = provider_code in RETRYABLE_STATUS_CODES
+                if provider_code == 429:
+                    self._consecutive_rate_limits += 1
+                    if (
+                        self._consecutive_rate_limits
+                        >= self.max_consecutive_rate_limits
+                    ):
+                        self._emit_telemetry(
+                            path=path,
+                            response=response,
+                            duration_ms=(time_module.monotonic() - started_at) * 1000,
+                            attempt=attempt,
+                            will_retry=False,
+                            response_keys=tuple(
+                                sorted(str(key) for key in payload)
+                            ),
+                        )
+                        raise SSIRateLimitCircuitOpen(
+                            429,
+                            "SSI provider 429 circuit open after "
+                            f"{self._consecutive_rate_limits} consecutive rate limits",
+                        )
                 if provider_retryable and attempt < self.max_attempts:
                     self._emit_telemetry(
                         path=path,
@@ -568,6 +613,7 @@ class SSIHistoricalClient:
                 raise SSIHistoricalError(
                     f"SSI provider status {provider_status!r} for {path}"
                 )
+            self._consecutive_rate_limits = 0
             self._emit_telemetry(
                 path=path,
                 response=response,

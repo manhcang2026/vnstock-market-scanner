@@ -13,6 +13,7 @@ from .ssi_historical import (
     SSIHistoricalClient,
     SSIHistoricalError,
     SSINoDataFound,
+    SSIRateLimitCircuitOpen,
     normalize_historical_record,
 )
 from .storage import HistoricalBarWrite, SQLiteStore
@@ -26,6 +27,7 @@ DEFAULT_MAX_RETRIES = 5
 DEFAULT_INITIAL_RETRY_DELAY = 2.0
 DEFAULT_MAX_RETRY_DELAY = 120.0
 DEFAULT_RETRY_JITTER_RATIO = 0.25
+DEFAULT_MAX_CONSECUTIVE_RATE_LIMITS = 8
 
 
 class HistoricalFetcher(Protocol):
@@ -189,6 +191,27 @@ def run_bootstrap(
                     f"valid_count={valid_count} rejected_count={rejected_count} "
                     f"rows={len(bars)} inserted={inserted} existing={existing}"
                 )
+        except SSIRateLimitCircuitOpen as exc:
+            failed += 1
+            message = f"{type(exc).__name__}: {exc}"
+            store.mark_historical_checkpoint_failed(
+                symbol,
+                from_key,
+                to_key,
+                resolution,
+                message,
+                now().isoformat(),
+            )
+            store.commit()
+            LOG.error(
+                "Historical bootstrap rate-limit circuit opened for %s; "
+                "aborting batch: %s",
+                symbol,
+                message,
+            )
+            if verbose:
+                output(f"{prefix} failed={message} batch_aborted=rate_limit")
+            raise
         except SSINoDataFound as exc:
             no_data += 1
             store.mark_historical_checkpoint_no_data(
@@ -281,6 +304,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_RETRY_JITTER_RATIO,
         help="Positive jitter fraction applied to retry cooldowns",
     )
+    parser.add_argument(
+        "--max-consecutive-rate-limits",
+        type=int,
+        default=DEFAULT_MAX_CONSECUTIVE_RATE_LIMITS,
+        help="Open the circuit after this many consecutive SSI 429 responses",
+    )
     parser.add_argument("--verbose", action="store_true", help="Print per-symbol progress")
     return parser
 
@@ -301,6 +330,8 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("--initial-retry-delay must not exceed --max-retry-delay")
     if args.retry_jitter_ratio < 0:
         raise SystemExit("--retry-jitter-ratio must not be negative")
+    if args.max_consecutive_rate_limits < 1:
+        raise SystemExit("--max-consecutive-rate-limits must be positive")
 
     settings = Settings.from_env()
     logging.basicConfig(
@@ -331,6 +362,7 @@ def main(argv: list[str] | None = None) -> int:
             initial_retry_delay=args.initial_retry_delay,
             max_retry_delay=args.max_retry_delay,
             retry_jitter_ratio=args.retry_jitter_ratio,
+            max_consecutive_rate_limits=args.max_consecutive_rate_limits,
         )
         summary = run_bootstrap(
             store=store,

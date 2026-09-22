@@ -77,7 +77,11 @@ def _insert_daily(connection: sqlite3.Connection, bar: DailyBar) -> None:
 
 
 def _insert_stream_source(
-    source_path: Path, trading_date: str, volumes: tuple[int, ...]
+    source_path: Path,
+    trading_date: str,
+    volumes: tuple[int, ...],
+    *,
+    data_source: str = "SSI_REST",
 ) -> None:
     connection = sqlite3.connect(source_path)
     cumulative = 0
@@ -102,7 +106,7 @@ def _insert_stream_source(
                 0,
                 None,
                 None,
-                "SSI_STREAM",
+                data_source,
                 minute + ":00",
                 trading_date + "T15:30:00+07:00",
             )
@@ -168,7 +172,7 @@ def _fixture(tmp_path: Path):
     return source, history, market, output, old_dates, old_volumes
 
 
-def _finalize_stream_day(
+def _finalize_rest_day(
     source: Path,
     history: Path,
     market: Path,
@@ -203,7 +207,7 @@ def _coverage(path: Path) -> sqlite3.Row:
     return row
 
 
-def test_real_baseline_keeps_exact10_as_finalized_stream_days_advance(
+def test_real_baseline_keeps_exact10_as_rest_days_advance(
     tmp_path: Path,
 ) -> None:
     source, history, market, output, old_dates, old_volumes = _fixture(tmp_path)
@@ -212,7 +216,7 @@ def test_real_baseline_keeps_exact10_as_finalized_stream_days_advance(
 
     first_volumes = _volumes(100)
     stream_volumes[new_dates[0]] = first_volumes
-    _finalize_stream_day(source, history, market, new_dates[0], first_volumes)
+    _finalize_rest_day(source, history, market, new_dates[0], first_volumes)
     first_summary = build_volume_baseline(
         history_db=history,
         daily_db=market,
@@ -246,12 +250,12 @@ def test_real_baseline_keeps_exact10_as_finalized_stream_days_advance(
             (SYMBOL, SYMBOL),
         )
     )
-    assert source_counts == {"SSI_REST": 9, "SSI_STREAM": 1}
+    assert source_counts == {"SSI_REST": 10}
     history_connection.close()
     market_connection.close()
 
     coverage = _coverage(output)
-    assert first_summary.candidate_market_sessions == 11
+    assert first_summary.candidate_market_sessions == 10
     assert first_summary.symbols_10_10_proven == 1
     assert coverage["baseline_sessions_used"] == 10
     assert coverage["first_history_date"] == old_dates[1]
@@ -287,7 +291,7 @@ def test_real_baseline_keeps_exact10_as_finalized_stream_days_advance(
     for offset, trading_date in enumerate(new_dates[1:], start=101):
         volumes = _volumes(offset)
         stream_volumes[trading_date] = volumes
-        _finalize_stream_day(source, history, market, trading_date, volumes)
+        _finalize_rest_day(source, history, market, trading_date, volumes)
     final_summary = build_volume_baseline(
         history_db=history,
         daily_db=market,
@@ -319,15 +323,15 @@ def test_real_baseline_keeps_exact10_as_finalized_stream_days_advance(
             (SYMBOL, final_candidates[0]),
         )
     )
-    assert final_sources == {"SSI_REST": 5, "SSI_STREAM": 5}
+    assert final_sources == {"SSI_REST": 10}
     history_connection.close()
     market_connection.close()
 
 
-def test_rest_and_eod_finalized_stream_are_both_historical_proof(tmp_path: Path) -> None:
+def test_rest_finalized_history_is_canonical_proof(tmp_path: Path) -> None:
     source, history, market, _, old_dates, _ = _fixture(tmp_path)
     stream_date = "2026-09-14"
-    _finalize_stream_day(source, history, market, stream_date, _volumes(100))
+    _finalize_rest_day(source, history, market, stream_date, _volumes(100))
     history_connection = sqlite3.connect(history)
     history_connection.row_factory = sqlite3.Row
     market_connection = sqlite3.connect(market)
@@ -345,7 +349,7 @@ def test_rest_and_eod_finalized_stream_are_both_historical_proof(tmp_path: Path)
         trading_date=stream_date,
     )
     assert stream_proof.proven
-    assert {bar.data_source for bar in stream_proof.bars} == {"SSI_STREAM"}
+    assert {bar.data_source for bar in stream_proof.bars} == {"SSI_REST"}
     history_connection.close()
     market_connection.close()
 
@@ -356,7 +360,7 @@ def test_raw_stream_without_write_journal_is_rejected_but_replay_is_unchanged(
     _, history, market, _, _, _ = _fixture(tmp_path)
     raw_date = "2026-09-14"
     volumes = _volumes(100)
-    _insert_stream_source(history, raw_date, volumes)
+    _insert_stream_source(history, raw_date, volumes, data_source="SSI_STREAM")
     market_connection = sqlite3.connect(market)
     _insert_daily(market_connection, _daily_bar(raw_date, volumes))
     market_connection.commit()
@@ -371,7 +375,7 @@ def test_raw_stream_without_write_journal_is_rejected_but_replay_is_unchanged(
     replay = prove_replay_volume_session(
         history_connection, market_connection, symbol=SYMBOL, trading_date=raw_date
     )
-    assert historical.reason == "UNFINALIZED_STREAM"
+    assert historical.reason == "UNSAFE_INTRADAY"
     assert replay.proven
     history_connection.close()
     market_connection.close()
@@ -387,12 +391,12 @@ def test_raw_stream_without_write_journal_is_rejected_but_replay_is_unchanged(
         ("missing_daily", "DAILY_MISSING"),
     ],
 )
-def test_unsafe_or_unreconciled_finalized_stream_is_rejected(
+def test_unsafe_or_unreconciled_finalized_rest_is_rejected(
     tmp_path: Path, mutation: str, expected: str
 ) -> None:
     source, history, market, _, _, _ = _fixture(tmp_path)
     stream_date = "2026-09-14"
-    _finalize_stream_day(source, history, market, stream_date, _volumes(100))
+    _finalize_rest_day(source, history, market, stream_date, _volumes(100))
     if mutation in {"partial", "gap", "quality"}:
         connection = sqlite3.connect(history)
         if mutation == "partial":

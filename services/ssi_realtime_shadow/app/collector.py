@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable, Iterable
 
@@ -12,6 +12,7 @@ from .market_session import (
     market_day_feed_start,
     market_feed_expected,
     market_feed_window_start,
+    missing_market_minutes,
     normalize_exchange,
 )
 from .normalization import parse_trading_date
@@ -165,6 +166,10 @@ class CollectorStats:
     volume_shadow_snapshots: int = 0
     auction_projection_events: int = 0
     auction_projection_errors: int = 0
+    rejected_out_of_order_events: int = 0
+    rejected_completed_minute_events: int = 0
+    rejected_volume_engine_events: int = 0
+    provider_session_counts: dict[str, int] = field(default_factory=dict)
 
 
 class QuoteCollector:
@@ -183,6 +188,7 @@ class QuoteCollector:
         self.stats = CollectorStats()
         self._prev_total: dict[tuple[str, str], int] = {}
         self._initialized_keys: set[tuple[str, str]] = set()
+        self._latest_event_at: dict[tuple[str, str], datetime] = {}
         self.last_event_at: datetime | None = None
         self.volume_event_handler = volume_event_handler
         self.extra_stats_provider = extra_stats_provider
@@ -272,7 +278,22 @@ class QuoteCollector:
                 if first_event_in_process
                 else ()
             )
-            self._initialized_keys.add(key)
+            persisted_at = (
+                _stored_event_datetime(trading_date, persisted.event_time)
+                if persisted is not None
+                else None
+            )
+            canonical_event_at = self._latest_event_at.get(key, persisted_at)
+            if canonical_event_at is not None and event_at < canonical_event_at:
+                self.stats.rejected_out_of_order_events += 1
+                LOG.warning(
+                    "Rejecting out-of-order SSI event before canonical mutation: "
+                    "symbol=%s event=%s canonical=%s",
+                    symbol,
+                    event_at.isoformat(),
+                    canonical_event_at.isoformat(),
+                )
+                continue
             previous_total = (
                 persisted.total_volume
                 if persisted is not None
@@ -293,25 +314,27 @@ class QuoteCollector:
             gap_to: str | None = None
             quality_status = "TRUSTED" if exchange is not None else "UNKNOWN_MARKET"
 
-            if persisted is not None:
-                persisted_at = _stored_event_datetime(
-                    trading_date, persisted.event_time
+            # Symbol silence is normal.  Only a process boundary supplies
+            # evidence that expected feed minutes may have been missed.
+            if first_event_in_process and persisted_at is not None:
+                downtime_end = min(self.started_at, event_at)
+                missing_minutes = (
+                    missing_market_minutes(exchange, persisted_at, downtime_end)
+                    if exchange is not None
+                    else ()
                 )
-                same_minute = (
-                    persisted_at is not None
-                    and persisted_at.strftime("%H:%M") == minute
-                )
-                if not same_minute:
+                if missing_minutes and (
+                    total_volume is None
+                    or previous_total is None
+                    or total_volume != previous_total
+                ):
                     has_gap = True
                     is_partial = True
                     quality_status = "GAP"
-                    gap_from = (
-                        persisted_at.isoformat()
-                        if persisted_at is not None
-                        else persisted.updated_at
-                    )
+                    gap_from = persisted_at.isoformat()
                     gap_to = event_at.isoformat()
 
+            next_high_watermark = previous_total
             if total_volume is None:
                 is_partial = True
                 if not has_gap:
@@ -323,11 +346,11 @@ class QuoteCollector:
                     is_partial = True
                     if not has_gap:
                         quality_status = "PARTIAL"
-                self._prev_total[key] = total_volume
+                next_high_watermark = total_volume
             elif total_volume >= previous_total:
                 if not has_gap:
                     volume_delta = total_volume - previous_total
-                self._prev_total[key] = total_volume
+                next_high_watermark = total_volume
             else:
                 LOG.warning(
                     "Cumulative volume moved backwards for %s on %s: %s -> %s",
@@ -340,27 +363,46 @@ class QuoteCollector:
                 if not has_gap:
                     quality_status = "VOLUME_REGRESSION"
 
-            effective_total_volume = self._prev_total.get(key, previous_total)
+            effective_total_volume = next_high_watermark
             updated_at = now.isoformat()
 
-            self.store.upsert_minute_bar(
-                trading_date=trading_date,
-                minute=minute,
-                symbol=symbol,
-                price=last_price,
-                volume_delta=volume_delta,
-                total_volume=effective_total_volume,
-                is_partial=is_partial,
-                exchange=exchange,
-                quality_status=quality_status,
-                has_gap=has_gap,
-                gap_from=gap_from,
-                gap_to=gap_to,
-                updated_at=updated_at,
-            )
+            volume_event: VolumeEvent | None = None
+            if exchange is not None and self.volume_event_handler is not None:
+                self.stats.volume_shadow_events += 1
+                try:
+                    volume_event = VolumeEvent(
+                        symbol=symbol,
+                        exchange=exchange,
+                        trading_date=trading_date,
+                        event_time=event_at,
+                        minute=minute,
+                        volume_delta=volume_delta,
+                        total_volume=effective_total_volume,
+                        quality_status=quality_status,
+                        is_partial=is_partial,
+                        has_gap=has_gap,
+                        provider_session=provider_session,
+                        provider_total_volume=total_volume,
+                        data_source="SSI_STREAM",
+                    )
+                except Exception as exc:
+                    self.stats.volume_shadow_event_errors += 1
+                    message = str(exc)
+                    if "already completed minute" in message:
+                        self.stats.rejected_completed_minute_events += 1
+                    elif "Out-of-order" in message:
+                        self.stats.rejected_out_of_order_events += 1
+                    else:
+                        self.stats.rejected_volume_engine_events += 1
+                    LOG.exception(
+                        "Rejecting SSI event before canonical mutation: "
+                        "symbol=%s minute=%s",
+                        symbol,
+                        minute,
+                    )
+                    continue
 
-            self.store.upsert_latest_quote(
-                {
+            quote = {
                     "symbol": symbol,
                     "trading_date": trading_date,
                     "event_time": event_time,
@@ -382,6 +424,52 @@ class QuoteCollector:
                     "trading_status": str(_first(payload, "TradingStatus") or ""),
                     "updated_at": updated_at,
                 }
+            try:
+                with self.store.live_event_transaction():
+                    self.store.upsert_minute_bar(
+                        trading_date=trading_date,
+                        minute=minute,
+                        symbol=symbol,
+                        price=last_price,
+                        volume_delta=volume_delta,
+                        total_volume=effective_total_volume,
+                        is_partial=is_partial,
+                        exchange=exchange,
+                        quality_status=quality_status,
+                        has_gap=has_gap,
+                        gap_from=gap_from,
+                        gap_to=gap_to,
+                        updated_at=updated_at,
+                        event_time=event_time,
+                    )
+                    self.store.upsert_latest_quote(quote)
+                    if volume_event is not None and self.volume_event_handler is not None:
+                        self.volume_event_handler(volume_event)
+            except Exception as exc:
+                if volume_event is not None:
+                    self.stats.volume_shadow_event_errors += 1
+                message = str(exc)
+                if "already completed minute" in message:
+                    self.stats.rejected_completed_minute_events += 1
+                elif "Out-of-order" in message:
+                    self.stats.rejected_out_of_order_events += 1
+                else:
+                    self.stats.rejected_volume_engine_events += 1
+                LOG.exception(
+                    "Rejecting SSI event and rolling back canonical hot writes: "
+                    "symbol=%s minute=%s",
+                    symbol,
+                    minute,
+                )
+                continue
+
+            self._initialized_keys.add(key)
+            self._latest_event_at[key] = event_at
+            if next_high_watermark is not None:
+                self._prev_total[key] = next_high_watermark
+            diagnostic_session = provider_session or "<EMPTY>"
+            self.stats.provider_session_counts[diagnostic_session] = (
+                self.stats.provider_session_counts.get(diagnostic_session, 0) + 1
             )
             self.stats.accepted_events += 1
             self.last_event_at = now
@@ -437,32 +525,6 @@ class QuoteCollector:
                         symbol,
                         provider_session,
                     )
-            if exchange is not None and self.volume_event_handler is not None:
-                self.stats.volume_shadow_events += 1
-                try:
-                    volume_event = VolumeEvent(
-                        symbol=symbol,
-                        exchange=exchange,
-                        trading_date=trading_date,
-                        event_time=event_at,
-                        minute=minute,
-                        volume_delta=volume_delta,
-                        total_volume=effective_total_volume,
-                        quality_status=quality_status,
-                        is_partial=is_partial,
-                        has_gap=has_gap,
-                        provider_session=provider_session,
-                        provider_total_volume=total_volume,
-                        data_source="SSI_STREAM",
-                    )
-                    self.volume_event_handler(volume_event)
-                except Exception:
-                    self.stats.volume_shadow_event_errors += 1
-                    LOG.exception(
-                        "CCC V2 volume shadow event failed: symbol=%s minute=%s",
-                        symbol,
-                        minute,
-                    )
 
     def snapshot_stats(self) -> dict[str, object]:
         values: dict[str, object] = {
@@ -482,6 +544,14 @@ class QuoteCollector:
             "volume_shadow_snapshots": self.stats.volume_shadow_snapshots,
             "auction_projection_events": self.stats.auction_projection_events,
             "auction_projection_errors": self.stats.auction_projection_errors,
+            "rejected_out_of_order_events": self.stats.rejected_out_of_order_events,
+            "rejected_completed_minute_events": (
+                self.stats.rejected_completed_minute_events
+            ),
+            "rejected_volume_engine_events": self.stats.rejected_volume_engine_events,
+            "provider_session_counts": dict(
+                sorted(self.stats.provider_session_counts.items())
+            ),
         }
         if self.extra_stats_provider is not None:
             values.update(self.extra_stats_provider())

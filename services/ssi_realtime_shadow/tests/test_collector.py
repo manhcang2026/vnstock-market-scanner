@@ -514,6 +514,132 @@ def test_cross_minute_restart_records_gap_without_volume_spike(tmp_path: Path) -
     store.close()
 
 
+@pytest.mark.parametrize("exchange", ("HOSE", "HNX", "UPCOM"))
+def test_restart_across_lunch_is_not_a_gap(tmp_path: Path, exchange: str) -> None:
+    db = tmp_path / f"lunch-{exchange}.db"
+    store = SQLiteStore(db, commit_every_events=1)
+    first = QuoteCollector({"HPG"}, store, started_at=started_at(8, 30))
+    first.on_message(
+        market_event(Market=exchange, Time="11:29:30", TotalVol=1_000)
+    )
+    store.close()
+
+    store = SQLiteStore(db, commit_every_events=1)
+    restarted = QuoteCollector({"HPG"}, store, started_at=started_at(12, 55))
+    restarted.on_message(
+        market_event(Market=exchange, Time="13:00:05", TotalVol=1_200)
+    )
+
+    row = store._conn.execute(
+        "SELECT volume,is_partial,has_gap,quality_status FROM minute_bars "
+        "WHERE minute='13:00'"
+    ).fetchone()
+    assert tuple(row) == (200, 0, 0, "TRUSTED")
+    store.close()
+
+
+@pytest.mark.parametrize("exchange", ("HOSE", "HNX", "UPCOM"))
+def test_restart_with_missing_continuous_minute_is_gap(
+    tmp_path: Path, exchange: str
+) -> None:
+    db = tmp_path / f"gap-{exchange}.db"
+    store = SQLiteStore(db, commit_every_events=1)
+    first = QuoteCollector({"HPG"}, store, started_at=started_at(8, 30))
+    first.on_message(
+        market_event(Market=exchange, Time="11:29:30", TotalVol=1_000)
+    )
+    store.close()
+
+    store = SQLiteStore(db, commit_every_events=1)
+    restarted = QuoteCollector({"HPG"}, store, started_at=started_at(13, 4))
+    restarted.on_message(
+        market_event(Market=exchange, Time="13:04:05", TotalVol=1_200)
+    )
+
+    row = store._conn.execute(
+        "SELECT volume,is_partial,has_gap,quality_status FROM minute_bars "
+        "WHERE minute='13:04'"
+    ).fetchone()
+    assert tuple(row) == (0, 1, 1, "GAP")
+    store.close()
+
+
+def test_out_of_order_event_cannot_mutate_hot_quote_or_minute_close(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteStore(tmp_path / "ordering.db", commit_every_events=1)
+    collector = QuoteCollector({"HPG"}, store, started_at=started_at(8, 30))
+    collector.on_message(
+        market_event(Time="09:00:30", LastPrice=101, TotalVol=1_000)
+    )
+    collector.on_message(
+        market_event(Time="09:00:20", LastPrice=90, TotalVol=2_000)
+    )
+    collector.on_message(
+        market_event(Time="09:00:40", LastPrice=102, TotalVol=1_200)
+    )
+
+    quote = store._conn.execute(
+        "SELECT event_time,last_price,total_volume FROM latest_quotes WHERE symbol='HPG'"
+    ).fetchone()
+    bar = store._conn.execute(
+        "SELECT close,last_total_volume,event_count FROM minute_bars"
+    ).fetchone()
+    assert tuple(quote) == ("09:00:40", 102.0, 1_200)
+    assert tuple(bar) == (102.0, 1_200, 2)
+    assert collector.stats.rejected_out_of_order_events == 1
+    store.close()
+
+
+def test_running_collector_sparse_symbol_cadence_is_not_a_gap(tmp_path: Path) -> None:
+    store = SQLiteStore(tmp_path / "sparse-live.db", commit_every_events=1)
+    collector = QuoteCollector({"HPG"}, store, started_at=started_at(8, 30))
+    collector.on_message(market_event(Time="10:00:30", TotalVol=1_000))
+    collector.on_message(market_event(Time="10:05:10", TotalVol=1_200))
+
+    row = store._conn.execute(
+        "SELECT volume,is_partial,has_gap,quality_status FROM minute_bars "
+        "WHERE minute='10:05'"
+    ).fetchone()
+    assert tuple(row) == (200, 0, 0, "TRUSTED")
+    store.close()
+
+
+def test_completed_minute_rejection_happens_before_hot_mutation(tmp_path: Path) -> None:
+    store = SQLiteStore(tmp_path / "completed.db", commit_every_events=1)
+    calls = 0
+
+    def handler(_event: VolumeEvent) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise ValueError("Event targets an already completed minute: HPG/09:00")
+
+    collector = QuoteCollector(
+        {"HPG"},
+        store,
+        started_at=started_at(8, 30),
+        volume_event_handler=handler,
+    )
+    collector.on_message(
+        market_event(Time="09:00:10", LastPrice=100, TotalVol=1_000)
+    )
+    collector.on_message(
+        market_event(Time="09:00:20", LastPrice=90, TotalVol=1_100)
+    )
+
+    quote = store._conn.execute(
+        "SELECT event_time,last_price,total_volume FROM latest_quotes"
+    ).fetchone()
+    bar = store._conn.execute(
+        "SELECT close,last_total_volume,event_count FROM minute_bars"
+    ).fetchone()
+    assert tuple(quote) == ("09:00:10", 100.0, 1_000)
+    assert tuple(bar) == (100.0, 1_000, 1)
+    assert collector.stats.rejected_completed_minute_events == 1
+    store.close()
+
+
 def test_cumulative_volume_regression_preserves_last_good_baseline(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -811,7 +937,7 @@ def test_none_volume_callback_preserves_collector_behavior(tmp_path: Path) -> No
     store.close()
 
 
-def test_volume_callback_exception_is_isolated_after_audit_writes(
+def test_volume_callback_exception_rejects_before_canonical_writes(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     store = SQLiteStore(tmp_path / "test.db", commit_every_events=1)
@@ -828,11 +954,11 @@ def test_volume_callback_exception_is_isolated_after_audit_writes(
     with caplog.at_level(logging.ERROR):
         collector.on_message(market_event())
 
-    assert collector.stats.accepted_events == 1
+    assert collector.stats.accepted_events == 0
     assert collector.stats.volume_shadow_events == 1
     assert collector.stats.volume_shadow_event_errors == 1
-    assert store._conn.execute("SELECT COUNT(*) FROM minute_bars").fetchone()[0] == 1
-    assert store._conn.execute("SELECT COUNT(*) FROM latest_quotes").fetchone()[0] == 1
+    assert store._conn.execute("SELECT COUNT(*) FROM minute_bars").fetchone()[0] == 0
+    assert store._conn.execute("SELECT COUNT(*) FROM latest_quotes").fetchone()[0] == 0
     assert "symbol=HPG minute=09:00" in caplog.text
     assert "shadow boom" in caplog.text
     store.close()
@@ -856,10 +982,10 @@ def test_volume_event_construction_failure_is_also_isolated(
 
     collector.on_message(market_event())
 
-    assert collector.stats.accepted_events == 1
+    assert collector.stats.accepted_events == 0
     assert collector.stats.volume_shadow_events == 1
     assert collector.stats.volume_shadow_event_errors == 1
-    assert store._conn.execute("SELECT COUNT(*) FROM minute_bars").fetchone()[0] == 1
+    assert store._conn.execute("SELECT COUNT(*) FROM minute_bars").fetchone()[0] == 0
     store.close()
 
 

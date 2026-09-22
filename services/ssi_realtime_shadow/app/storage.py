@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -147,6 +148,10 @@ class HistoricalBarWrite:
     updated_at: str
 
 
+class HistoricalCanonicalConflict(RuntimeError):
+    """An existing canonical REST row differs from the provider response."""
+
+
 _MINUTE_BAR_MIGRATIONS = (
     ("exchange", "exchange TEXT"),
     (
@@ -177,6 +182,7 @@ class SQLiteStore:
         self._last_commit = time.monotonic()
         self._commit_every_events = max(1, commit_every_events)
         self._commit_every_seconds = max(1, commit_every_seconds)
+        self._live_event_transaction = False
         with self._lock:
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute("PRAGMA busy_timeout=5000")
@@ -204,6 +210,8 @@ class SQLiteStore:
 
     def _touch(self, count: int = 1) -> None:
         self._pending += count
+        if self._live_event_transaction:
+            return
         now = time.monotonic()
         if (
             self._pending >= self._commit_every_events
@@ -212,6 +220,33 @@ class SQLiteStore:
             self._conn.commit()
             self._pending = 0
             self._last_commit = now
+
+    @contextmanager
+    def live_event_transaction(self):
+        """Make hot writes visible to local projections, then commit or roll back.
+
+        The callback that validates/orders a live event reads through this same
+        connection, so it sees the candidate quote.  A rejection rolls the hot
+        bar and quote back before they become canonical.
+        """
+        with self._lock:
+            if self._live_event_transaction:
+                raise RuntimeError("nested live event transaction")
+            pending_before = self._pending
+            self._conn.execute("SAVEPOINT ccc_live_event")
+            self._live_event_transaction = True
+            try:
+                yield
+            except BaseException:
+                self._conn.execute("ROLLBACK TO ccc_live_event")
+                self._conn.execute("RELEASE ccc_live_event")
+                self._pending = pending_before
+                raise
+            else:
+                self._conn.execute("RELEASE ccc_live_event")
+            finally:
+                self._live_event_transaction = False
+            self._touch(0)
 
     def get_last_total(self, symbol: str, trading_date: str) -> int | None:
         state = self.get_latest_quote_state(symbol, trading_date)
@@ -387,6 +422,7 @@ class SQLiteStore:
         gap_from: str | None,
         gap_to: str | None,
         updated_at: str,
+        event_time: str | None = None,
     ) -> None:
         with self._lock:
             self._conn.execute(
@@ -394,8 +430,9 @@ class SQLiteStore:
                 INSERT INTO minute_bars (
                     trading_date, minute, symbol, open, high, low, close,
                     volume, last_total_volume, event_count, is_partial, exchange,
-                    quality_status, has_gap, gap_from, gap_to, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
+                    quality_status, has_gap, gap_from, gap_to, provider_time,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(trading_date, minute, symbol) DO UPDATE SET
                     high = MAX(minute_bars.high, excluded.high),
                     low = MIN(minute_bars.low, excluded.low),
@@ -434,7 +471,11 @@ class SQLiteStore:
                         WHEN excluded.gap_to IS NULL THEN minute_bars.gap_to
                         ELSE MAX(minute_bars.gap_to, excluded.gap_to)
                     END,
+                    provider_time = COALESCE(excluded.provider_time, minute_bars.provider_time),
                     updated_at = excluded.updated_at
+                WHERE excluded.provider_time IS NULL
+                   OR minute_bars.provider_time IS NULL
+                   OR excluded.provider_time >= minute_bars.provider_time
                 """,
                 (
                     trading_date,
@@ -452,12 +493,13 @@ class SQLiteStore:
                     1 if has_gap else 0,
                     gap_from,
                     gap_to,
+                    event_time,
                     updated_at,
                 ),
             )
             self._touch()
 
-    def upsert_latest_quote(self, quote: dict[str, Any]) -> None:
+    def upsert_latest_quote(self, quote: dict[str, Any]) -> bool:
         columns = [
             "symbol",
             "trading_date",
@@ -483,15 +525,25 @@ class SQLiteStore:
         values = [quote.get(col) for col in columns]
         assignments = ", ".join(f"{col}=excluded.{col}" for col in columns[1:])
         with self._lock:
-            self._conn.execute(
+            cursor = self._conn.execute(
                 f"""
                 INSERT INTO latest_quotes ({', '.join(columns)})
                 VALUES ({', '.join('?' for _ in columns)})
                 ON CONFLICT(symbol) DO UPDATE SET {assignments}
+                WHERE latest_quotes.trading_date IS NULL
+                   OR latest_quotes.event_time IS NULL
+                   OR excluded.trading_date > latest_quotes.trading_date
+                   OR (
+                       excluded.trading_date = latest_quotes.trading_date
+                       AND excluded.event_time >= latest_quotes.event_time
+                   )
                 """,
                 values,
             )
-            self._touch()
+            if cursor.rowcount:
+                self._touch()
+                return True
+            return False
 
     def upsert_auction_bucket(self, bucket: dict[str, Any]) -> None:
         columns = [
@@ -546,11 +598,38 @@ class SQLiteStore:
         provider_time: str,
         updated_at: str,
     ) -> bool:
-        """Insert one complete REST bar without mutating an existing canonical row."""
+        """Insert one REST bar, accepting only an identical existing row."""
         with self._lock:
-            cursor = self._conn.execute(
+            existing = self._conn.execute(
                 """
-                INSERT OR IGNORE INTO minute_bars (
+                SELECT exchange, open, high, low, close, volume, data_source,
+                       quality_status, is_partial, has_gap
+                FROM minute_bars
+                WHERE trading_date=? AND minute=? AND symbol=?
+                """,
+                (trading_date, minute, symbol),
+            ).fetchone()
+            expected = (
+                exchange,
+                float(open_price),
+                float(high),
+                float(low),
+                float(close),
+                max(0, int(volume)),
+                "SSI_REST",
+                "TRUSTED",
+                0,
+                0,
+            )
+            if existing is not None:
+                if tuple(existing) == expected:
+                    return False
+                raise HistoricalCanonicalConflict(
+                    f"conflicting canonical minute {symbol}/{trading_date}/{minute}"
+                )
+            self._conn.execute(
+                """
+                INSERT INTO minute_bars (
                     trading_date, minute, symbol, open, high, low, close,
                     volume, last_total_volume, event_count, is_partial, exchange,
                     quality_status, has_gap, gap_from, gap_to, data_source,
@@ -572,10 +651,8 @@ class SQLiteStore:
                     updated_at,
                 ),
             )
-            if cursor.rowcount:
-                self._touch()
-                return True
-            return False
+            self._touch()
+            return True
 
     def complete_historical_batch(
         self,
@@ -597,9 +674,37 @@ class SQLiteStore:
             try:
                 self._conn.execute("BEGIN IMMEDIATE")
                 for bar in bars:
-                    cursor = self._conn.execute(
+                    existing = self._conn.execute(
                         """
-                        INSERT OR IGNORE INTO minute_bars (
+                        SELECT exchange, open, high, low, close, volume,
+                               data_source, quality_status, is_partial, has_gap
+                        FROM minute_bars
+                        WHERE trading_date=? AND minute=? AND symbol=?
+                        """,
+                        (bar.trading_date, bar.minute, bar.symbol),
+                    ).fetchone()
+                    expected = (
+                        bar.exchange,
+                        float(bar.open_price),
+                        float(bar.high),
+                        float(bar.low),
+                        float(bar.close),
+                        max(0, int(bar.volume)),
+                        "SSI_REST",
+                        "TRUSTED",
+                        0,
+                        0,
+                    )
+                    if existing is not None:
+                        if tuple(existing) != expected:
+                            raise HistoricalCanonicalConflict(
+                                "conflicting canonical minute "
+                                f"{bar.symbol}/{bar.trading_date}/{bar.minute}"
+                            )
+                        continue
+                    self._conn.execute(
+                        """
+                        INSERT INTO minute_bars (
                             trading_date, minute, symbol, open, high, low, close,
                             volume, last_total_volume, event_count, is_partial,
                             exchange, quality_status, has_gap, gap_from, gap_to,
@@ -621,7 +726,7 @@ class SQLiteStore:
                             bar.updated_at,
                         ),
                     )
-                    inserted += int(bool(cursor.rowcount))
+                    inserted += 1
                 checkpoint = self._conn.execute(
                     """
                     UPDATE historical_bootstrap_checkpoints
