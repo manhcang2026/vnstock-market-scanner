@@ -220,9 +220,16 @@ class _PointSamples:
 _GRID_REFERENCE_DATE = date(2026, 9, 14)
 _OPENING_BUCKETS = {"HOSE": "09:15"}
 _CLOSING_BUCKETS = {"HOSE": "14:45", "HNX": "14:45"}
+_PROVIDER_BOUNDARY_BUCKETS = {
+    "HOSE": frozenset({"11:30", "14:30"}),
+    "HNX": frozenset({"11:30", "14:30"}),
+    "UPCOM": frozenset({"11:30"}),
+}
 
 
-def volume_market_grid(exchange: str) -> tuple[VolumeGridPoint, ...]:
+def volume_market_grid(
+    exchange: str, *, include_provider_boundaries: bool = False
+) -> tuple[VolumeGridPoint, ...]:
     canonical = normalize_exchange(exchange)
     points: list[VolumeGridPoint] = []
     counts = {SessionType.AM_CONTINUOUS.value: 0, SessionType.PM_CONTINUOUS.value: 0}
@@ -232,7 +239,22 @@ def volume_market_grid(exchange: str) -> tuple[VolumeGridPoint, ...]:
     while moment <= end:
         minute = moment.strftime("%H:%M")
         session = classify_market_session(canonical, moment)
-        if _OPENING_BUCKETS.get(canonical) == minute:
+        if (
+            include_provider_boundaries
+            and minute in _PROVIDER_BOUNDARY_BUCKETS[canonical]
+        ):
+            points.append(
+                VolumeGridPoint(
+                    minute,
+                    "PROVIDER_BOUNDARY",
+                    False,
+                    False,
+                    False,
+                    False,
+                    False,
+                )
+            )
+        elif _OPENING_BUCKETS.get(canonical) == minute:
             points.append(VolumeGridPoint(minute, "OPENING_BUCKET", False, True, False, False, False))
         elif _CLOSING_BUCKETS.get(canonical) == minute:
             points.append(VolumeGridPoint(minute, "CLOSE_BUCKET", False, False, True, False, False))
@@ -349,7 +371,7 @@ def build_symbol_volume_baseline(
     if not exchange or not selection.usable:
         return coverage, []
 
-    grid = volume_market_grid(exchange)
+    grid = volume_market_grid(exchange, include_provider_boundaries=True)
     samples = {point.minute: _PointSamples([], [], [], []) for point in grid}
     for proof in selected:
         day = {bar.minute: bar.volume for bar in proof.bars}
@@ -545,7 +567,10 @@ def _prove_volume_session(
         return SessionProof(
             symbol, trading_date, exchange, daily_volume, 0, "UNFINALIZED_STREAM"
         )
-    valid_minutes = {point.minute for point in volume_market_grid(exchange)}
+    valid_minutes = {
+        point.minute
+        for point in volume_market_grid(exchange, include_provider_boundaries=True)
+    }
     bars: list[RawVolumeBar] = []
     unsafe = False
     mismatch = False

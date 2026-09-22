@@ -473,6 +473,28 @@ def _valid_ohlcv(row: sqlite3.Row) -> bool:
     )
 
 
+def _valid_intraday_ohlcv(row: sqlite3.Row) -> bool:
+    """Validate raw SSI REST minute values without imposing Daily OHLC envelopes."""
+    try:
+        open_price = float(row["open"])
+        high = float(row["high"])
+        low = float(row["low"])
+        close = float(row["close"])
+        raw_volume = float(row["volume"])
+    except (TypeError, ValueError):
+        return False
+    return (
+        all(
+            math.isfinite(value) and value > 0
+            for value in (open_price, high, low, close)
+        )
+        and math.isfinite(raw_volume)
+        and raw_volume >= 0
+        and raw_volume.is_integer()
+        and high >= low
+    )
+
+
 def _settled_minute_values(row: sqlite3.Row, symbol: str, exchange: str) -> tuple[object, ...]:
     return (
         str(row["trading_date"]),
@@ -716,7 +738,12 @@ def _settle_symbol(
         )
 
     reasons: list[str] = []
-    valid_minutes = {point.minute for point in volume_market_grid(daily_bar.exchange)}
+    valid_minutes = {
+        point.minute
+        for point in volume_market_grid(
+            daily_bar.exchange, include_provider_boundaries=True
+        )
+    }
     anomalies = Counter()
     represented = 0
     settled_rows: list[tuple[object, ...]] = []
@@ -737,7 +764,7 @@ def _settle_symbol(
             reasons.append("NON_REST_SOURCE")
         if str(row["minute"] or "") not in valid_minutes:
             reasons.append("INVALID_MARKET_MINUTE")
-        if not _valid_ohlcv(row):
+        if not _valid_intraday_ohlcv(row):
             reasons.append("INVALID_OHLCV")
             continue
         if bool(row["has_gap"]):
@@ -1160,7 +1187,7 @@ def _safe_canonical_history_row(
             and not bool(row["has_gap"])
             and str(row["minute"] or "") in valid_minutes
             and normalize_exchange(str(row["exchange"] or "")) == exchange
-            and _valid_ohlcv(row)
+            and _valid_intraday_ohlcv(row)
         )
     except (TypeError, ValueError):
         return False
@@ -1339,7 +1366,12 @@ def canonical_day_completeness(
                     continue
                 missing_history.append(symbol)
                 continue
-            valid_minutes = {point.minute for point in volume_market_grid(exchange)}
+            valid_minutes = {
+                point.minute
+                for point in volume_market_grid(
+                    exchange, include_provider_boundaries=True
+                )
+            }
             if any(
                 not _safe_canonical_history_row(
                     row, exchange=exchange, valid_minutes=valid_minutes

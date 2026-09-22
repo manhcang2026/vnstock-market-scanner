@@ -1166,6 +1166,121 @@ def test_daily_and_intraday_ohlc_are_preserved_independently(tmp_path: Path) -> 
     assert daily_ohlc == (100.0, 105.0, 99.0, 103.0)
 
 
+def test_rest_intraday_raw_ohlc_outside_high_low_is_preserved(tmp_path: Path) -> None:
+    paths = _make_paths(tmp_path)
+    _insert_minute(paths.source)
+    source = sqlite3.connect(paths.source)
+    source.execute(
+        """
+        UPDATE minute_bars
+        SET open=9990, high=10000, low=10000, close=9980
+        WHERE symbol='FPT' AND trading_date=?
+        """,
+        (DAY,),
+    )
+    source.commit()
+    source.close()
+
+    result = _run(paths)
+    proof = daily_finalize_module.canonical_day_completeness(
+        source_path=paths.source,
+        history_path=paths.history,
+        market_path=paths.market,
+        trading_date=DAY,
+    )
+    history = sqlite3.connect(paths.history)
+    stored = history.execute(
+        "SELECT open, high, low, close FROM minute_bars"
+    ).fetchone()
+    history.close()
+
+    assert result.status == "PASS"
+    assert result.symbols[0].status == "TRUSTED"
+    assert stored == (9990.0, 10000.0, 10000.0, 9980.0)
+    assert proof.complete
+
+
+def test_rest_intraday_high_below_low_is_blocked(tmp_path: Path) -> None:
+    paths = _make_paths(tmp_path)
+    _insert_minute(paths.source)
+    source = sqlite3.connect(paths.source)
+    source.execute(
+        "UPDATE minute_bars SET high=99, low=100 WHERE symbol='FPT'"
+    )
+    source.commit()
+    source.close()
+
+    result = _run(paths)
+
+    assert result.status == "BLOCKED"
+    assert "INVALID_OHLCV" in result.symbols[0].reasons
+    assert _count(paths.history, "minute_bars") == 0
+    assert _count(paths.market, "daily_bars") == 0
+
+
+def test_daily_ohlc_envelope_validation_remains_strict(tmp_path: Path) -> None:
+    paths = _make_paths(tmp_path)
+    _insert_minute(paths.source)
+    malformed = DailyBar(
+        symbol="FPT",
+        trading_date=DAY,
+        exchange="HOSE",
+        open=106,
+        high=105,
+        low=99,
+        close=103,
+        volume=100,
+        value=10_300,
+    )
+
+    with pytest.raises(ValueError, match="Invalid canonical DailyOhlc"):
+        _run(paths, bars=(malformed,))
+
+    assert _count(paths.history, "minute_bars") == 0
+    assert _count(paths.market, "daily_bars") == 0
+
+
+def test_hose_provider_boundary_minutes_finalize_and_prove_complete(
+    tmp_path: Path,
+) -> None:
+    paths = _make_paths(tmp_path)
+    _insert_minute(paths.source, minute="11:30", volume=40)
+    _insert_minute(paths.source, minute="14:30", volume=60)
+
+    result = _run(paths)
+    proof = daily_finalize_module.canonical_day_completeness(
+        source_path=paths.source,
+        history_path=paths.history,
+        market_path=paths.market,
+        trading_date=DAY,
+    )
+    history = sqlite3.connect(paths.history)
+    stored = history.execute(
+        "SELECT minute, volume FROM minute_bars ORDER BY minute"
+    ).fetchall()
+    history.close()
+
+    assert result.status == "PASS"
+    assert result.symbols[0].status == "TRUSTED"
+    assert stored == [("11:30", 40), ("14:30", 60)]
+    assert proof.complete
+    assert proof.complete_symbols == ("FPT",)
+
+
+def test_rest_intraday_minute_outside_provider_domain_stays_blocked(
+    tmp_path: Path,
+) -> None:
+    paths = _make_paths(tmp_path)
+    _insert_minute(paths.source, minute="08:00")
+
+    result = _run(paths)
+
+    assert result.status == "BLOCKED"
+    assert "INVALID_MARKET_MINUTE" in result.symbols[0].reasons
+    assert _count(paths.history, "minute_bars") == 0
+    assert _count(paths.market, "daily_bars") == 0
+
+
 def test_unresolved_gap_blocks(tmp_path: Path) -> None:
     paths = _make_paths(tmp_path)
     _insert_minute(paths.source, gap=1, quality="GAP")

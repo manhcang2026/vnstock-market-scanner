@@ -172,10 +172,12 @@ def test_hose_grid_separates_opening_continuous_and_close_buckets() -> None:
     assert grid["09:30"].rolling_15_ready
     assert not grid["09:44"].rolling_30_ready
     assert grid["09:45"].rolling_30_ready
+    assert "11:30" not in grid
     assert not grid["13:13"].rolling_15_ready
     assert grid["13:14"].rolling_15_ready
     assert not grid["13:28"].rolling_30_ready
     assert grid["13:29"].rolling_30_ready
+    assert "14:30" not in grid
     assert grid["14:45"].session_segment == "CLOSE_BUCKET"
     assert not grid["14:45"].is_continuous
     assert not grid["14:45"].rolling_15_ready
@@ -193,13 +195,42 @@ def test_hnx_and_upcom_grid_boundaries_follow_market_session_engine() -> None:
     assert hnx["09:14"].rolling_15_ready
     assert not hnx["09:28"].rolling_30_ready
     assert hnx["09:29"].rolling_30_ready
+    assert "11:30" not in hnx
+    assert "14:30" not in hnx
     assert hnx["14:45"].session_segment == "CLOSE_BUCKET"
     assert upcom["14:59"].is_continuous
     assert not upcom["09:13"].rolling_15_ready
     assert upcom["09:14"].rolling_15_ready
     assert not upcom["09:28"].rolling_30_ready
     assert upcom["09:29"].rolling_30_ready
+    assert "11:30" not in upcom
+    assert upcom["14:30"].is_continuous
     assert "15:00" not in upcom
+
+
+def test_intraday_endpoint_grid_adds_noncontinuous_provider_boundaries() -> None:
+    hose = {
+        point.minute: point
+        for point in volume_market_grid("HOSE", include_provider_boundaries=True)
+    }
+    hnx = {
+        point.minute: point
+        for point in volume_market_grid("HNX", include_provider_boundaries=True)
+    }
+    upcom = {
+        point.minute: point
+        for point in volume_market_grid("UPCOM", include_provider_boundaries=True)
+    }
+
+    for grid in (hose, hnx):
+        for minute in ("11:30", "14:30"):
+            assert grid[minute].session_segment == "PROVIDER_BOUNDARY"
+            assert not grid[minute].is_continuous
+            assert not grid[minute].rolling_15_ready
+            assert not grid[minute].rolling_30_ready
+    assert upcom["11:30"].session_segment == "PROVIDER_BOUNDARY"
+    assert not upcom["11:30"].is_continuous
+    assert upcom["14:30"].is_continuous
 
 
 def test_volume_baseline_cli_accepts_sample_arguments() -> None:
@@ -705,6 +736,50 @@ def test_hose_opening_and_close_affect_cumulative_but_not_rolling(
     connection.close()
 
 
+def test_provider_boundaries_affect_cumulative_but_not_continuous_rolling(
+    tmp_path: Path,
+) -> None:
+    history = tmp_path / "provider-boundary-history.db"
+    output = tmp_path / "provider-boundary-baseline.db"
+    _history_db(
+        history,
+        _minimum_healthy_bars(
+            [
+                ("HPG", "HOSE", "2026-09-10", "11:29", 100),
+                ("HPG", "HOSE", "2026-09-10", "11:30", 7),
+                ("HPG", "HOSE", "2026-09-10", "14:29", 20),
+                ("HPG", "HOSE", "2026-09-10", "14:30", 9),
+            ]
+        ),
+    )
+    build_volume_baseline(history_db=history, output_db=output)
+
+    connection = _connect(output)
+    values = {
+        row["minute"]: row
+        for row in connection.execute(
+            "SELECT * FROM volume_baseline WHERE symbol='HPG' "
+            "AND minute IN ('11:29','11:30','13:14','14:29','14:30')"
+        )
+    }
+    connection.close()
+
+    assert values["11:29"]["avg_cumulative_volume"] == 100
+    assert values["11:30"]["avg_cumulative_volume"] == 107
+    assert values["11:30"]["session_segment"] == "PROVIDER_BOUNDARY"
+    assert values["11:30"]["avg_volume_15"] is None
+    assert values["11:30"]["avg_volume_30"] is None
+    assert values["13:14"]["avg_cumulative_volume"] == 107
+    assert values["13:14"]["avg_volume_15"] == 0
+    assert values["14:29"]["avg_cumulative_volume"] == 127
+    assert values["14:29"]["avg_volume_15"] == 20
+    assert values["14:29"]["avg_volume_30"] == 20
+    assert values["14:30"]["avg_cumulative_volume"] == 136
+    assert values["14:30"]["session_segment"] == "PROVIDER_BOUNDARY"
+    assert values["14:30"]["avg_volume_15"] is None
+    assert values["14:30"]["avg_volume_30"] is None
+
+
 def test_continuous_no_trade_minutes_zero_fill_volume_without_ohlc(
     tmp_path: Path,
 ) -> None:
@@ -729,9 +804,13 @@ def test_continuous_no_trade_minutes_zero_fill_volume_without_ohlc(
     assert row["avg_volume_15"] == 75
     assert row["historical_sessions"] == 8
     assert not {"open", "high", "low", "close"} & columns
-    assert connection.execute(
-        "SELECT 1 FROM volume_baseline WHERE minute='11:30'"
-    ).fetchone() is None
+    boundary = connection.execute(
+        "SELECT * FROM volume_baseline WHERE symbol='SHS' AND minute='11:30'"
+    ).fetchone()
+    assert boundary["session_segment"] == "PROVIDER_BOUNDARY"
+    assert boundary["avg_cumulative_volume"] == 75
+    assert boundary["avg_volume_15"] is None
+    assert boundary["avg_volume_30"] is None
     connection.close()
 
 
