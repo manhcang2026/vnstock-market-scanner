@@ -387,11 +387,10 @@ def test_raw_stream_without_write_journal_is_rejected_but_replay_is_unchanged(
         ("partial", "UNSAFE_INTRADAY"),
         ("gap", "UNSAFE_INTRADAY"),
         ("quality", "UNSAFE_INTRADAY"),
-        ("mismatch", "VOLUME_MISMATCH"),
         ("missing_daily", "DAILY_MISSING"),
     ],
 )
-def test_unsafe_or_unreconciled_finalized_rest_is_rejected(
+def test_unsafe_or_missing_finalized_rest_is_rejected(
     tmp_path: Path, mutation: str, expected: str
 ) -> None:
     source, history, market, _, _, _ = _fixture(tmp_path)
@@ -419,15 +418,9 @@ def test_unsafe_or_unreconciled_finalized_rest_is_rejected(
         connection.close()
     else:
         connection = sqlite3.connect(market)
-        if mutation == "mismatch":
-            connection.execute(
-                "UPDATE daily_bars SET volume=volume+1 WHERE trading_date=?",
-                (stream_date,),
-            )
-        else:
-            connection.execute(
-                "DELETE FROM daily_bars WHERE trading_date=?", (stream_date,)
-            )
+        connection.execute(
+            "DELETE FROM daily_bars WHERE trading_date=?", (stream_date,)
+        )
         connection.commit()
         connection.close()
     history_connection = sqlite3.connect(history)
@@ -443,3 +436,37 @@ def test_unsafe_or_unreconciled_finalized_rest_is_rejected(
     assert proof.reason == expected
     history_connection.close()
     market_connection.close()
+
+
+def test_finalized_rest_daily_volume_difference_remains_proven(
+    tmp_path: Path,
+) -> None:
+    source, history, market, _, _, _ = _fixture(tmp_path)
+    stream_date = "2026-09-14"
+    volumes = _volumes(100)
+    _finalize_rest_day(source, history, market, stream_date, volumes)
+    connection = sqlite3.connect(market)
+    connection.execute(
+        "UPDATE daily_bars SET volume=volume+1 WHERE trading_date=?",
+        (stream_date,),
+    )
+    connection.commit()
+    connection.close()
+
+    history_connection = sqlite3.connect(history)
+    history_connection.row_factory = sqlite3.Row
+    market_connection = sqlite3.connect(market)
+    market_connection.row_factory = sqlite3.Row
+    proof = prove_volume_session(
+        history_connection,
+        market_connection,
+        symbol=SYMBOL,
+        trading_date=stream_date,
+    )
+    history_connection.close()
+    market_connection.close()
+
+    assert proof.reason == "PROVEN"
+    assert proof.represented_intraday_volume == sum(volumes)
+    assert proof.daily_volume == sum(volumes) + 1
+    assert [bar.volume for bar in proof.bars] == list(volumes)

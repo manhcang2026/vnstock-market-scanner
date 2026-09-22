@@ -212,11 +212,11 @@ def validated_daily_payloads(con, symbols, day, target):
             (day,),
         )
     }
-    minute_totals = {
-        row[0]: (int(row[1]), int(row[2]))
+    minute_counts = {
+        row[0]: int(row[1])
         for row in con.execute(
             """
-            SELECT symbol, COUNT(*), COALESCE(SUM(volume), 0)
+            SELECT symbol, COUNT(*)
             FROM minute_bars WHERE trading_date=? GROUP BY symbol
             """,
             (day,),
@@ -234,7 +234,7 @@ def validated_daily_payloads(con, symbols, day, target):
             raise RuntimeError(f"INTRADAY_CHECKPOINT_{intraday_status}:{symbol}")
         if daily_status not in {"COMPLETED", "NO_DATA"}:
             raise RuntimeError(f"DAILY_CHECKPOINT_{daily_status}:{symbol}")
-        minute_count, minute_volume = minute_totals.get(symbol, (0, 0))
+        minute_count = minute_counts.get(symbol, 0)
         if intraday_status == "COMPLETED":
             if checkpoint_rows <= 0 or minute_count <= 0:
                 raise RuntimeError(f"INTRADAY_COMPLETED_WITHOUT_ROWS:{symbol}")
@@ -265,8 +265,6 @@ def validated_daily_payloads(con, symbols, day, target):
 
         pair = (intraday_status, daily_status)
         if pair == ("COMPLETED", "COMPLETED"):
-            if minute_volume != daily_bar.volume:
-                raise RuntimeError(f"VOLUME_MISMATCH:{symbol}")
             payloads.append(payload)
         elif pair == ("NO_DATA", "COMPLETED"):
             if daily_bar.volume != 0:
@@ -312,7 +310,7 @@ if __name__ == "__main__":
     main()
 EOD_DAILY_PY
 
-log "Reconciling REST IntradayOhlc against SSI DailyOhlc"
+log "Validating REST IntradayOhlc and SSI DailyOhlc independently"
 docker exec "$CONTAINER" python -m app.daily_finalize \
   --source "$REST_STAGE_DB" \
   --auction-source "$HOT_DB" \

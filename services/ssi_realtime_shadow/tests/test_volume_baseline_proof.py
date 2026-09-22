@@ -8,7 +8,11 @@ import pytest
 
 from app.market_storage_schema import ensure_market_storage_schema
 from app.storage import SQLiteStore
-from app.volume_baseline import COVERAGE_PROOF, build_volume_baseline
+from app.volume_baseline import (
+    COVERAGE_PROOF,
+    build_volume_baseline,
+    prove_volume_session,
+)
 from app.volume_baseline_build import next_trading_session
 
 
@@ -157,14 +161,16 @@ def test_daily_zero_without_intraday_rows_is_a_proven_real_zero(tmp_path: Path) 
 @pytest.mark.parametrize(
     ("mutation", "daily_exchange", "expected_counter"),
     [
-        ("mismatch", "HOSE", "volume_mismatch_count"),
         ("partial", "HOSE", "unsafe_intraday_count"),
         ("gap", "HOSE", "unsafe_intraday_count"),
         ("nontrusted", "HOSE", "unsafe_intraday_count"),
+        ("unsafe_source", "HOSE", "unsafe_intraday_count"),
+        ("invalid_minute", "HOSE", "unsafe_intraday_count"),
+        ("invalid_volume", "HOSE", "unsafe_intraday_count"),
         ("none", "HNX", "exchange_mismatch_count"),
     ],
 )
-def test_failed_reconciliation_excludes_session(
+def test_invalid_intraday_evidence_excludes_session(
     tmp_path: Path,
     mutation: str,
     daily_exchange: str,
@@ -182,10 +188,15 @@ def test_failed_reconciliation_excludes_session(
             connection.execute("UPDATE minute_bars SET has_gap=1")
         elif mutation == "nontrusted":
             connection.execute("UPDATE minute_bars SET quality_status='DEGRADED'")
+        elif mutation == "unsafe_source":
+            connection.execute("UPDATE minute_bars SET data_source='SSI_STREAM'")
+        elif mutation == "invalid_minute":
+            connection.execute("UPDATE minute_bars SET minute='08:00'")
+        elif mutation == "invalid_volume":
+            connection.execute("UPDATE minute_bars SET volume=-1")
         connection.commit()
         connection.close()
-    daily_volume = 11 if mutation == "mismatch" else 10
-    _daily_db(daily, [("HPG", daily_exchange, "2026-09-11", daily_volume)])
+    _daily_db(daily, [("HPG", daily_exchange, "2026-09-11", 10)])
     summary = build_volume_baseline(
         history_db=history,
         daily_db=daily,
@@ -195,6 +206,60 @@ def test_failed_reconciliation_excludes_session(
     )
     assert _coverage(output, "HPG")["baseline_sessions_used"] == 0
     assert getattr(summary, expected_counter) == 1
+
+
+def test_daily_volume_difference_keeps_intraday_profile_proven_and_unscaled(
+    tmp_path: Path,
+) -> None:
+    dates = [
+        "2026-09-02",
+        "2026-09-03",
+        "2026-09-04",
+        "2026-09-07",
+        "2026-09-08",
+        "2026-09-09",
+        "2026-09-10",
+        "2026-09-11",
+    ]
+    history, daily, output, summary = _build(
+        tmp_path,
+        history_rows=[("HPG", "HOSE", item, "09:16", 100) for item in dates],
+        daily_rows=[("HPG", "HOSE", item, 101) for item in dates],
+        as_of_date="2026-09-12",
+        symbols=["HPG"],
+    )
+
+    history_connection = sqlite3.connect(history)
+    history_connection.row_factory = sqlite3.Row
+    daily_connection = sqlite3.connect(daily)
+    daily_connection.row_factory = sqlite3.Row
+    try:
+        proof = prove_volume_session(
+            history_connection,
+            daily_connection,
+            symbol="HPG",
+            trading_date=dates[-1],
+        )
+    finally:
+        daily_connection.close()
+        history_connection.close()
+
+    connection = sqlite3.connect(output)
+    baseline = connection.execute(
+        "SELECT historical_sessions, avg_cumulative_volume "
+        "FROM volume_baseline WHERE symbol='HPG' AND minute='09:16'"
+    ).fetchone()
+    connection.close()
+
+    assert proof.reason == "PROVEN"
+    assert proof.represented_intraday_volume == 100
+    assert proof.daily_volume == 101
+    assert [bar.volume for bar in proof.bars] == [100]
+    assert _coverage(output, "HPG")["baseline_sessions_used"] == 8
+    assert baseline == (8, 100.0)
+    assert summary.sessions_proven == 8
+    assert summary.sessions_unproven == 0
+    assert summary.volume_mismatch_count == 8
 
 
 def test_exact_previous_ten_excludes_as_of_and_does_not_reach_back(tmp_path: Path) -> None:
@@ -216,9 +281,10 @@ def test_exact_previous_ten_excludes_as_of_and_does_not_reach_back(tmp_path: Pat
         symbols=["SHS"],
     )
     connection = sqlite3.connect(history)
-    # Corrupt one date inside the previous-ten window. dates[0] is the older 11th.
+    # Make one date inside the previous-ten window unsafe. dates[0] is the older 11th.
     connection.execute(
-        "UPDATE minute_bars SET volume=9 WHERE symbol='SHS' AND trading_date=?",
+        "UPDATE minute_bars SET quality_status='DEGRADED' "
+        "WHERE symbol='SHS' AND trading_date=?",
         (dates[5],),
     )
     connection.commit()

@@ -749,8 +749,6 @@ def _settle_symbol(
         represented += int(row["volume"])
         settled_rows.append(_settled_minute_values(row, symbol, daily_bar.exchange))
 
-    if represented != daily_bar.volume:
-        reasons.append("VOLUME_MISMATCH")
     if reasons:
         return _empty_symbol_result(symbol, "BLOCKED", reasons, rows, daily_bar.volume)
 
@@ -950,7 +948,12 @@ def _build_result(
         atc_conflicts=_sum(symbols, "atc_conflicts"),
         event_anomaly_rows=audit.event_anomaly_rows,
         settled_reconciliations=trusted,
-        volume_mismatches=sum("VOLUME_MISMATCH" in result.reasons for result in symbols),
+        volume_mismatches=sum(
+            result.daily_volume is not None
+            and result.represented_volume != result.daily_volume
+            and (result.source_rows > 0 or "VOLUME_MISMATCH" in result.reasons)
+            for result in symbols
+        ),
         missing_daily_ohlc=sum("DAILY_MISSING" in result.reasons for result in symbols),
         unresolved_gaps=audit.unresolved_gap_rows,
         symbols=symbols,
@@ -1347,7 +1350,6 @@ def canonical_day_completeness(
                 continue
             if sum(int(row["volume"]) for row in rows) != daily_volume:
                 volume_mismatches.append(symbol)
-                continue
             complete_symbols.append(symbol)
 
         complete = bool(expected) and (

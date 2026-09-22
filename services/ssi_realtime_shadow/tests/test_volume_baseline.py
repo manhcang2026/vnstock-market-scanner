@@ -506,7 +506,7 @@ def test_untrusted_provider_and_missing_intraday_are_not_zero_filled(
         candidate_sessions=["2026-09-09", "2026-09-10"],
     )
     assert mixed_provider.reason == "UNSAFE_INTRADAY"
-    assert missing_intraday.reason == "VOLUME_MISMATCH"
+    assert missing_intraday.reason == "INTRADAY_MISSING"
     assert coverage.baseline_sessions_used == 0
     assert coverage.coverage_tier == "INSUFFICIENT"
     assert rows == []
@@ -825,14 +825,14 @@ def test_opening_average_keeps_exact_previous_ten_window(
     )
     as_of_date = _daily_from_history(history, daily)
     broken_date = dates[5]
-    daily_write = sqlite3.connect(daily)
-    daily_write.execute(
-        "UPDATE daily_bars SET volume=volume+1 "
+    history_write = sqlite3.connect(history)
+    history_write.execute(
+        "UPDATE minute_bars SET quality_status='DEGRADED' "
         "WHERE symbol='HPG' AND trading_date=?",
         (broken_date,),
     )
-    daily_write.commit()
-    daily_write.close()
+    history_write.commit()
+    history_write.close()
 
     _build_volume_baseline(
         history_db=history,

@@ -580,6 +580,7 @@ def _wrapper_validation_connection(
     checkpoint_rows: int,
     staged_rows: int,
     daily_status: str,
+    daily_volume: int | None = None,
 ) -> sqlite3.Connection:
     connection = sqlite3.connect(":memory:")
     connection.executescript(
@@ -619,7 +620,7 @@ def _wrapper_validation_connection(
                 "High": 105,
                 "Low": 99,
                 "Close": 103,
-                "Volume": staged_rows,
+                "Volume": staged_rows if daily_volume is None else daily_volume,
             }
         )
     namespace["upsert_daily_checkpoint"](
@@ -676,6 +677,26 @@ def test_wrapper_accepts_exact_completed_checkpoint_row_count() -> None:
 
     connection.close()
     assert len(payloads) == 1
+
+
+def test_wrapper_accepts_cross_endpoint_volume_difference() -> None:
+    namespace = _wrapper_daily_namespace()
+    connection = _wrapper_validation_connection(
+        namespace,
+        intraday_status="COMPLETED",
+        checkpoint_rows=1,
+        staged_rows=1,
+        daily_status="COMPLETED",
+        daily_volume=2,
+    )
+
+    payloads = namespace["validated_daily_payloads"](
+        connection, ("AAA",), DAY, date.fromisoformat(DAY)
+    )
+
+    connection.close()
+    assert len(payloads) == 1
+    assert payloads[0]["Volume"] == 2
 
 
 def test_wrapper_rejects_checkpoint_count_above_staged_rows() -> None:
@@ -1080,13 +1101,69 @@ def test_missing_daily_ohlc_blocks_trusted_settlement(tmp_path: Path) -> None:
     assert _count(paths.history, "minute_bars") == 0
 
 
-def test_daily_volume_mismatch_blocks(tmp_path: Path) -> None:
+def test_daily_volume_difference_is_diagnostic_and_preserves_both_endpoints(
+    tmp_path: Path,
+) -> None:
     paths = _make_paths(tmp_path)
-    _insert_minute(paths.source, volume=99)
-    result = _run(paths)
+    _insert_minute(paths.source, volume=7_236_900)
+    result = _run(paths, bars=(_daily(volume=7_237_000),))
+    proof = daily_finalize_module.canonical_day_completeness(
+        source_path=paths.source,
+        history_path=paths.history,
+        market_path=paths.market,
+        trading_date=DAY,
+    )
+
+    history = sqlite3.connect(paths.history)
+    minute = history.execute(
+        "SELECT open, high, low, close, volume FROM minute_bars"
+    ).fetchone()
+    history.close()
+    market = sqlite3.connect(paths.market)
+    daily = market.execute(
+        "SELECT open, high, low, close, volume, value FROM daily_bars"
+    ).fetchone()
+    market.close()
+
+    assert result.status == "PASS"
+    assert result.symbols_trusted == 1
     assert result.volume_mismatches == 1
-    assert result.symbols_blocked == 1
-    assert _count(paths.history, "minute_bars") == 0
+    assert result.symbols[0].represented_volume == 7_236_900
+    assert result.symbols[0].daily_volume == 7_237_000
+    assert minute == (100.0, 105.0, 99.0, 103.0, 7_236_900)
+    assert daily == (100.0, 105.0, 99.0, 103.0, 7_237_000, 745_411_000.0)
+    assert proof.complete
+    assert proof.complete_symbols == ("FPT",)
+    assert proof.volume_mismatches == ("FPT",)
+
+
+def test_daily_and_intraday_ohlc_are_preserved_independently(tmp_path: Path) -> None:
+    paths = _make_paths(tmp_path)
+    _insert_minute(paths.source, close=102)
+    source = sqlite3.connect(paths.source)
+    source.execute(
+        "UPDATE minute_bars SET open=101, low=100 WHERE symbol='FPT'"
+    )
+    source.commit()
+    source.close()
+
+    result = _run(paths)
+
+    history = sqlite3.connect(paths.history)
+    minute_ohlc = history.execute(
+        "SELECT open, high, low, close FROM minute_bars"
+    ).fetchone()
+    history.close()
+    market = sqlite3.connect(paths.market)
+    daily_ohlc = market.execute(
+        "SELECT open, high, low, close FROM daily_bars"
+    ).fetchone()
+    market.close()
+
+    assert result.status == "PASS"
+    assert result.symbols[0].status == "TRUSTED"
+    assert minute_ohlc == (101.0, 105.0, 100.0, 102.0)
+    assert daily_ohlc == (100.0, 105.0, 99.0, 103.0)
 
 
 def test_unresolved_gap_blocks(tmp_path: Path) -> None:
@@ -1691,11 +1768,11 @@ def test_finalize_journal_reports_accurate_counts_and_status(tmp_path: Path) -> 
     _insert_minute(paths.source, symbol="FPT")
     _insert_minute(paths.source, symbol="HPG", volume=90)
     result = _run(paths, bars=(_daily("FPT"), _daily("HPG")))
-    assert result.status == "PARTIAL"
+    assert result.status == "PASS"
     assert (result.source_symbols, result.symbols_trusted, result.symbols_blocked) == (
         2,
-        1,
-        1,
+        2,
+        0,
     )
     assert result.volume_mismatches == 1
     connection = sqlite3.connect(paths.history)
@@ -1709,7 +1786,7 @@ def test_finalize_journal_reports_accurate_counts_and_status(tmp_path: Path) -> 
         (DAY,),
     ).fetchone()
     connection.close()
-    assert row == ("PARTIAL", 2, 2, 2, 1, 1, 1, 1, 0)
+    assert row == ("PASS", 2, 2, 2, 2, 0, 2, 1, 0)
 
 
 def test_legacy_finalize_journal_is_migrated_additively(tmp_path: Path) -> None:

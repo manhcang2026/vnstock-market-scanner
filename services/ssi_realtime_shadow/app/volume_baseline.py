@@ -10,7 +10,7 @@ from typing import Any, Iterable, Sequence
 from .market_session import VN_TZ, SessionType, classify_market_session, normalize_exchange
 
 
-COVERAGE_PROOF = "SSI_DAILY_VOLUME_RECONCILED_V1"
+COVERAGE_PROOF = "SSI_INTRADAY_ENDPOINT_COMPLETE_V1"
 TRUSTED_DAILY_SOURCE = "SSI_DAILY_OHLC"
 TRUSTED_DAILY_SOURCES = frozenset({TRUSTED_DAILY_SOURCE})
 TRUSTED_INTRADAY_SOURCE = "SSI_REST"
@@ -359,7 +359,8 @@ def build_symbol_volume_baseline(
             SessionType.PM_CONTINUOUS.value: [],
         }
         for point in grid:
-            # Missing is zero only here, after the whole session was proven by DailyOhlc.
+            # The complete Intraday endpoint result is authoritative for the
+            # minute profile, so sparse no-trade minutes contribute zero.
             volume = day.get(point.minute, 0)
             cumulative += volume
             point_samples = samples[point.minute]
@@ -505,6 +506,7 @@ def _prove_volume_session(
     trading_date: str,
     allowed_intraday_sources: frozenset[str],
     require_finalized_stream: bool = False,
+    volume_match_sources: frozenset[str] = frozenset(),
 ) -> SessionProof:
     daily_row = daily.execute(
         """
@@ -556,7 +558,11 @@ def _prove_volume_session(
         except ValueError:
             unsafe = True
             continue
-        volume = int(row["volume"])
+        try:
+            volume = int(row["volume"])
+        except (TypeError, ValueError):
+            unsafe = True
+            continue
         minute = str(row["minute"] or "")
         if row_exchange != exchange:
             mismatch = True
@@ -584,8 +590,12 @@ def _prove_volume_session(
         return SessionProof(symbol, trading_date, exchange, daily_volume, represented, "EXCHANGE_MISMATCH")
     if unsafe:
         return SessionProof(symbol, trading_date, exchange, daily_volume, represented, "UNSAFE_INTRADAY")
-    if represented != daily_volume:
+    if represented != daily_volume and any(
+        bar.data_source in volume_match_sources for bar in bars
+    ):
         return SessionProof(symbol, trading_date, exchange, daily_volume, represented, "VOLUME_MISMATCH")
+    if not bars and daily_volume != 0:
+        return SessionProof(symbol, trading_date, exchange, daily_volume, represented, "INTRADAY_MISSING")
     reason = "PROVEN_ZERO" if daily_volume == 0 and not bars else "PROVEN"
     return SessionProof(symbol, trading_date, exchange, daily_volume, represented, reason, tuple(bars))
 
@@ -641,7 +651,7 @@ def prove_volume_session(
     symbol: str,
     trading_date: str,
 ) -> SessionProof:
-    """Prove canonical yearly REST history reconciled to SSI DailyOhlc."""
+    """Prove canonical REST minutes alongside independent trusted DailyOhlc."""
     return _prove_volume_session(
         history,
         daily,
@@ -659,13 +669,14 @@ def prove_replay_volume_session(
     symbol: str,
     trading_date: str,
 ) -> SessionProof:
-    """Prove a selected replay day using canonical SSI stream or REST bars."""
+    """Prove replay bars; stream replay retains its final-volume safety gate."""
     return _prove_volume_session(
         history,
         daily,
         symbol=symbol,
         trading_date=trading_date,
         allowed_intraday_sources=TRUSTED_REPLAY_SOURCES,
+        volume_match_sources=frozenset({"SSI_STREAM"}),
     )
 
 
@@ -900,7 +911,12 @@ def build_volume_baseline(
             sessions_proven=len(proven),
             sessions_unproven=len(flattened) - len(proven),
             daily_missing_count=sum(proof.reason == "DAILY_MISSING" for proof in flattened),
-            volume_mismatch_count=sum(proof.reason == "VOLUME_MISMATCH" for proof in flattened),
+            volume_mismatch_count=sum(
+                bool(proof.bars)
+                and proof.daily_volume is not None
+                and proof.represented_intraday_volume != proof.daily_volume
+                for proof in flattened
+            ),
             unsafe_intraday_count=sum(
                 proof.reason
                 in {"UNSAFE_INTRADAY", "DAILY_UNSAFE", "UNFINALIZED_STREAM"}
