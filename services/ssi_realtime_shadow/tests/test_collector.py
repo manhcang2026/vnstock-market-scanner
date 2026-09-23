@@ -359,6 +359,7 @@ def test_non_current_trading_date_is_ignored_without_live_side_effects(
     )
     previous_last_event_at = started_at(8, 59)
     collector.last_event_at = previous_last_event_at
+    collector.last_canonical_write_at = previous_last_event_at
 
     collector.on_message(
         market_event(TradingDate=provider_date, TradingSession="ATO")
@@ -371,6 +372,8 @@ def test_non_current_trading_date_is_ignored_without_live_side_effects(
     ).fetchone()[0] == 0
     assert received == []
     assert collector.last_event_at == previous_last_event_at
+    assert collector.last_provider_message_at == current
+    assert collector.last_canonical_write_at == previous_last_event_at
     assert collector.stats.accepted_events == 0
     assert collector.stats.volume_shadow_events == 0
     assert collector.stats.auction_projection_events == 0
@@ -398,6 +401,11 @@ def test_current_trading_date_retains_live_collector_behavior(
     assert store._conn.execute("SELECT COUNT(*) FROM minute_bars").fetchone()[0] == 1
     assert store._conn.execute("SELECT COUNT(*) FROM latest_quotes").fetchone()[0] == 1
     assert len(received) == 1
+    assert collector.last_provider_message_at == current
+    assert collector.last_canonical_write_at == current
+    stats = collector.snapshot_stats()
+    assert stats["last_provider_message_at"] == current.isoformat()
+    assert stats["last_canonical_write_at"] == current.isoformat()
     assert collector.last_event_at == current
     assert collector.stats.accepted_events == 1
     assert collector.stats.ignored_non_current_trading_date == 0

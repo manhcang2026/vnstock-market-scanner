@@ -67,6 +67,9 @@ class Settings:
     supabase_key: str
     min_universe_size: int
     stale_stream_seconds: int
+    ssi_reconnect_max_attempts: int
+    ssi_reconnect_backoff_seconds: float
+    ssi_reconnect_progress_timeout_seconds: float
     commit_every_events: int
     commit_every_seconds: int
     log_level: str
@@ -94,6 +97,15 @@ class Settings:
         live_state_enabled = _env_bool("LIVE_STATE_ENABLED", False)
         postgres_shadow_enabled = _env_bool("POSTGRES_SHADOW_ENABLED", False)
         postgres_shadow_dsn = _env("POSTGRES_SHADOW_DSN", "").strip()
+        ssi_reconnect_max_attempts = _env_int(
+            "SSI_RECONNECT_MAX_ATTEMPTS", 3
+        )
+        ssi_reconnect_backoff_seconds = _env_float(
+            "SSI_RECONNECT_BACKOFF_SECONDS", 5.0
+        )
+        ssi_reconnect_progress_timeout_seconds = _env_float(
+            "SSI_RECONNECT_PROGRESS_TIMEOUT_SECONDS", 60.0
+        )
         if live_state_enabled and not volume_engine_enabled:
             raise RuntimeError(
                 "LIVE_STATE_ENABLED=true requires VOLUME_ENGINE_ENABLED=true"
@@ -101,6 +113,16 @@ class Settings:
         if postgres_shadow_enabled and not postgres_shadow_dsn:
             raise RuntimeError(
                 "POSTGRES_SHADOW_DSN is required when POSTGRES_SHADOW_ENABLED=true"
+            )
+        if ssi_reconnect_max_attempts < 1:
+            raise RuntimeError("SSI_RECONNECT_MAX_ATTEMPTS must be at least 1")
+        if ssi_reconnect_backoff_seconds < 0:
+            raise RuntimeError(
+                "SSI_RECONNECT_BACKOFF_SECONDS must not be negative"
+            )
+        if ssi_reconnect_progress_timeout_seconds < 1:
+            raise RuntimeError(
+                "SSI_RECONNECT_PROGRESS_TIMEOUT_SECONDS must be at least 1"
             )
         postgres_shadow_flush_seconds = _env_float(
             "POSTGRES_SHADOW_FLUSH_SECONDS", 1.0
@@ -126,6 +148,11 @@ class Settings:
             supabase_key=_env("SUPABASE_KEY", ""),
             min_universe_size=_env_int("MIN_UNIVERSE_SIZE", 700),
             stale_stream_seconds=_env_int("STALE_STREAM_SECONDS", 180),
+            ssi_reconnect_max_attempts=ssi_reconnect_max_attempts,
+            ssi_reconnect_backoff_seconds=ssi_reconnect_backoff_seconds,
+            ssi_reconnect_progress_timeout_seconds=(
+                ssi_reconnect_progress_timeout_seconds
+            ),
             commit_every_events=_env_int("COMMIT_EVERY_EVENTS", 500),
             commit_every_seconds=_env_int("COMMIT_EVERY_SECONDS", 1),
             log_level=_env("LOG_LEVEL", "INFO").upper(),

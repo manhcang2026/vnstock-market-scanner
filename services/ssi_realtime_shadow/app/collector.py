@@ -206,6 +206,8 @@ class QuoteCollector:
         self._initialized_keys: set[tuple[str, str]] = set()
         self._latest_event_at: dict[tuple[str, str], datetime] = {}
         self.last_event_at: datetime | None = None
+        self.last_provider_message_at: datetime | None = None
+        self.last_canonical_write_at: datetime | None = None
         self.volume_event_handler = volume_event_handler
         self.volume_snapshot_handler = volume_snapshot_handler
         self.volume_engine_lock = volume_engine_lock
@@ -357,6 +359,7 @@ class QuoteCollector:
     def on_message(self, message: Any) -> None:
         self.stats.received_messages += 1
         now = _now_vn()
+        self.last_provider_message_at = now
         payloads = list(_extract_payloads(message))
         if not payloads:
             return
@@ -656,6 +659,7 @@ class QuoteCollector:
             )
             self.stats.accepted_events += 1
             self.last_event_at = now
+            self.last_canonical_write_at = now
             self._offer_postgres_live_state(
                 quote=quote,
                 trading_date=trading_date,
@@ -750,6 +754,16 @@ class QuoteCollector:
             "rejected_volume_engine_events": self.stats.rejected_volume_engine_events,
             "provider_session_counts": dict(
                 sorted(self.stats.provider_session_counts.items())
+            ),
+            "last_provider_message_at": (
+                self.last_provider_message_at.isoformat()
+                if self.last_provider_message_at is not None
+                else None
+            ),
+            "last_canonical_write_at": (
+                self.last_canonical_write_at.isoformat()
+                if self.last_canonical_write_at is not None
+                else None
             ),
         }
         if self.extra_stats_provider is not None:

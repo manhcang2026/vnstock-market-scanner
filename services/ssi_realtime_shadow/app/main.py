@@ -12,10 +12,11 @@ from typing import ContextManager
 from .collector import QuoteCollector
 from .live_projection import LiveProjectionWorker
 from .live_state_runtime import LiveStateRuntime
-from .market_session import VN_TZ, market_feed_stale
+from .market_session import VN_TZ
 from .postgres_shadow import PostgresShadowWriter
 from .realtime_volume import RealtimeVolumeEngine, VolumeEvent, VolumeSnapshot
 from .settings import Settings
+from .ssi_stream_runtime import CanonicalProgress, SSIStreamSupervisor
 from .storage import SQLiteStore
 from .universe import load_universe
 
@@ -202,7 +203,6 @@ def main() -> int:
         commit_every_seconds=settings.commit_every_seconds,
     )
     stop_event = threading.Event()
-    stream_error = threading.Event()
     volume_engine = _start_volume_shadow(settings)
     volume_qa_logger = (
         VolumeShadowQALogger(settings.volume_shadow_symbols)
@@ -212,6 +212,8 @@ def main() -> int:
     started_at = datetime.now(VN_TZ)
     live_runtime: LiveStateRuntime | None = None
     projection_worker: LiveProjectionWorker | None = None
+    collector: QuoteCollector | None = None
+    stream_supervisor: SSIStreamSupervisor | None = None
     # One guard orders callback on_event and timer advance_time mutations.  The
     # collector retains it through its post-transaction projection offer.
     engine_lock = threading.RLock()
@@ -281,6 +283,34 @@ def main() -> int:
                     "live_projection_last_error": None,
                 }
             )
+        if stream_supervisor is not None:
+            values.update(stream_supervisor.health())
+        else:
+            values.update(
+                {
+                    "ssi_stream_state": "DISCONNECTED",
+                    "ssi_stream_generation": 0,
+                    "ssi_stream_reconnects_total": 0,
+                    "ssi_stream_consecutive_failures": 0,
+                    "ssi_stream_last_open_at": None,
+                    "ssi_stream_last_close_at": None,
+                    "ssi_stream_last_error_at": None,
+                    "ssi_stream_last_recovery_reason": None,
+                    "ssi_stream_last_recovered_at": None,
+                }
+            )
+        values["ssi_last_provider_message_at"] = (
+            collector.last_provider_message_at.isoformat()
+            if collector is not None
+            and collector.last_provider_message_at is not None
+            else None
+        )
+        values["ssi_last_canonical_write_at"] = (
+            collector.last_canonical_write_at.isoformat()
+            if collector is not None
+            and collector.last_canonical_write_at is not None
+            else None
+        )
         if postgres_shadow is not None:
             values.update(postgres_shadow.health())
         else:
@@ -328,15 +358,8 @@ def main() -> int:
             ) from exc
 
         cfg = _ssi_config(settings)
-        stream = MarketDataStream(cfg, MarketDataClient(cfg))
-
-        def on_error(error: object) -> None:
-            LOG.error("SSI stream error: %s", error)
-            stream_error.set()
-
-        collector: QuoteCollector
-
         def snapshot_logged() -> None:
+            assert collector is not None
             collector.stats.volume_shadow_snapshots += 1
 
         volume_handler = (
@@ -365,12 +388,27 @@ def main() -> int:
             extra_stats_provider=runtime_health,
             postgres_shadow_sink=postgres_shadow,
         )
+        stream_supervisor = SSIStreamSupervisor(
+            config=cfg,
+            channel=settings.ssi_channel,
+            on_message=collector.on_message,
+            progress_provider=lambda: CanonicalProgress(
+                accepted_events=collector.stats.accepted_events,
+                last_canonical_write_at=collector.last_canonical_write_at,
+            ),
+            client_factory=MarketDataClient,
+            stream_factory=MarketDataStream,
+            reconnect_max_attempts=settings.ssi_reconnect_max_attempts,
+            reconnect_backoff_seconds=(
+                settings.ssi_reconnect_backoff_seconds
+            ),
+            reconnect_progress_timeout_seconds=(
+                settings.ssi_reconnect_progress_timeout_seconds
+            ),
+        )
         store.set_meta("started_at", started_at.isoformat(), started_at.isoformat())
         store.set_meta("channel", settings.ssi_channel, started_at.isoformat())
         store.set_meta("universe_size", str(len(universe)), started_at.isoformat())
-        for key, value in runtime_health().items():
-            store.set_meta(key, str(value), started_at.isoformat())
-        store.commit()
 
         LOG.info(
             "Starting SSI shadow collector: channel=%s universe=%s db=%s",
@@ -378,14 +416,18 @@ def main() -> int:
             len(universe),
             settings.database_path,
         )
-        stream.start(collector.on_message, on_error, settings.ssi_channel)
+        stream_supervisor.start()
+        for key, value in runtime_health().items():
+            store.set_meta(key, str(value), started_at.isoformat())
+        store.commit()
 
         last_stats_log = time.monotonic()
         while not stop_event.wait(1):
-            if stream_error.is_set():
-                raise RuntimeError("SSI stream reported an error; process will exit for restart")
-
             now = datetime.now(VN_TZ)
+            stream_supervisor.tick(
+                now, stale_after_seconds=settings.stale_stream_seconds
+            )
+            stream_supervisor.raise_if_fatal()
             if volume_engine is not None and volume_qa_logger is not None:
                 _advance_volume_shadow(
                     volume_engine,
@@ -394,15 +436,6 @@ def main() -> int:
                     now,
                     engine_lock=engine_lock,
                     projection_worker=projection_worker,
-                )
-            if market_feed_stale(
-                now,
-                collector_started_at=started_at,
-                last_accepted_event_at=collector.last_event_at,
-                stale_after_seconds=settings.stale_stream_seconds,
-            ):
-                raise RuntimeError(
-                    f"SSI stream stale for more than {settings.stale_stream_seconds}s during market session"
                 )
 
             if time.monotonic() - last_stats_log >= 60:
@@ -416,6 +449,8 @@ def main() -> int:
 
         return 0
     finally:
+        if stream_supervisor is not None:
+            stream_supervisor.stop()
         now = datetime.now(VN_TZ).isoformat()
         try:
             store.set_meta("stopped_at", now, now)

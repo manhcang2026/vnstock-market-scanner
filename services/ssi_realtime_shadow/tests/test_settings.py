@@ -135,3 +135,43 @@ def test_postgres_shadow_enabled_requires_nonblank_dsn(
 
     with pytest.raises(RuntimeError, match="POSTGRES_SHADOW_DSN"):
         Settings.from_env()
+
+
+def test_ssi_reconnect_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    _required_env(monkeypatch)
+    monkeypatch.delenv("SSI_RECONNECT_MAX_ATTEMPTS", raising=False)
+    monkeypatch.delenv("SSI_RECONNECT_BACKOFF_SECONDS", raising=False)
+    monkeypatch.delenv(
+        "SSI_RECONNECT_PROGRESS_TIMEOUT_SECONDS", raising=False
+    )
+
+    settings = Settings.from_env()
+
+    assert settings.ssi_reconnect_max_attempts == 3
+    assert settings.ssi_reconnect_backoff_seconds == 5
+    assert settings.ssi_reconnect_progress_timeout_seconds == 60
+
+
+@pytest.mark.parametrize(
+    ("name", "value", "message"),
+    (
+        ("SSI_RECONNECT_MAX_ATTEMPTS", "0", "must be at least 1"),
+        ("SSI_RECONNECT_BACKOFF_SECONDS", "-0.1", "must not be negative"),
+        (
+            "SSI_RECONNECT_PROGRESS_TIMEOUT_SECONDS",
+            "0",
+            "must be at least 1",
+        ),
+    ),
+)
+def test_invalid_ssi_reconnect_settings_fail_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+    value: str,
+    message: str,
+) -> None:
+    _required_env(monkeypatch)
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(RuntimeError, match=message):
+        Settings.from_env()
