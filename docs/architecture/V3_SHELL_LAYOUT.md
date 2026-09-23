@@ -1,8 +1,8 @@
-# CCC V3 desktop shell layout
+﻿# CCC V3 desktop shell layout
 
 ## Fixed geometry
 
-At desktop widths of 1200px and above, Stock Detail V3 is the reference for the reusable V2 shell:
+At desktop widths of 1200px and above, Stock Detail V3 is the reference for the reusable V3 shell:
 
 ```text
 48px compact navigation | 240px left rail | minmax(0, 1fr) workspace | 240px right rail
@@ -28,4 +28,5 @@ The current implementation applies these slots to Stock Detail only. Other route
 | Signal Achievements | Filters | Cases | Stats, only when implemented |
 | Account | Navigation | Profile and Watchlist | Package/account context, only when implemented |
 
-These are layout slots, not authorization to create routes, fabricate data, or change entitlement. Stock Detail data ownership and permission boundaries remain defined by `CCC_DATA_SOURCE_OWNERSHIP.md`.
+These are layout slots, not authorization to create routes, fabricate data, or change entitlement. Stock Detail data ownership and permission boundaries remain defined by `V3_DATA_SOURCE_OWNERSHIP.md`.
+
