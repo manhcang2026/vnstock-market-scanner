@@ -1,4 +1,4 @@
-﻿# AGENTS.md — Chuyện Chợ Chứng V3
+# AGENTS.md — Chuyện Chợ Chứng V3
 
 These rules apply to coding/design agents working in this repository.
 
@@ -22,8 +22,9 @@ Before coding:
 
 1. read this file;
 2. read `docs/workflow/CODEX_BUDGET_MODE.md`;
-3. read only the architecture/product files directly relevant to the task;
-4. start from files supplied in the task.
+3. read `docs/architecture/CCC_VPS_CANONICAL_SUPABASE_MIRROR_DECISION_20260924.md`;
+4. read only the architecture/product files directly relevant to the task;
+5. start from files supplied in the task.
 
 Do not scan the whole repository or Git history merely to rebuild context already supplied.
 
@@ -38,7 +39,26 @@ Never use OLD Supabase market tables as a fallback.
 Missing market data means NULL / unavailable.
 Missing data is not zero.
 
+Trust SSI as the provider, but do not make the runtime unnecessarily fragile:
+- short transient feed silence should prefer reconnect/recovery over killing the whole system;
+- calculation/mirror failures must not stop raw SSI ingest;
+- degraded quality must be explicit instead of fabricated.
+
 ## 4. Database ownership
+
+### VPS market system — CANONICAL
+
+The VPS is the canonical CCC market-data runtime and long-term infrastructure destination.
+
+Current transition:
+
+`VPS CCC Engine -> SQLite`
+
+Long-term target:
+
+`VPS CCC Engine -> PostgreSQL on VPS`
+
+Do not move the canonical market runtime to NEW Supabase.
 
 ### OLD Supabase
 
@@ -56,56 +76,119 @@ OLD Supabase migration material that remains relevant lives under:
 
 `infra/supabase-user-system/`
 
-### NEW Supabase
+### NEW Supabase — `ccc-ssi-v2`
 
-The NEW project is:
+The NEW project is a **remote audit mirror only**.
 
-`ccc-ssi-v2`
-
-It is a temporary PostgreSQL market-data persistence and validation environment for V3.
-
-Repository migration files for NEW belong under:
+Repository migration files for the mirror belong under:
 
 `supabase/`
 
-Do not place OLD Supabase migrations in `supabase/`.
+The mirror exists for:
+- remote inspection/audit;
+- troubleshooting;
+- comparison of raw vs calculated values;
+- signal/state history checks;
+- ingest/EOD/data-gap/health inspection.
+
+The mirror is NOT canonical and must never be a production dependency.
+
+Mirror writes must be:
+- asynchronous;
+- fail-open;
+- best-effort;
+- retryable;
+- unable to roll back or block VPS canonical writes.
 
 Do not expose NEW Supabase directly to frontend/browser code.
 
-The NEW database must remain portable PostgreSQL so it can later migrate to VPS PostgreSQL.
+Keep the mirror schema portable PostgreSQL.
 
-## 5. Frontend/API boundary
+## 5. Mirror coverage
+
+Mirror data from 01/09/2026 onward as capacity allows.
+
+Preferred coverage:
+- live quotes;
+- 1-minute bars;
+- daily bars;
+- reference prices;
+- ATO/ATC;
+- volume baselines;
+- Day RVOL / RVOL15 / RVOL30;
+- Price5 / Price15;
+- MA-related state;
+- stock_state_current;
+- signal events;
+- ingest/finalize/data-gap/reconciliation/health records.
+
+Historical/event tables append.
+Current-state tables upsert.
+
+Supabase capacity problems must never stop the VPS runtime.
+
+## 6. Frontend/API boundary
 
 Browser market-data requests use:
 
 - HTTP `/api/v2/*`
 - WebSocket `/api/v2/live`
 
-The frontend must not depend on whether the backend market database is currently Supabase PostgreSQL or VPS PostgreSQL.
+The frontend must not depend on whether the backend market database is SQLite (transition) or PostgreSQL on VPS (target).
+
+The frontend must not read NEW Supabase mirror tables directly.
 
 Database migration must not require a frontend API-contract rewrite.
 
-## 6. Runtime preservation
+## 7. Runtime preservation and hardening
 
-The current VPS REST/WebSocket/chart runtime is already in use.
+Do not delete useful collector/calculation logic merely because storage is being modernized.
 
-Do not delete or replace current SQLite/storage/runtime code merely because a new PostgreSQL layer is being designed.
+Preserve and review:
+- SSI collector normalization;
+- market-session logic;
+- Day RVOL / RVOL15 / RVOL30;
+- Price5 / Price15;
+- ATO/ATC;
+- baseline logic;
+- MA logic.
 
-Migration must be staged:
+The 23/09/2026 incident showed that runtime/orchestration can fail even when VPS CPU/RAM/disk are healthy.
 
-1. preserve working runtime;
-2. build and validate NEW PostgreSQL persistence;
-3. switch backend storage safely;
-4. verify API/WS/chart behavior;
-5. remove obsolete runtime storage only after cutover is proven.
+Before production reliance:
+- eliminate lock-order/deadlock risk;
+- keep SSI callback lightweight;
+- isolate ingest from heavy calculation/storage work;
+- use heartbeat/watchdog that detects “alive but not progressing”;
+- reconnect SSI on stale feed;
+- prevent duplicate collectors;
+- keep data-gap/quality state explicit.
 
-## 7. Core logic
+Do not remove existing SQLite files/runtime until PostgreSQL on VPS is proven.
+
+## 8. Operational monitoring
+
+The Product Owner should not be required to understand VPS internals.
+
+Add Telegram operational notifications for important states such as:
+- MARKET READY;
+- SSI FEED DELAYED;
+- SSI RECOVERED;
+- COLLECTOR DOWN/HUNG;
+- DATABASE ERROR;
+- SUPABASE MIRROR DELAYED;
+- SUPABASE MIRROR CAPACITY WARNING;
+- EOD/finalize failure.
+
+Alerts must be deduplicated/rate-limited to avoid spam.
+
+## 9. Core logic
 
 Do not change RVOL definitions, baseline math, MA logic, auction logic, signal thresholds, entitlement semantics or universe behavior unless explicitly requested.
 
 Production thresholds and proprietary CCC logic remain server-side.
 
-## 8. Security
+## 10. Security
 
 Never commit:
 
@@ -117,7 +200,7 @@ Never commit:
 
 Frontend may contain only browser-safe publishable configuration.
 
-## 9. Scope lock
+## 11. Scope lock
 
 When the task provides repository, branch, HEAD/base, folder or file allowlist:
 
@@ -128,7 +211,7 @@ When the task provides repository, branch, HEAD/base, folder or file allowlist:
 
 If an out-of-scope dependency must be changed, explain why.
 
-## 10. Testing
+## 12. Testing
 
 Visual frontend work:
 - do not start local server by default;
@@ -139,7 +222,7 @@ Core/backend/database/auth/security work:
 - run focused tests;
 - use broader validation when blast radius justifies it.
 
-## 11. Git/deploy
+## 13. Git/deploy
 
 Unless explicitly requested, do not:
 
@@ -151,7 +234,7 @@ Unless explicitly requested, do not:
 - deploy;
 - change VPS/production state.
 
-## 12. Completion report
+## 14. Completion report
 
 Keep reports short:
 
