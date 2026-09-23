@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import json
 import logging
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, ContextManager, Iterable, cast
 
 from .auction import AuctionEvent, AuctionSessionAccumulator, AuctionSessionBucket
 from .market_session import (
@@ -22,7 +23,7 @@ from .postgres_shadow import (
     MinuteBarShadow,
     PostgresShadowSink,
 )
-from .realtime_volume import VolumeEvent
+from .realtime_volume import VolumeEvent, VolumeSnapshot
 from .storage import SQLiteStore
 
 LOG = logging.getLogger(__name__)
@@ -173,6 +174,7 @@ class CollectorStats:
     auction_projection_events: int = 0
     auction_projection_errors: int = 0
     postgres_shadow_offer_errors: int = 0
+    live_projection_offer_errors: int = 0
     rejected_out_of_order_events: int = 0
     rejected_completed_minute_events: int = 0
     rejected_volume_engine_events: int = 0
@@ -186,7 +188,13 @@ class QuoteCollector:
         store: SQLiteStore,
         *,
         started_at: datetime | None = None,
-        volume_event_handler: Callable[[VolumeEvent], object] | None = None,
+        volume_event_handler: (
+            Callable[[VolumeEvent], VolumeSnapshot | None] | None
+        ) = None,
+        volume_snapshot_handler: (
+            Callable[[VolumeSnapshot, VolumeEvent], object] | None
+        ) = None,
+        volume_engine_lock: ContextManager[object] | None = None,
         extra_stats_provider: Callable[[], dict[str, object]] | None = None,
         postgres_shadow_sink: PostgresShadowSink | None = None,
     ) -> None:
@@ -199,6 +207,8 @@ class QuoteCollector:
         self._latest_event_at: dict[tuple[str, str], datetime] = {}
         self.last_event_at: datetime | None = None
         self.volume_event_handler = volume_event_handler
+        self.volume_snapshot_handler = volume_snapshot_handler
+        self.volume_engine_lock = volume_engine_lock
         self.extra_stats_provider = extra_stats_provider
         self.postgres_shadow_sink = postgres_shadow_sink
         self.auction_accumulator = AuctionSessionAccumulator()
@@ -563,27 +573,61 @@ class QuoteCollector:
                     "trading_status": str(_first(payload, "TradingStatus") or ""),
                     "updated_at": updated_at,
                 }
+            volume_snapshot: VolumeSnapshot | None = None
+            # The shared engine guard spans validation and the post-savepoint
+            # offer so timer-side advance work cannot overtake this snapshot.
+            engine_guard = (
+                self.volume_engine_lock
+                if volume_event is not None
+                and self.volume_event_handler is not None
+                and self.volume_engine_lock is not None
+                else nullcontext()
+            )
             try:
-                with self.store.live_event_transaction():
-                    self.store.upsert_minute_bar(
-                        trading_date=trading_date,
-                        minute=minute,
-                        symbol=symbol,
-                        price=last_price,
-                        volume_delta=volume_delta,
-                        total_volume=effective_total_volume,
-                        is_partial=is_partial,
-                        exchange=exchange,
-                        quality_status=quality_status,
-                        has_gap=has_gap,
-                        gap_from=gap_from,
-                        gap_to=gap_to,
-                        updated_at=updated_at,
-                        event_time=event_time,
-                    )
-                    self.store.upsert_latest_quote(quote)
-                    if volume_event is not None and self.volume_event_handler is not None:
-                        self.volume_event_handler(volume_event)
+                with engine_guard:
+                    with self.store.live_event_transaction():
+                        self.store.upsert_minute_bar(
+                            trading_date=trading_date,
+                            minute=minute,
+                            symbol=symbol,
+                            price=last_price,
+                            volume_delta=volume_delta,
+                            total_volume=effective_total_volume,
+                            is_partial=is_partial,
+                            exchange=exchange,
+                            quality_status=quality_status,
+                            has_gap=has_gap,
+                            gap_from=gap_from,
+                            gap_to=gap_to,
+                            updated_at=updated_at,
+                            event_time=event_time,
+                        )
+                        self.store.upsert_latest_quote(quote)
+                        if (
+                            volume_event is not None
+                            and self.volume_event_handler is not None
+                        ):
+                            result = self.volume_event_handler(volume_event)
+                            if result is not None:
+                                volume_snapshot = cast(VolumeSnapshot, result)
+
+                    if (
+                        volume_snapshot is not None
+                        and volume_event is not None
+                        and self.volume_snapshot_handler is not None
+                    ):
+                        try:
+                            self.volume_snapshot_handler(
+                                volume_snapshot, volume_event
+                            )
+                        except Exception:
+                            self.stats.live_projection_offer_errors += 1
+                            LOG.exception(
+                                "Live projection offer failed open after "
+                                "canonical write: symbol=%s minute=%s",
+                                symbol,
+                                minute,
+                            )
             except Exception as exc:
                 if volume_event is not None:
                     self.stats.volume_shadow_event_errors += 1
@@ -695,6 +739,9 @@ class QuoteCollector:
             "auction_projection_errors": self.stats.auction_projection_errors,
             "postgres_shadow_offer_errors": (
                 self.stats.postgres_shadow_offer_errors
+            ),
+            "live_projection_offer_errors": (
+                self.stats.live_projection_offer_errors
             ),
             "rejected_out_of_order_events": self.stats.rejected_out_of_order_events,
             "rejected_completed_minute_events": (

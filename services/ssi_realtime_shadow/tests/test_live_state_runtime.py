@@ -31,6 +31,10 @@ def _at(minute: str, day: str = DAY) -> datetime:
     return datetime.fromisoformat(f"{day}T{minute}:00").replace(tzinfo=VN_TZ)
 
 
+def _event_at(clock: str, day: str = DAY) -> datetime:
+    return datetime.fromisoformat(f"{day}T{clock}").replace(tzinfo=VN_TZ)
+
+
 def _baseline(path: Path, *, day: str = DAY, sessions: int = 10) -> None:
     connection = sqlite3.connect(path)
     connection.executescript(BASELINE_SCHEMA)
@@ -299,6 +303,151 @@ def test_timer_advances_zero_volume_minute_without_fabricating_trade(
     store.close()
 
 
+def test_price5_self_heals_exact_anchor_skipped_by_projection(
+    tmp_path: Path,
+) -> None:
+    store, engine, runtime, market = _runtime(tmp_path)
+    store.upsert_minute_bar(
+        trading_date=DAY, minute="09:31", symbol="SHS", price=100,
+        volume_delta=10, total_volume=320, is_partial=False, exchange="HNX",
+        quality_status="TRUSTED", has_gap=False, gap_from=None, gap_to=None,
+        updated_at=_event_at("09:31:30").isoformat(),
+        event_time="09:31:30",
+    )
+    _set_quote(store, minute="09:36", price=110, total_volume=320)
+    assert "09:31" not in runtime._minute_prices.get("SHS", {})
+    snapshot = engine.get_snapshot("SHS")
+    assert snapshot is not None
+
+    assert runtime.handle_snapshot(
+        snapshot, observed_at=_event_at("09:36:30")
+    )
+
+    connection = sqlite3.connect(market)
+    row = connection.execute(
+        "SELECT price5_pct,price15_pct FROM stock_state_current "
+        "WHERE symbol='SHS'"
+    ).fetchone()
+    assert row[0] == pytest.approx(10)
+    assert row[1] == pytest.approx(10)
+    connection.close()
+    runtime.close()
+    store.close()
+
+
+def test_price15_self_heals_exact_anchor_skipped_by_projection(
+    tmp_path: Path,
+) -> None:
+    store, engine, runtime, market = _runtime(tmp_path)
+    store.upsert_minute_bar(
+        trading_date=DAY, minute="09:31", symbol="SHS", price=100,
+        volume_delta=10, total_volume=320, is_partial=False, exchange="HNX",
+        quality_status="TRUSTED", has_gap=False, gap_from=None, gap_to=None,
+        updated_at=_event_at("09:31:30").isoformat(),
+        event_time="09:31:30",
+    )
+    _set_quote(store, minute="09:46", price=115, total_volume=320)
+    assert "09:31" not in runtime._minute_prices.get("SHS", {})
+    snapshot = engine.get_snapshot("SHS")
+    assert snapshot is not None
+
+    assert runtime.handle_snapshot(
+        snapshot, observed_at=_event_at("09:46:30")
+    )
+
+    connection = sqlite3.connect(market)
+    row = connection.execute(
+        "SELECT price5_pct,price15_pct FROM stock_state_current "
+        "WHERE symbol='SHS'"
+    ).fetchone()
+    assert row[0] is None
+    assert row[1] == pytest.approx(15)
+    connection.close()
+    runtime.close()
+    store.close()
+
+
+def test_stale_event_work_is_skipped_before_newer_work_projects(
+    tmp_path: Path,
+) -> None:
+    store, engine, runtime, market = _runtime(tmp_path)
+    store.upsert_minute_bar(
+        trading_date=DAY, minute="09:31", symbol="SHS", price=105,
+        volume_delta=10, total_volume=320, is_partial=False, exchange="HNX",
+        quality_status="TRUSTED", has_gap=False, gap_from=None, gap_to=None,
+        updated_at=_event_at("09:31:30").isoformat(),
+        event_time="09:31:30",
+    )
+    old_event = VolumeEvent(
+        symbol="SHS", exchange="HNX", trading_date=DAY,
+        event_time=_event_at("09:31:30"), minute="09:31", volume_delta=10,
+        total_volume=320, quality_status="TRUSTED",
+    )
+    old_snapshot = engine.on_event(old_event)
+    store.upsert_minute_bar(
+        trading_date=DAY, minute="09:32", symbol="SHS", price=110,
+        volume_delta=10, total_volume=330, is_partial=False, exchange="HNX",
+        quality_status="TRUSTED", has_gap=False, gap_from=None, gap_to=None,
+        updated_at=_event_at("09:32:30").isoformat(),
+        event_time="09:32:30",
+    )
+    _set_quote(store, minute="09:32", price=110, total_volume=330)
+    latest_event = VolumeEvent(
+        symbol="SHS", exchange="HNX", trading_date=DAY,
+        event_time=_event_at("09:32:30"), minute="09:32", volume_delta=10,
+        total_volume=330, quality_status="TRUSTED",
+    )
+    latest_snapshot = engine.on_event(latest_event)
+    errors_before = runtime.live_state_errors
+
+    assert not runtime.handle_snapshot(old_snapshot, event=old_event)
+    connection = sqlite3.connect(market)
+    assert connection.execute(
+        "SELECT COUNT(*) FROM stock_state_current"
+    ).fetchone()[0] == 0
+    assert runtime.live_state_errors == errors_before
+
+    assert runtime.handle_snapshot(latest_snapshot, event=latest_event)
+    row = connection.execute(
+        "SELECT last_price,event_at FROM stock_state_current WHERE symbol='SHS'"
+    ).fetchone()
+    assert row == (110.0, _event_at("09:32:30").isoformat())
+    connection.close()
+    runtime.close()
+    store.close()
+
+
+def test_stale_timer_work_is_skipped_before_later_timer_projects(
+    tmp_path: Path,
+) -> None:
+    store, engine, runtime, market = _runtime(tmp_path)
+    stale_snapshot = engine.get_snapshot("SHS")
+    assert stale_snapshot is not None
+    _set_quote(store, minute="09:32", price=110, total_volume=310)
+    errors_before = runtime.live_state_errors
+
+    assert not runtime.handle_snapshot(
+        stale_snapshot, observed_at=_event_at("09:31:30")
+    )
+    connection = sqlite3.connect(market)
+    assert connection.execute(
+        "SELECT COUNT(*) FROM stock_state_current"
+    ).fetchone()[0] == 0
+    assert runtime.live_state_errors == errors_before
+
+    latest_snapshot = engine.advance_time(_event_at("09:32:30"))["SHS"]
+    assert runtime.handle_snapshot(
+        latest_snapshot, observed_at=_event_at("09:32:30")
+    )
+    row = connection.execute(
+        "SELECT last_price,event_at FROM stock_state_current WHERE symbol='SHS'"
+    ).fetchone()
+    assert row == (110.0, _event_at("09:32:30").isoformat())
+    connection.close()
+    runtime.close()
+    store.close()
+
+
 def test_harness_uses_one_volume_engine_call_per_normalized_event(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -350,7 +499,7 @@ def test_once_per_minute_lifecycle_and_inactive_session_preservation(
     _set_quote(store, minute="09:31", price=120, total_volume=320)
     event31 = VolumeEvent(
         symbol="SHS", exchange="HNX", trading_date=DAY,
-        event_time=_at("09:31"), minute="09:31", volume_delta=10,
+        event_time=_event_at("09:31:30"), minute="09:31", volume_delta=10,
         total_volume=320, quality_status="TRUSTED",
     )
     same_minute = engine.on_event(event31)
@@ -366,7 +515,7 @@ def test_once_per_minute_lifecycle_and_inactive_session_preservation(
     _set_quote(store, minute="09:32", price=120, total_volume=330)
     event32 = VolumeEvent(
         symbol="SHS", exchange="HNX", trading_date=DAY,
-        event_time=_at("09:32"), minute="09:32", volume_delta=10,
+        event_time=_event_at("09:32:30"), minute="09:32", volume_delta=10,
         total_volume=330, quality_status="TRUSTED",
     )
     snapshot32 = engine.on_event(event32)

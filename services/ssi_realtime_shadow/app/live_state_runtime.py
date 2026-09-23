@@ -12,7 +12,7 @@ import math
 import sqlite3
 import threading
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -448,6 +448,27 @@ class LiveStateRuntime:
         if point is not None:
             self._minute_prices.setdefault(event.symbol, {})[event.minute] = point
 
+    def _ensure_exact_price_anchors(
+        self,
+        *,
+        symbol: str,
+        trading_date: str,
+        selected_at: datetime,
+    ) -> None:
+        """Refresh only the canonical rows Price5/Price15 may consume."""
+        prices = self._minute_prices.setdefault(symbol, {})
+        selected = _local(selected_at).replace(second=0, microsecond=0)
+        for window in (5, 15):
+            anchor_at = selected - timedelta(minutes=window)
+            if anchor_at.date().isoformat() != trading_date:
+                continue
+            minute = anchor_at.strftime("%H:%M")
+            point = self.hot_store.get_minute_price(
+                symbol, trading_date, minute
+            )
+            if point is not None:
+                prices[minute] = point
+
     def handle_snapshot(
         self,
         snapshot: VolumeSnapshot,
@@ -462,31 +483,30 @@ class LiveStateRuntime:
                 if self._closed:
                     return False
                 self._roll_date(snapshot.trading_date)
-                self._update_price(event)
-                if event is not None:
-                    effective_at = _local(event.event_time)
-                    session = classify_market_session(event.exchange, effective_at)
-                    cadence = (
-                        snapshot.trading_date,
-                        effective_at.strftime("%H:%M"),
-                        session.session_type.value,
-                    )
-                    if (
-                        not force
-                        and self._last_projection.get(snapshot.symbol) == cadence
-                    ):
-                        return False
                 quote_row = self.hot_store.get_latest_quote(
                     snapshot.symbol, snapshot.trading_date
                 )
                 if quote_row is None:
                     return False
                 quote = _latest_quote(quote_row)
-                effective_at = (
-                    _local(observed_at or quote.event_at)
-                    if event is None
-                    else effective_at
-                )
+                if event is not None:
+                    effective_at = _local(event.event_time)
+                    if quote.event_at > effective_at:
+                        return False
+                    session = classify_market_session(event.exchange, effective_at)
+                    cadence = (
+                        snapshot.trading_date,
+                        effective_at.strftime("%H:%M"),
+                        session.session_type.value,
+                    )
+                else:
+                    effective_at = _local(observed_at or quote.event_at)
+                    if observed_at is not None:
+                        quote_updated_at = _local(
+                            datetime.fromisoformat(quote.updated_at)
+                        )
+                        if quote_updated_at > effective_at:
+                            return False
                 if effective_at.date().isoformat() != snapshot.trading_date:
                     return False
                 if event is None:
@@ -498,6 +518,13 @@ class LiveStateRuntime:
                     )
                 if not force and self._last_projection.get(snapshot.symbol) == cadence:
                     return False
+                self._update_price(event)
+                if session.is_continuous:
+                    self._ensure_exact_price_anchors(
+                        symbol=snapshot.symbol,
+                        trading_date=snapshot.trading_date,
+                        selected_at=effective_at,
+                    )
                 momentum = calculate_price_momentum(
                     exchange=quote.exchange,
                     selected_at=effective_at,

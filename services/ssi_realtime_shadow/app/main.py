@@ -7,8 +7,10 @@ import time
 from collections.abc import Callable
 from datetime import datetime
 from types import SimpleNamespace
+from typing import ContextManager
 
 from .collector import QuoteCollector
+from .live_projection import LiveProjectionWorker
 from .live_state_runtime import LiveStateRuntime
 from .market_session import VN_TZ, market_feed_stale
 from .postgres_shadow import PostgresShadowWriter
@@ -141,14 +143,15 @@ def _volume_event_handler(
     engine: RealtimeVolumeEngine,
     qa_logger: VolumeShadowQALogger,
     on_snapshot_logged: Callable[[], None],
-    live_runtime: LiveStateRuntime | None = None,
-) -> Callable[[VolumeEvent], None]:
-    def handle(event: VolumeEvent) -> None:
-        snapshot = engine.on_event(event)
+    *,
+    engine_lock: ContextManager[object],
+) -> Callable[[VolumeEvent], VolumeSnapshot]:
+    def handle(event: VolumeEvent) -> VolumeSnapshot:
+        with engine_lock:
+            snapshot = engine.on_event(event)
         if qa_logger.log_if_changed(snapshot):
             on_snapshot_logged()
-        if live_runtime is not None:
-            live_runtime.handle_snapshot(snapshot, event=event)
+        return snapshot
 
     return handle
 
@@ -158,15 +161,18 @@ def _advance_volume_shadow(
     qa_logger: VolumeShadowQALogger,
     collector: QuoteCollector,
     now: datetime,
-    live_runtime: LiveStateRuntime | None = None,
+    *,
+    engine_lock: ContextManager[object],
+    projection_worker: LiveProjectionWorker | None = None,
 ) -> None:
     try:
-        changed = engine.advance_time(now)
-        for snapshot in changed.values():
-            if qa_logger.log_if_changed(snapshot):
-                collector.stats.volume_shadow_snapshots += 1
-            if live_runtime is not None:
-                live_runtime.handle_snapshot(snapshot, observed_at=now)
+        with engine_lock:
+            changed = engine.advance_time(now)
+            for snapshot in changed.values():
+                if qa_logger.log_if_changed(snapshot):
+                    collector.stats.volume_shadow_snapshots += 1
+                if projection_worker is not None:
+                    projection_worker.offer(snapshot, observed_at=now)
     except Exception:
         collector.stats.volume_shadow_advance_errors += 1
         LOG.exception("CCC V2 volume shadow advance_time failed")
@@ -205,6 +211,10 @@ def main() -> int:
     )
     started_at = datetime.now(VN_TZ)
     live_runtime: LiveStateRuntime | None = None
+    projection_worker: LiveProjectionWorker | None = None
+    # One guard orders callback on_event and timer advance_time mutations.  The
+    # collector retains it through its post-transaction projection offer.
+    engine_lock = threading.RLock()
     postgres_shadow = _start_postgres_shadow(settings)
     if settings.live_state_enabled and volume_engine is not None:
         try:
@@ -216,6 +226,12 @@ def main() -> int:
                 active_at=started_at,
             )
             LOG.info("CCC V2 live state initialized: %s", live_runtime.health())
+            projection_worker = LiveProjectionWorker(live_runtime)
+            projection_worker.start()
+            LOG.info(
+                "CCC V2 live projection worker initialized: %s",
+                projection_worker.health(),
+            )
         except Exception:
             LOG.exception(
                 "CCC V2 live state initialization failed; raw collection will continue"
@@ -245,6 +261,26 @@ def main() -> int:
 
     def runtime_health() -> dict[str, object]:
         values = live_health()
+        if projection_worker is not None:
+            values.update(projection_worker.health())
+        else:
+            values.update(
+                {
+                    "live_projection_enabled": settings.live_state_enabled,
+                    "live_projection_started": False,
+                    "live_projection_running": False,
+                    "live_projection_healthy": not settings.live_state_enabled,
+                    "live_projection_offered": 0,
+                    "live_projection_coalesced": 0,
+                    "live_projection_dropped": 0,
+                    "live_projection_processed": 0,
+                    "live_projection_errors": int(settings.live_state_enabled),
+                    "live_projection_pending": 0,
+                    "live_projection_max_pending": 0,
+                    "live_projection_last_success_at": None,
+                    "live_projection_last_error": None,
+                }
+            )
         if postgres_shadow is not None:
             values.update(postgres_shadow.health())
         else:
@@ -266,7 +302,10 @@ def main() -> int:
         universe = load_universe(settings)
     except Exception:
         _stop_postgres_shadow(postgres_shadow)
-        if live_runtime is not None:
+        projection_stopped = (
+            projection_worker.stop() if projection_worker is not None else True
+        )
+        if live_runtime is not None and projection_stopped:
             live_runtime.close()
         store.close()
         raise
@@ -305,7 +344,7 @@ def main() -> int:
                 volume_engine,
                 volume_qa_logger,
                 snapshot_logged,
-                live_runtime=live_runtime,
+                engine_lock=engine_lock,
             )
             if volume_engine is not None and volume_qa_logger is not None
             else None
@@ -315,6 +354,14 @@ def main() -> int:
             store,
             started_at=started_at,
             volume_event_handler=volume_handler,
+            volume_snapshot_handler=(
+                lambda snapshot, event: projection_worker.offer(
+                    snapshot, event=event
+                )
+                if projection_worker is not None
+                else False
+            ),
+            volume_engine_lock=engine_lock,
             extra_stats_provider=runtime_health,
             postgres_shadow_sink=postgres_shadow,
         )
@@ -345,7 +392,8 @@ def main() -> int:
                     volume_qa_logger,
                     collector,
                     now,
-                    live_runtime=live_runtime,
+                    engine_lock=engine_lock,
+                    projection_worker=projection_worker,
                 )
             if market_feed_stale(
                 now,
@@ -377,8 +425,18 @@ def main() -> int:
                 _stop_postgres_shadow(postgres_shadow)
             finally:
                 try:
-                    if live_runtime is not None:
+                    projection_stopped = (
+                        projection_worker.stop()
+                        if projection_worker is not None
+                        else True
+                    )
+                    if live_runtime is not None and projection_stopped:
                         live_runtime.close()
+                    elif live_runtime is not None:
+                        LOG.error(
+                            "Live projection worker did not stop before timeout; "
+                            "skipping live-state close during process shutdown"
+                        )
                 finally:
                     store.close()
 

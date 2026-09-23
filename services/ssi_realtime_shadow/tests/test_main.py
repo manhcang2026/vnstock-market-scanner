@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -158,7 +159,12 @@ def test_volume_handler_passes_canonical_event_to_engine_and_counts_log() -> Non
     )
     qa_logger = SimpleNamespace(log_if_changed=lambda value: value is snapshot)
     logged: list[bool] = []
-    handler = _volume_event_handler(engine, qa_logger, lambda: logged.append(True))
+    handler = _volume_event_handler(
+        engine,
+        qa_logger,
+        lambda: logged.append(True),
+        engine_lock=threading.Lock(),
+    )
     event = _event("HPG", "HOSE", "09:30", 10)
 
     handler(event)
@@ -180,7 +186,13 @@ def test_advance_time_runs_without_any_ssi_event_and_counts_changed_snapshot() -
     collector = SimpleNamespace(stats=stats)
     now = _at("09:31")
 
-    _advance_volume_shadow(engine, qa_logger, collector, now)
+    _advance_volume_shadow(
+        engine,
+        qa_logger,
+        collector,
+        now,
+        engine_lock=threading.Lock(),
+    )
 
     assert calls == [now]
     assert stats.volume_shadow_snapshots == 1
@@ -201,12 +213,86 @@ def test_advance_time_exception_isolated_and_counted(
     collector = SimpleNamespace(stats=stats)
 
     with caplog.at_level(logging.ERROR, logger="ssi_shadow"):
-        _advance_volume_shadow(engine, qa_logger, collector, _at("09:31"))
+        _advance_volume_shadow(
+            engine,
+            qa_logger,
+            collector,
+            _at("09:31"),
+            engine_lock=threading.Lock(),
+        )
 
     assert stats.volume_shadow_advance_errors == 1
     assert stats.volume_shadow_snapshots == 0
     assert "advance_time failed" in caplog.text
     assert "advance boom" in caplog.text
+
+
+def test_event_and_timer_volume_engine_mutations_are_serialized() -> None:
+    event_entered = threading.Event()
+    release_event = threading.Event()
+    advance_entered = threading.Event()
+    second_lock_attempted = threading.Event()
+    snapshot = _snapshot()
+
+    class ObservedLock:
+        def __init__(self) -> None:
+            self._lock = threading.Lock()
+            self._attempt_lock = threading.Lock()
+            self._attempts = 0
+
+        def __enter__(self) -> object:
+            with self._attempt_lock:
+                self._attempts += 1
+                if self._attempts == 2:
+                    second_lock_attempted.set()
+            self._lock.acquire()
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            self._lock.release()
+
+    class BlockingEngine:
+        def on_event(self, _event: VolumeEvent) -> object:
+            event_entered.set()
+            assert release_event.wait(1)
+            return snapshot
+
+        def advance_time(self, _now: object) -> dict[str, object]:
+            advance_entered.set()
+            return {}
+
+    engine = BlockingEngine()
+    lock = ObservedLock()
+    qa_logger = SimpleNamespace(log_if_changed=lambda _value: False)
+    collector = SimpleNamespace(
+        stats=SimpleNamespace(
+            volume_shadow_snapshots=0, volume_shadow_advance_errors=0
+        )
+    )
+    handler = _volume_event_handler(
+        engine, qa_logger, lambda: None, engine_lock=lock
+    )
+    callback = threading.Thread(
+        target=handler, args=(_event("HPG", "HOSE", "09:30", 10),)
+    )
+    callback.start()
+    assert event_entered.wait(1)
+
+    timer = threading.Thread(
+        target=_advance_volume_shadow,
+        args=(engine, qa_logger, collector, _at("09:31")),
+        kwargs={"engine_lock": lock},
+    )
+    timer.start()
+    assert second_lock_attempted.wait(1)
+    assert not advance_entered.is_set()
+
+    release_event.set()
+    callback.join(1)
+    timer.join(1)
+    assert not callback.is_alive()
+    assert not timer.is_alive()
+    assert advance_entered.is_set()
 
 
 def test_qa_logger_only_logs_configured_symbols_once_per_same_state(
