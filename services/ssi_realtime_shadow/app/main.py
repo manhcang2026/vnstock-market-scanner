@@ -21,6 +21,33 @@ from .storage import SQLiteStore
 from .universe import load_universe
 
 LOG = logging.getLogger("ssi_shadow")
+MAIN_LOOP_HEARTBEAT_KEY = "main_loop_heartbeat_at"
+MAIN_LOOP_HEARTBEAT_INTERVAL_SECONDS = 10.0
+
+
+def _refresh_main_loop_heartbeat(
+    store: SQLiteStore,
+    now: datetime,
+    *,
+    monotonic_now: float,
+    last_refresh_monotonic: float | None,
+) -> float:
+    """Commit liveness evidence produced only by the operational main loop."""
+    if (
+        last_refresh_monotonic is not None
+        and monotonic_now - last_refresh_monotonic
+        < MAIN_LOOP_HEARTBEAT_INTERVAL_SECONDS
+    ):
+        return last_refresh_monotonic
+    local_now = (
+        now.replace(tzinfo=VN_TZ)
+        if now.tzinfo is None
+        else now.astimezone(VN_TZ)
+    )
+    timestamp = local_now.isoformat()
+    store.set_meta(MAIN_LOOP_HEARTBEAT_KEY, timestamp, timestamp)
+    store.commit()
+    return monotonic_now
 
 
 class VolumeShadowQALogger:
@@ -417,6 +444,12 @@ def main() -> int:
             settings.database_path,
         )
         stream_supervisor.start()
+        heartbeat_monotonic = _refresh_main_loop_heartbeat(
+            store,
+            started_at,
+            monotonic_now=time.monotonic(),
+            last_refresh_monotonic=None,
+        )
         for key, value in runtime_health().items():
             store.set_meta(key, str(value), started_at.isoformat())
         store.commit()
@@ -424,6 +457,13 @@ def main() -> int:
         last_stats_log = time.monotonic()
         while not stop_event.wait(1):
             now = datetime.now(VN_TZ)
+            loop_monotonic = time.monotonic()
+            heartbeat_monotonic = _refresh_main_loop_heartbeat(
+                store,
+                now,
+                monotonic_now=loop_monotonic,
+                last_refresh_monotonic=heartbeat_monotonic,
+            )
             stream_supervisor.tick(
                 now, stale_after_seconds=settings.stale_stream_seconds
             )

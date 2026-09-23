@@ -1,0 +1,11 @@
+[Unit]
+Description=Check CCC SSI collector main-loop health every minute
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=1min
+AccuracySec=10s
+Unit=ccc-ssi-watchdog.service
+
+[Install]
+WantedBy=timers.target

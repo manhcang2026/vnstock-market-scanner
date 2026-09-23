@@ -8,8 +8,10 @@ from types import SimpleNamespace
 import pytest
 
 from app.main import (
+    MAIN_LOOP_HEARTBEAT_KEY,
     VolumeShadowQALogger,
     _advance_volume_shadow,
+    _refresh_main_loop_heartbeat,
     _start_postgres_shadow,
     _stop_postgres_shadow,
     _start_volume_shadow,
@@ -17,6 +19,51 @@ from app.main import (
 )
 from app.realtime_volume import VolumeEvent
 from tests.test_realtime_volume import _at, _event
+
+
+def test_main_loop_heartbeat_refreshes_and_commits_on_interval() -> None:
+    class RecordingStore:
+        def __init__(self) -> None:
+            self.meta: list[tuple[str, str, str]] = []
+            self.commits = 0
+
+        def set_meta(self, key: str, value: str, updated_at: str) -> None:
+            self.meta.append((key, value, updated_at))
+
+        def commit(self) -> None:
+            self.commits += 1
+
+    store = RecordingStore()
+    first = _at("09:30")
+    second = _at("09:31")
+
+    refreshed_at = _refresh_main_loop_heartbeat(
+        store,
+        first,
+        monotonic_now=100.0,
+        last_refresh_monotonic=None,
+    )
+    unchanged_at = _refresh_main_loop_heartbeat(
+        store,
+        second,
+        monotonic_now=109.9,
+        last_refresh_monotonic=refreshed_at,
+    )
+    refreshed_again_at = _refresh_main_loop_heartbeat(
+        store,
+        second,
+        monotonic_now=110.0,
+        last_refresh_monotonic=unchanged_at,
+    )
+
+    assert refreshed_at == 100.0
+    assert unchanged_at == 100.0
+    assert refreshed_again_at == 110.0
+    assert store.commits == 2
+    assert store.meta == [
+        (MAIN_LOOP_HEARTBEAT_KEY, first.isoformat(), first.isoformat()),
+        (MAIN_LOOP_HEARTBEAT_KEY, second.isoformat(), second.isoformat()),
+    ]
 
 
 def _settings(tmp_path: Path, *, enabled: bool) -> SimpleNamespace:

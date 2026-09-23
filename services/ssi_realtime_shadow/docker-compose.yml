@@ -14,6 +14,20 @@ services:
       VOLUME_BASELINE_PATH: /app/data/ccc_v2_baseline.db
       MARKET_V2_DATABASE_PATH: /app/data/ccc_market_v2.db
       SSI_HISTORY_PATH: /app/data/ssi_history_2026.db
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -m
+        - app.watchdog_check
+        - --database
+        - /app/data/ssi_shadow.db
+        - --max-age-seconds
+        - "90"
+      interval: 30s
+      timeout: 5s
+      retries: 2
+      start_period: 180s
 
   chart-api:
     image: ccc-ssi-realtime:local

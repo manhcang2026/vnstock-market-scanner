@@ -1,0 +1,8 @@
+[Unit]
+Description=Restart stalled CCC SSI collector container
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/env bash /opt/ccc-realtime/app/services/ssi_realtime_shadow/ops/systemd/ccc-ssi-watchdog.sh
