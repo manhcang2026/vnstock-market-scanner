@@ -173,6 +173,120 @@ def test_minute_volume_uses_cumulative_delta(tmp_path: Path) -> None:
     store.close()
 
 
+class _ShadowSink:
+    def __init__(self, store: SQLiteStore, *, fail: bool = False) -> None:
+        self.store = store
+        self.fail = fail
+        self.quotes: list[object] = []
+        self.minutes: list[object] = []
+        self.auctions: list[object] = []
+
+    def _check(self) -> None:
+        assert not self.store._live_event_transaction
+        if self.fail:
+            raise RuntimeError("shadow enqueue failed")
+
+    def offer_live_quote(self, row: object) -> bool:
+        self._check()
+        self.quotes.append(row)
+        return True
+
+    def offer_minute_bar(self, row: object) -> bool:
+        self._check()
+        self.minutes.append(row)
+        return True
+
+    def offer_auction(self, row: object) -> bool:
+        self._check()
+        self.auctions.append(row)
+        return True
+
+    def health(self) -> dict[str, object]:
+        return {}
+
+
+def test_accepted_event_offers_complete_state_after_sqlite_transaction(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteStore(tmp_path / "accepted-shadow.db", commit_every_events=1)
+    sink = _ShadowSink(store)
+    collector = QuoteCollector(
+        {"HPG"}, store, started_at=started_at(8, 30), postgres_shadow_sink=sink
+    )
+
+    collector.on_message(market_event(TradingSession="ATO"))
+
+    assert collector.stats.accepted_events == 1
+    assert len(sink.quotes) == 1
+    assert len(sink.minutes) == 1
+    assert sink.quotes[0].source == "SSI_FASTCONNECT"
+    assert sink.minutes[0].source == "SSI_FASTCONNECT"
+    assert sink.minutes[0].volume == 1_000
+    assert sink.minutes[0].provider_total_volume == 1_000
+    store.close()
+
+
+def test_rejected_out_of_order_event_is_not_offered_to_postgres_shadow(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteStore(tmp_path / "rejected-shadow.db", commit_every_events=1)
+    sink = _ShadowSink(store)
+    collector = QuoteCollector(
+        {"HPG"}, store, started_at=started_at(8, 30), postgres_shadow_sink=sink
+    )
+    collector.on_message(market_event(Time="09:00:30", TotalVol=1_000))
+
+    collector.on_message(market_event(Time="09:00:20", TotalVol=1_100))
+
+    assert collector.stats.accepted_events == 1
+    assert collector.stats.rejected_out_of_order_events == 1
+    assert len(sink.quotes) == 1
+    assert len(sink.minutes) == 1
+    store.close()
+
+
+def test_shadow_offer_failure_does_not_reject_accepted_sqlite_event(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteStore(tmp_path / "fail-open-shadow.db", commit_every_events=1)
+    sink = _ShadowSink(store, fail=True)
+    collector = QuoteCollector(
+        {"HPG"}, store, started_at=started_at(8, 30), postgres_shadow_sink=sink
+    )
+
+    collector.on_message(market_event())
+
+    assert collector.stats.accepted_events == 1
+    assert collector.stats.postgres_shadow_offer_errors == 1
+    assert store.get_latest_quote("HPG", "2026-09-14") is not None
+    assert store.get_minute_bar_snapshot("HPG", "2026-09-14", "09:00") is not None
+    store.close()
+
+
+def test_auction_shadow_maps_local_bucket_types_to_ato_and_atc(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteStore(tmp_path / "auction-shadow.db", commit_every_events=1)
+    sink = _ShadowSink(store)
+    collector = QuoteCollector(
+        {"HPG"}, store, started_at=started_at(8, 30), postgres_shadow_sink=sink
+    )
+
+    collector.on_message(
+        market_event(Time="09:00:10", TradingSession="ATO", TotalVol=1_000)
+    )
+    collector.on_message(
+        market_event(Time="09:15:00", TradingSession="LO", TotalVol=1_100)
+    )
+    collector.on_message(
+        market_event(Time="14:30:10", TradingSession="ATC", TotalVol=1_200)
+    )
+
+    assert {row.auction_type for row in sink.auctions} == {"ATO", "ATC"}
+    assert all(row.source == "SSI_FASTCONNECT" for row in sink.auctions)
+    store.close()
+
+
 def test_outside_universe_is_ignored(tmp_path: Path) -> None:
     store = SQLiteStore(tmp_path / "test.db", commit_every_events=1)
     collector = QuoteCollector({"HPG"}, store)

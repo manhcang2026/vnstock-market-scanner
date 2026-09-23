@@ -364,6 +364,24 @@ class SQLiteStore:
                 has_gap=bool(row["has_gap"]),
             )
 
+    def get_minute_bar_snapshot(
+        self, symbol: str, trading_date: str, minute: str
+    ) -> dict[str, Any] | None:
+        """Return the complete canonical current minute for shadow mirroring."""
+        with self._lock:
+            row = self._conn.execute(
+                """
+                SELECT trading_date, minute, symbol, open, high, low, close,
+                       volume, last_total_volume, is_partial, exchange,
+                       quality_status, has_gap, data_source, provider_time,
+                       updated_at
+                FROM minute_bars
+                WHERE symbol=? AND trading_date=? AND minute=?
+                """,
+                (str(symbol or "").strip().upper(), trading_date, minute),
+            ).fetchone()
+            return dict(row) if row is not None else None
+
     def get_day_minute_prices(
         self, trading_date: str
     ) -> dict[str, list[MinutePrice]]:

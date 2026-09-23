@@ -23,6 +23,11 @@ def _env_int(name: str, default: int) -> int:
     return int(raw) if raw not in (None, "") else default
 
 
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    return float(raw) if raw not in (None, "") else default
+
+
 def _env_bool(name: str, default: bool) -> bool:
     raw = os.getenv(name)
     if raw is None or not raw.strip():
@@ -71,6 +76,11 @@ class Settings:
     market_v2_database_path: Path
     ssi_history_path: Path
     volume_shadow_symbols: tuple[str, ...]
+    postgres_shadow_enabled: bool
+    postgres_shadow_dsn: str
+    postgres_shadow_flush_seconds: float
+    postgres_shadow_batch_size: int
+    postgres_shadow_queue_size: int
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -82,10 +92,27 @@ class Settings:
         history_raw = _env("SSI_HISTORY_PATH", required=True)
         volume_engine_enabled = _env_bool("VOLUME_ENGINE_ENABLED", False)
         live_state_enabled = _env_bool("LIVE_STATE_ENABLED", False)
+        postgres_shadow_enabled = _env_bool("POSTGRES_SHADOW_ENABLED", False)
+        postgres_shadow_dsn = _env("POSTGRES_SHADOW_DSN", "").strip()
         if live_state_enabled and not volume_engine_enabled:
             raise RuntimeError(
                 "LIVE_STATE_ENABLED=true requires VOLUME_ENGINE_ENABLED=true"
             )
+        if postgres_shadow_enabled and not postgres_shadow_dsn:
+            raise RuntimeError(
+                "POSTGRES_SHADOW_DSN is required when POSTGRES_SHADOW_ENABLED=true"
+            )
+        postgres_shadow_flush_seconds = _env_float(
+            "POSTGRES_SHADOW_FLUSH_SECONDS", 1.0
+        )
+        postgres_shadow_batch_size = _env_int("POSTGRES_SHADOW_BATCH_SIZE", 500)
+        postgres_shadow_queue_size = _env_int("POSTGRES_SHADOW_QUEUE_SIZE", 10_000)
+        if postgres_shadow_flush_seconds <= 0:
+            raise RuntimeError("POSTGRES_SHADOW_FLUSH_SECONDS must be positive")
+        if postgres_shadow_batch_size <= 0:
+            raise RuntimeError("POSTGRES_SHADOW_BATCH_SIZE must be positive")
+        if postgres_shadow_queue_size <= 0:
+            raise RuntimeError("POSTGRES_SHADOW_QUEUE_SIZE must be positive")
         return cls(
             ssi_consumer_id=_env("SSI_CONSUMER_ID", required=True),
             ssi_consumer_secret=_env("SSI_CONSUMER_SECRET", required=True),
@@ -116,4 +143,9 @@ class Settings:
             volume_shadow_symbols=_symbol_list(
                 _env("VOLUME_SHADOW_SYMBOLS", "HPG,SHS,VGI")
             ),
+            postgres_shadow_enabled=postgres_shadow_enabled,
+            postgres_shadow_dsn=postgres_shadow_dsn,
+            postgres_shadow_flush_seconds=postgres_shadow_flush_seconds,
+            postgres_shadow_batch_size=postgres_shadow_batch_size,
+            postgres_shadow_queue_size=postgres_shadow_queue_size,
         )

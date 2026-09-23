@@ -108,3 +108,30 @@ def test_live_paths_use_service_path_helper(monkeypatch: pytest.MonkeyPatch) -> 
 
     assert settings.market_v2_database_path == ROOT / "fixtures/market.db"
     assert settings.ssi_history_path == ROOT / "fixtures/history.db"
+
+
+def test_postgres_shadow_defaults_disabled_and_dsn_is_optional(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _required_env(monkeypatch)
+    monkeypatch.delenv("POSTGRES_SHADOW_ENABLED", raising=False)
+    monkeypatch.delenv("POSTGRES_SHADOW_DSN", raising=False)
+
+    settings = Settings.from_env()
+
+    assert not settings.postgres_shadow_enabled
+    assert settings.postgres_shadow_dsn == ""
+    assert settings.postgres_shadow_flush_seconds == 1
+    assert settings.postgres_shadow_batch_size == 500
+    assert settings.postgres_shadow_queue_size == 10_000
+
+
+def test_postgres_shadow_enabled_requires_nonblank_dsn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _required_env(monkeypatch)
+    monkeypatch.setenv("POSTGRES_SHADOW_ENABLED", "true")
+    monkeypatch.setenv("POSTGRES_SHADOW_DSN", "  ")
+
+    with pytest.raises(RuntimeError, match="POSTGRES_SHADOW_DSN"):
+        Settings.from_env()

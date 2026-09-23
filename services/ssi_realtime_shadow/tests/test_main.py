@@ -9,6 +9,8 @@ import pytest
 from app.main import (
     VolumeShadowQALogger,
     _advance_volume_shadow,
+    _start_postgres_shadow,
+    _stop_postgres_shadow,
     _start_volume_shadow,
     _volume_event_handler,
 )
@@ -22,6 +24,46 @@ def _settings(tmp_path: Path, *, enabled: bool) -> SimpleNamespace:
         volume_baseline_path=tmp_path / "baseline.db",
         volume_shadow_symbols=("HPG", "SHS", "VGI"),
     )
+
+
+def _postgres_settings(*, enabled: bool) -> SimpleNamespace:
+    return SimpleNamespace(
+        postgres_shadow_enabled=enabled,
+        postgres_shadow_dsn="postgresql://test",
+        postgres_shadow_flush_seconds=1,
+        postgres_shadow_batch_size=500,
+        postgres_shadow_queue_size=10_000,
+    )
+
+
+def test_postgres_shadow_disabled_does_not_construct_writer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unexpected_writer(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("writer must not be constructed")
+
+    monkeypatch.setattr("app.main.PostgresShadowWriter", unexpected_writer)
+
+    assert _start_postgres_shadow(_postgres_settings(enabled=False)) is None
+
+
+def test_postgres_shadow_initialization_failure_is_fail_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def broken_writer(*_args: object, **_kwargs: object) -> object:
+        raise RuntimeError("bad configuration")
+
+    monkeypatch.setattr("app.main.PostgresShadowWriter", broken_writer)
+
+    assert _start_postgres_shadow(_postgres_settings(enabled=True)) is None
+
+
+def test_postgres_shadow_shutdown_failure_is_fail_open() -> None:
+    class BrokenWriter:
+        def stop(self) -> None:
+            raise RuntimeError("shutdown failed")
+
+    _stop_postgres_shadow(BrokenWriter())
 
 
 def _snapshot(

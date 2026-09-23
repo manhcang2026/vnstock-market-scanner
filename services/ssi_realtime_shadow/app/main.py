@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from .collector import QuoteCollector
 from .live_state_runtime import LiveStateRuntime
 from .market_session import VN_TZ, market_feed_stale
+from .postgres_shadow import PostgresShadowWriter
 from .realtime_volume import RealtimeVolumeEngine, VolumeEvent, VolumeSnapshot
 from .settings import Settings
 from .storage import SQLiteStore
@@ -98,6 +99,44 @@ def _start_volume_shadow(settings: Settings) -> RealtimeVolumeEngine | None:
     return engine
 
 
+def _start_postgres_shadow(settings: Settings) -> PostgresShadowWriter | None:
+    if not settings.postgres_shadow_enabled:
+        LOG.info("PostgreSQL shadow writer disabled")
+        return None
+    try:
+        writer = PostgresShadowWriter(
+            settings.postgres_shadow_dsn,
+            flush_seconds=settings.postgres_shadow_flush_seconds,
+            batch_size=settings.postgres_shadow_batch_size,
+            queue_size=settings.postgres_shadow_queue_size,
+        )
+        writer.start()
+    except Exception:
+        LOG.exception(
+            "PostgreSQL shadow writer failed to initialize; continuing SQLite runtime"
+        )
+        return None
+    LOG.info(
+        "PostgreSQL shadow writer enabled: flush_seconds=%s batch_size=%s "
+        "queue_size=%s",
+        settings.postgres_shadow_flush_seconds,
+        settings.postgres_shadow_batch_size,
+        settings.postgres_shadow_queue_size,
+    )
+    return writer
+
+
+def _stop_postgres_shadow(writer: PostgresShadowWriter | None) -> None:
+    if writer is None:
+        return
+    try:
+        writer.stop()
+    except Exception:
+        LOG.exception(
+            "PostgreSQL shadow shutdown failed; continuing normal shutdown"
+        )
+
+
 def _volume_event_handler(
     engine: RealtimeVolumeEngine,
     qa_logger: VolumeShadowQALogger,
@@ -166,6 +205,7 @@ def main() -> int:
     )
     started_at = datetime.now(VN_TZ)
     live_runtime: LiveStateRuntime | None = None
+    postgres_shadow = _start_postgres_shadow(settings)
     if settings.live_state_enabled and volume_engine is not None:
         try:
             live_runtime = LiveStateRuntime(
@@ -203,11 +243,29 @@ def main() -> int:
             "live_state_history_available": settings.ssi_history_path.is_file(),
         }
 
+    def runtime_health() -> dict[str, object]:
+        values = live_health()
+        if postgres_shadow is not None:
+            values.update(postgres_shadow.health())
+        else:
+            values.update(
+                {
+                    "postgres_shadow_enabled": settings.postgres_shadow_enabled,
+                    "postgres_shadow_started": False,
+                    "postgres_shadow_healthy": not settings.postgres_shadow_enabled,
+                    "postgres_shadow_connected": False,
+                    "postgres_shadow_accepting": False,
+                    "postgres_shadow_pending": 0,
+                }
+            )
+        return values
+
     # Universe loading remains after all local live-state hydration so the stream
     # cannot start before the runtime is ready.
     try:
         universe = load_universe(settings)
     except Exception:
+        _stop_postgres_shadow(postgres_shadow)
         if live_runtime is not None:
             live_runtime.close()
         store.close()
@@ -257,12 +315,13 @@ def main() -> int:
             store,
             started_at=started_at,
             volume_event_handler=volume_handler,
-            extra_stats_provider=live_health,
+            extra_stats_provider=runtime_health,
+            postgres_shadow_sink=postgres_shadow,
         )
         store.set_meta("started_at", started_at.isoformat(), started_at.isoformat())
         store.set_meta("channel", settings.ssi_channel, started_at.isoformat())
         store.set_meta("universe_size", str(len(universe)), started_at.isoformat())
-        for key, value in live_health().items():
+        for key, value in runtime_health().items():
             store.set_meta(key, str(value), started_at.isoformat())
         store.commit()
 
@@ -302,9 +361,8 @@ def main() -> int:
                 stats = collector.snapshot_stats()
                 LOG.info("collector stats: %s", stats)
                 store.set_meta("last_stats", str(stats), now.isoformat())
-                if live_runtime is not None:
-                    for key, value in live_runtime.health().items():
-                        store.set_meta(key, str(value), now.isoformat())
+                for key, value in runtime_health().items():
+                    store.set_meta(key, str(value), now.isoformat())
                 store.commit()
                 last_stats_log = time.monotonic()
 
@@ -316,10 +374,13 @@ def main() -> int:
             store.commit()
         finally:
             try:
-                if live_runtime is not None:
-                    live_runtime.close()
+                _stop_postgres_shadow(postgres_shadow)
             finally:
-                store.close()
+                try:
+                    if live_runtime is not None:
+                        live_runtime.close()
+                finally:
+                    store.close()
 
 
 if __name__ == "__main__":

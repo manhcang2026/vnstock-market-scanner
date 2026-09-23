@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable, Iterable
 
-from .auction import AuctionEvent, AuctionSessionAccumulator
+from .auction import AuctionEvent, AuctionSessionAccumulator, AuctionSessionBucket
 from .market_session import (
     VN_TZ,
     market_day_feed_start,
@@ -16,6 +16,12 @@ from .market_session import (
     normalize_exchange,
 )
 from .normalization import parse_trading_date
+from .postgres_shadow import (
+    AuctionSessionShadow,
+    LiveQuoteShadow,
+    MinuteBarShadow,
+    PostgresShadowSink,
+)
 from .realtime_volume import VolumeEvent
 from .storage import SQLiteStore
 
@@ -166,6 +172,7 @@ class CollectorStats:
     volume_shadow_snapshots: int = 0
     auction_projection_events: int = 0
     auction_projection_errors: int = 0
+    postgres_shadow_offer_errors: int = 0
     rejected_out_of_order_events: int = 0
     rejected_completed_minute_events: int = 0
     rejected_volume_engine_events: int = 0
@@ -181,6 +188,7 @@ class QuoteCollector:
         started_at: datetime | None = None,
         volume_event_handler: Callable[[VolumeEvent], object] | None = None,
         extra_stats_provider: Callable[[], dict[str, object]] | None = None,
+        postgres_shadow_sink: PostgresShadowSink | None = None,
     ) -> None:
         self.universe = universe
         self.store = store
@@ -192,7 +200,138 @@ class QuoteCollector:
         self.last_event_at: datetime | None = None
         self.volume_event_handler = volume_event_handler
         self.extra_stats_provider = extra_stats_provider
+        self.postgres_shadow_sink = postgres_shadow_sink
         self.auction_accumulator = AuctionSessionAccumulator()
+
+    def _offer_postgres_live_state(
+        self,
+        *,
+        quote: dict[str, Any],
+        trading_date: str,
+        minute: str,
+        event_at: datetime,
+        quality_status: str,
+        provider_session: str,
+        updated_at: str,
+    ) -> None:
+        sink = self.postgres_shadow_sink
+        if sink is None:
+            return
+        exchange = quote.get("exchange")
+        if not exchange:
+            LOG.warning(
+                "Skipping PostgreSQL shadow for accepted quote without exchange: %s",
+                quote["symbol"],
+            )
+            return
+        try:
+            minute_row = self.store.get_minute_bar_snapshot(
+                str(quote["symbol"]), trading_date, minute
+            )
+            if minute_row is None:
+                raise RuntimeError("canonical SQLite minute snapshot is unavailable")
+            updated_at_value = datetime.fromisoformat(updated_at)
+            minute_start = datetime.fromisoformat(
+                f"{trading_date}T{minute}:00"
+            ).replace(tzinfo=VN_TZ)
+            source_meta = {"local_source": "SSI_STREAM"}
+            sink.offer_live_quote(
+                LiveQuoteShadow(
+                    symbol=str(quote["symbol"]),
+                    exchange=str(exchange),
+                    trading_date=trading_date,
+                    last_price=quote.get("last_price"),
+                    cumulative_volume=quote.get("total_volume"),
+                    provider_session=provider_session or None,
+                    event_time=event_at,
+                    provider_time=event_at,
+                    quality_status=quality_status,
+                    source_meta=source_meta,
+                    updated_at=updated_at_value,
+                )
+            )
+            sink.offer_minute_bar(
+                MinuteBarShadow(
+                    symbol=str(minute_row["symbol"]),
+                    exchange=str(minute_row["exchange"] or exchange),
+                    trading_date=str(minute_row["trading_date"]),
+                    minute_of_day=str(minute_row["minute"]),
+                    minute_start=minute_start,
+                    open=float(minute_row["open"]),
+                    high=float(minute_row["high"]),
+                    low=float(minute_row["low"]),
+                    close=float(minute_row["close"]),
+                    volume=int(minute_row["volume"]),
+                    provider_total_volume=(
+                        int(minute_row["last_total_volume"])
+                        if minute_row["last_total_volume"] is not None
+                        else None
+                    ),
+                    provider_session=provider_session or None,
+                    provider_time=event_at,
+                    quality_status=str(minute_row["quality_status"]),
+                    is_partial=bool(minute_row["is_partial"]),
+                    source_meta=source_meta,
+                    updated_at=datetime.fromisoformat(
+                        str(minute_row["updated_at"])
+                    ),
+                )
+            )
+        except Exception:
+            self.stats.postgres_shadow_offer_errors += 1
+            LOG.exception(
+                "PostgreSQL shadow live-state offer failed open: symbol=%s minute=%s",
+                quote["symbol"],
+                minute,
+            )
+
+    def _offer_postgres_auction(self, bucket: AuctionSessionBucket) -> None:
+        sink = self.postgres_shadow_sink
+        if sink is None:
+            return
+        try:
+            auction_type = {
+                "OPEN_AUCTION": "ATO",
+                "CLOSE_AUCTION": "ATC",
+            }[bucket.auction_type]
+            sink.offer_auction(
+                AuctionSessionShadow(
+                    symbol=bucket.symbol,
+                    exchange=bucket.exchange,
+                    trading_date=bucket.trading_date,
+                    auction_type=auction_type,
+                    provider_session=bucket.provider_session or None,
+                    pre_auction_price=bucket.pre_auction_price,
+                    auction_price=bucket.auction_price,
+                    provider_total_volume_start=bucket.start_total_volume,
+                    provider_total_volume_end=bucket.end_total_volume,
+                    auction_volume=bucket.auction_volume,
+                    quality_status=bucket.quality_status,
+                    event_count=bucket.event_count,
+                    first_event_at=(
+                        datetime.fromisoformat(bucket.first_event_at)
+                        if bucket.first_event_at
+                        else None
+                    ),
+                    last_event_at=(
+                        datetime.fromisoformat(bucket.last_event_at)
+                        if bucket.last_event_at
+                        else None
+                    ),
+                    finalized=bucket.finalized,
+                    source_meta={
+                        "local_source": bucket.data_source,
+                        "out_of_order_events": bucket.out_of_order_events,
+                    },
+                    updated_at=datetime.fromisoformat(bucket.updated_at),
+                )
+            )
+        except Exception:
+            self.stats.postgres_shadow_offer_errors += 1
+            LOG.exception(
+                "PostgreSQL shadow auction offer failed open: symbol=%s",
+                getattr(bucket, "symbol", "<unknown>"),
+            )
 
     def _can_seed_from_zero(self, event_at: datetime, exchange: str | None) -> bool:
         if exchange is None or not market_feed_expected(event_at, exchange):
@@ -473,6 +612,15 @@ class QuoteCollector:
             )
             self.stats.accepted_events += 1
             self.last_event_at = now
+            self._offer_postgres_live_state(
+                quote=quote,
+                trading_date=trading_date,
+                minute=minute,
+                event_at=event_at,
+                quality_status=quality_status,
+                provider_session=provider_session,
+                updated_at=updated_at,
+            )
             if exchange is not None:
                 try:
                     if first_event_in_process:
@@ -517,6 +665,7 @@ class QuoteCollector:
                     )
                     for bucket in auction_result.updated_buckets:
                         self.store.upsert_auction_bucket(bucket.to_record())
+                        self._offer_postgres_auction(bucket)
                     self.stats.auction_projection_events += 1
                 except Exception:
                     self.stats.auction_projection_errors += 1
@@ -544,6 +693,9 @@ class QuoteCollector:
             "volume_shadow_snapshots": self.stats.volume_shadow_snapshots,
             "auction_projection_events": self.stats.auction_projection_events,
             "auction_projection_errors": self.stats.auction_projection_errors,
+            "postgres_shadow_offer_errors": (
+                self.stats.postgres_shadow_offer_errors
+            ),
             "rejected_out_of_order_events": self.stats.rejected_out_of_order_events,
             "rejected_completed_minute_events": (
                 self.stats.rejected_completed_minute_events
