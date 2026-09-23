@@ -10,3 +10,25 @@ __pycache__/
 # Local Python virtual environment
 .venv/
 venv/
+
+# Local environments / caches
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Local AI/reference folders
+.agent/
+.agents/
+
+# JS dependencies/build output
+node_modules/
+dist/
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Service-local test virtualenv
+services/ssi_realtime_shadow/.venv-test/

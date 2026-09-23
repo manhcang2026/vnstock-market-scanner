@@ -1,8 +1,9 @@
-import { supabase } from './supabase'
+import { publicSupabase } from './publicSupabase'
 
 let metadataPromise = null
+const METADATA_PAGE_SIZE = 1000
 
-function normalizeSearchText(value) {
+export function normalizeSearchText(value) {
   return String(value || '')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
@@ -14,18 +15,24 @@ function normalizeSearchText(value) {
     .toUpperCase()
 }
 
-async function loadStockMetadata() {
-  if (!supabase) return []
+export async function loadStockMetadata() {
+  if (!publicSupabase) return []
 
   if (!metadataPromise) {
-    metadataPromise = supabase
-      .from('stock_metadata')
-      .select('symbol,display_name,company_name,exchange')
-      .order('symbol')
-      .then(({ data, error }) => {
+    metadataPromise = (async () => {
+      const rows = []
+      for (let from = 0; ; from += METADATA_PAGE_SIZE) {
+        const { data, error } = await publicSupabase
+          .from('stock_metadata')
+          .select('symbol,display_name,company_name,exchange')
+          .order('symbol')
+          .range(from, from + METADATA_PAGE_SIZE - 1)
         if (error) throw error
-        return Array.isArray(data) ? data : []
-      })
+        const page = Array.isArray(data) ? data : []
+        rows.push(...page)
+        if (page.length < METADATA_PAGE_SIZE) return rows
+      }
+    })()
       .catch((error) => {
         metadataPromise = null
         throw error
@@ -69,4 +76,17 @@ export async function findUniqueStockByName(query) {
   if (best.length !== 1) return null
 
   return best[0].row
+}
+
+export async function findStockMetadataBySymbol(symbol) {
+  const normalizedSymbol = normalizeSearchText(symbol)
+  if (!normalizedSymbol || !publicSupabase) return null
+
+  const { data, error } = await publicSupabase
+    .from('stock_metadata')
+    .select('symbol,display_name,company_name,exchange')
+    .eq('symbol', normalizedSymbol)
+    .maybeSingle()
+  if (error) throw error
+  return data
 }

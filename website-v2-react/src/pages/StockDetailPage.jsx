@@ -1,7 +1,17 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
-import { fetchChart, fetchQuote, fetchTechnicalAccess } from '../lib/cccApi'
+import {
+  fetchCccIntelligence,
+  fetchChart,
+  fetchPublicStockContext,
+  fetchQuote,
+  fetchRadar,
+  fetchTechnicalAccess,
+} from '../lib/cccApi'
+import { fetchFinancialContext, fetchQuarterlyFinancials } from '../lib/financialData'
+import { findStockMetadataBySymbol } from '../lib/stockSearch'
+import StockDetailV3View from '../components/stock/StockDetailV3View'
 import '../styles/stock-detail.css'
 
 const TradingChart = lazy(() => import('../components/stock/TradingChart'))
@@ -43,8 +53,15 @@ function daysBetween(fromDate, toDate) {
 
 const CHART_CACHE_TTL_MS = 30_000
 const CHART_CACHE_MAX = 100
+const BACKGROUND_REFRESH_MS = 30_000
+const LIVE_RECONNECT_DELAYS_MS = [2_000, 4_000, 8_000, 16_000, 30_000]
 const chartResponseCache = new Map()
 const chartRequestCache = new Map()
+let nextChartAuthScope = 0
+let guestChartUnauthorized = false
+// A route remount or auth transition must not probe a known-missing endpoint again.
+// This is intentionally browser-memory only; a reload starts a fresh capability check.
+const unavailableCapabilities = { stockDetail: false, ccc: false, radar: false }
 
 function getCachedChart(key) {
   const item = chartResponseCache.get(key)
@@ -118,17 +135,35 @@ function abortError(error) {
   return error?.name === 'AbortError'
 }
 
+function chartFailure(error, token) {
+  if (error?.status === 401) return {
+    message: token
+      ? 'Phiên đăng nhập không còn hợp lệ. Hãy đăng nhập lại để xem biểu đồ.'
+      : 'Biểu đồ chưa sẵn sàng cho khách trên phiên bản API hiện tại.',
+    kind: 'neutral',
+  }
+  if (error?.status === 403) return {
+    message: 'Biểu đồ không nằm trong phạm vi được cấp quyền cho mã này.',
+    kind: 'neutral',
+  }
+  return { message: FRIENDLY_ERRORS.chart, kind: 'error' }
+}
+
+const FRIENDLY_ERRORS = {
+  quote: 'Giá thị trường tạm thời chưa sẵn sàng.',
+  publicContext: 'Bối cảnh MA tạm thời chưa sẵn sàng.',
+  financial: 'Dữ liệu cơ bản tạm thời chưa sẵn sàng.',
+  quarterly: 'Dữ liệu BCTC tạm thời chưa sẵn sàng.',
+  access: 'Chưa thể kiểm tra phạm vi CCC Technical.',
+  ccc: 'CCC Intelligence tạm thời chưa sẵn sàng.',
+  radar: 'CCC Radar tạm thời chưa sẵn sàng.',
+  chart: 'Biểu đồ giá tạm thời chưa sẵn sàng.',
+}
+
 // CCC_LIVE_WS_REACT_V1
 function liveWebSocketUrl() {
   const configured = import.meta.env.VITE_CCC_WS_URL
   if (configured) return configured
-
-  if (
-    window.location.hostname === 'localhost'
-    || window.location.hostname === '127.0.0.1'
-  ) {
-    return 'wss://chuyenchochung.com/api/v2/live'
-  }
 
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
   return `${protocol}//${window.location.host}/api/v2/live`
@@ -139,24 +174,66 @@ export default function StockDetailPage() {
   const symbol = normalizeSymbol(params.symbol)
   const validSymbol = SYMBOL_RE.test(symbol)
   const { user, accessToken, ready } = useAuth()
+  // An opaque, in-memory scope prevents cached protected bars crossing auth changes.
+  const chartAuthScope = useMemo(() => {
+    const kind = accessToken ? (user?.id ? 'member' : 'pending') : 'guest'
+    return `${++nextChartAuthScope}-${kind}`
+  }, [accessToken, user?.id])
+
+  useEffect(() => {
+    chartResponseCache.clear()
+    chartRequestCache.clear()
+  }, [chartAuthScope])
 
   const [resolution, setResolution] = useState(5)
+  const [activeDetailTab, setActiveDetailTab] = useState('overview')
+  const [metadataState, setMetadataState] = useState({ symbol: '', data: null })
   const [quoteState, setQuoteState] = useState({ symbol: '', data: null, error: '' })
-  const [accessState, setAccessState] = useState({ symbol: '', data: null, error: '' })
+  const [publicContextState, setPublicContextState] = useState({ symbol: '', data: null, error: '' })
+  const [capabilityUnavailable, setCapabilityUnavailable] = useState(() => ({ ...unavailableCapabilities }))
+  const markCapabilityUnavailable = (capability) => {
+    unavailableCapabilities[capability] = true
+    setCapabilityUnavailable((current) => ({ ...current, [capability]: true }))
+  }
+  const [accessState, setAccessState] = useState({ symbol: '', authToken: '', data: null, error: '' })
+  const [cccState, setCccState] = useState({ symbol: '', authToken: '', data: null, error: '', status: 0 })
+  const [radarState, setRadarState] = useState({ authToken: '', data: null, error: '', status: 0 })
+  const [financialState, setFinancialState] = useState({ symbol: '', data: null, error: '' })
+  const [quarterlyState, setQuarterlyState] = useState({ symbol: '', data: null, error: '' })
   const [chartState, setChartState] = useState({
     key: '',
     symbol: '',
     resolution: null,
+    authScope: 0,
     data: null,
     error: '',
+    errorKind: '',
   })
   const [historyDepth, setHistoryDepth] = useState({})
   const [liveState, setLiveState] = useState({
     symbol: '',
     resolution: null,
+    authScope: 0,
     candle: null,
     connected: false,
   })
+
+  useEffect(() => {
+    if (!validSymbol) return undefined
+
+    let active = true
+    findStockMetadataBySymbol(symbol)
+      .then((data) => {
+        if (active) setMetadataState({ symbol, data })
+      })
+      .catch(() => {
+        if (active) setMetadataState({ symbol, data: null })
+      })
+
+    return () => {
+      active = false
+    }
+  }, [symbol, validSymbol])
 
   useEffect(() => {
     if (!validSymbol) return undefined
@@ -169,7 +246,7 @@ export default function StockDetailPage() {
         setQuoteState({
           symbol,
           data: null,
-          error: error?.message || 'Không tải được giá thị trường.',
+          error: FRIENDLY_ERRORS.quote,
         })
       })
 
@@ -177,17 +254,65 @@ export default function StockDetailPage() {
   }, [symbol, validSymbol])
 
   useEffect(() => {
+    if (!validSymbol || unavailableCapabilities.stockDetail) return undefined
+    const controller = new AbortController()
+    fetchPublicStockContext(symbol, { signal: controller.signal })
+      .then((data) => setPublicContextState({ symbol, data, error: '' }))
+      .catch((error) => {
+        if (abortError(error)) return
+        if (error?.status === 404) {
+          markCapabilityUnavailable('stockDetail')
+          setPublicContextState({ symbol, data: null, error: '' })
+          return
+        }
+        setPublicContextState({
+          symbol,
+          data: null,
+          error: FRIENDLY_ERRORS.publicContext,
+        })
+      })
+    return () => controller.abort()
+  }, [symbol, validSymbol, capabilityUnavailable.stockDetail])
+
+  useEffect(() => {
+    if (!validSymbol) return undefined
+    let active = true
+    Promise.allSettled([
+      fetchFinancialContext(symbol),
+      fetchQuarterlyFinancials(symbol),
+    ]).then(([financialResult, quarterlyResult]) => {
+      if (!active) return
+      setFinancialState(financialResult.status === 'fulfilled'
+        ? { symbol, data: financialResult.value, error: '' }
+        : {
+            symbol,
+            data: null,
+            error: FRIENDLY_ERRORS.financial,
+          })
+      setQuarterlyState(quarterlyResult.status === 'fulfilled'
+        ? { symbol, data: quarterlyResult.value, error: '' }
+        : {
+            symbol,
+            data: null,
+            error: FRIENDLY_ERRORS.quarterly,
+          })
+    })
+    return () => { active = false }
+  }, [symbol, validSymbol])
+
+  useEffect(() => {
     if (!validSymbol || !ready || !accessToken) return undefined
 
     const controller = new AbortController()
     fetchTechnicalAccess(symbol, { token: accessToken, signal: controller.signal })
-      .then((data) => setAccessState({ symbol, data, error: '' }))
+      .then((data) => setAccessState({ symbol, authToken: accessToken, data, error: '' }))
       .catch((error) => {
         if (abortError(error)) return
         setAccessState({
           symbol,
+          authToken: accessToken,
           data: null,
-          error: error?.message || 'Không kiểm tra được quyền kỹ thuật.',
+          error: FRIENDLY_ERRORS.access,
         })
       })
 
@@ -196,8 +321,14 @@ export default function StockDetailPage() {
 
   const quote = quoteState.symbol === symbol ? quoteState.data : null
   const quoteError = quoteState.symbol === symbol ? quoteState.error : ''
-  const fetchedAccess = accessState.symbol === symbol ? accessState.data : null
-  const accessError = accessState.symbol === symbol ? accessState.error : ''
+  const metadata = metadataState.symbol === symbol ? metadataState.data : null
+  const metadataLoading = metadataState.symbol !== symbol
+  const accessStateIsCurrent = (
+    accessState.symbol === symbol
+    && accessState.authToken === accessToken
+  )
+  const fetchedAccess = accessStateIsCurrent ? accessState.data : null
+  const accessError = accessStateIsCurrent ? accessState.error : ''
 
   const access = useMemo(() => {
     if (!ready) return null
@@ -211,12 +342,166 @@ export default function StockDetailPage() {
     return fetchedAccess
   }, [ready, user, accessToken, fetchedAccess])
 
+  const cccBlockedStatus = cccState.symbol === symbol && cccState.authToken === accessToken
+    && [401, 403].includes(cccState.status) ? cccState.status : 0
+  const radarBlockedStatus = radarState.authToken === accessToken
+    && [401, 403].includes(radarState.status) ? radarState.status : 0
+
   useEffect(() => {
     if (
       !validSymbol
-      || !ready
+      || activeDetailTab !== 'technical'
       || !accessToken
       || !access?.technical_allowed
+      || unavailableCapabilities.ccc
+      || cccBlockedStatus
+    ) {
+      return undefined
+    }
+
+    let active = true
+    let controller
+    let timer
+
+    const load = () => {
+      if (document.visibilityState !== 'visible') return
+      controller?.abort()
+      controller = new AbortController()
+      fetchCccIntelligence(symbol, { token: accessToken, signal: controller.signal })
+        .then((data) => {
+          if (active) setCccState({ symbol, authToken: accessToken, data, error: '', status: 0 })
+        })
+        .catch((error) => {
+          if (active && !abortError(error)) {
+            if (error?.status === 404) {
+              markCapabilityUnavailable('ccc')
+              setCccState({ symbol, authToken: accessToken, data: null, error: '', status: 404 })
+              stop()
+              return
+            }
+            setCccState((current) => ({
+              symbol,
+              authToken: accessToken,
+              data: ![401, 403].includes(error?.status)
+                && current.symbol === symbol && current.authToken === accessToken
+                ? current.data
+                : null,
+              error: error?.status === 401
+                ? 'Phiên đăng nhập không còn hợp lệ.'
+                : error?.status === 403
+                  ? 'Mã này không nằm trong phạm vi CCC được cấp quyền.'
+                  : FRIENDLY_ERRORS.ccc,
+              status: error?.status || 0,
+            }))
+            if ([401, 403].includes(error?.status)) stop()
+          }
+        })
+    }
+
+    const stop = () => {
+      window.clearInterval(timer)
+      timer = undefined
+      controller?.abort()
+      controller = undefined
+    }
+
+    const start = () => {
+      if (document.visibilityState !== 'visible') return
+      window.clearInterval(timer)
+      load()
+      timer = window.setInterval(load, BACKGROUND_REFRESH_MS)
+    }
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') start()
+      else stop()
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    start()
+
+    return () => {
+      active = false
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      stop()
+    }
+  }, [
+    symbol,
+    validSymbol,
+    activeDetailTab,
+    accessToken,
+    access?.technical_allowed,
+    capabilityUnavailable.ccc,
+    cccBlockedStatus,
+  ])
+
+  useEffect(() => {
+    if (!ready || unavailableCapabilities.radar || radarBlockedStatus) return undefined
+
+    let active = true
+    let controller
+    let timer
+
+    const load = () => {
+      if (document.visibilityState !== 'visible') return
+      controller?.abort()
+      controller = new AbortController()
+      fetchRadar({ token: accessToken || undefined, signal: controller.signal })
+        .then((data) => {
+          if (active) setRadarState({ authToken: accessToken, data, error: '', status: 0 })
+        })
+        .catch((error) => {
+          if (active && !abortError(error)) {
+            if (error?.status === 404) {
+              markCapabilityUnavailable('radar')
+              setRadarState({ authToken: accessToken, data: null, error: '', status: 404 })
+              stop()
+              return
+            }
+            setRadarState((current) => ({
+              authToken: accessToken,
+              data: ![401, 403].includes(error?.status) && current.authToken === accessToken
+                ? current.data : null,
+              error: [401, 403].includes(error?.status) ? '' : FRIENDLY_ERRORS.radar,
+              status: error?.status || 0,
+            }))
+            if ([401, 403].includes(error?.status)) stop()
+          }
+        })
+    }
+
+    const stop = () => {
+      window.clearInterval(timer)
+      timer = undefined
+      controller?.abort()
+      controller = undefined
+    }
+
+    const start = () => {
+      if (document.visibilityState !== 'visible') return
+      window.clearInterval(timer)
+      load()
+      timer = window.setInterval(load, BACKGROUND_REFRESH_MS)
+    }
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') start()
+      else stop()
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    start()
+
+    return () => {
+      active = false
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      stop()
+    }
+  }, [ready, accessToken, capabilityUnavailable.radar, radarBlockedStatus])
+
+  useEffect(() => {
+    if (
+      !validSymbol
       || !ALLOWED_RESOLUTIONS.has(resolution)
     ) {
       return undefined
@@ -224,31 +509,88 @@ export default function StockDetailPage() {
 
     let socket
     let reconnectTimer
+    let retryIndex = 0
+    let reconnectImmediately = false
     let closedByEffect = false
+    let rejectedByServer = false
+
+    const canConnect = () => (
+      !closedByEffect
+      && !rejectedByServer
+      && document.visibilityState === 'visible'
+      && navigator.onLine !== false
+    )
+
+    const clearReconnectTimer = () => {
+      window.clearTimeout(reconnectTimer)
+      reconnectTimer = undefined
+    }
+
+    const markDisconnected = () => {
+      setLiveState((current) => (
+        current.symbol === symbol && current.resolution === resolution
+          ? { ...current, connected: false }
+          : current
+      ))
+    }
+
+    const scheduleReconnect = () => {
+      if (!canConnect() || reconnectTimer) return
+      const delay = LIVE_RECONNECT_DELAYS_MS[
+        Math.min(retryIndex, LIVE_RECONNECT_DELAYS_MS.length - 1)
+      ]
+      retryIndex += 1
+      reconnectTimer = window.setTimeout(() => {
+        reconnectTimer = undefined
+        connect()
+      }, delay)
+    }
 
     const connect = () => {
-      socket = new WebSocket(liveWebSocketUrl())
+      if (!canConnect()) return
+      if (
+        socket
+        && (
+          socket.readyState === WebSocket.CONNECTING
+          || socket.readyState === WebSocket.OPEN
+          || socket.readyState === WebSocket.CLOSING
+        )
+      ) {
+        return
+      }
 
-      socket.onopen = () => {
-        if (closedByEffect) return
+      clearReconnectTimer()
+      const currentSocket = new WebSocket(liveWebSocketUrl())
+      socket = currentSocket
 
-        socket.send(JSON.stringify({
+      currentSocket.onopen = () => {
+        if (socket !== currentSocket || !canConnect()) {
+          currentSocket.close(1000, 'connection paused')
+          return
+        }
+
+        retryIndex = 0
+        reconnectImmediately = false
+
+        currentSocket.send(JSON.stringify({
           type: 'subscribe',
+          channel: 'chart',
           symbol,
           resolution,
-          token: accessToken,
+          ...(accessToken ? { token: accessToken } : {}),
         }))
 
         setLiveState({
           symbol,
           resolution,
+          authScope: chartAuthScope,
           candle: null,
           connected: true,
         })
       }
 
-      socket.onmessage = (event) => {
-        if (closedByEffect) return
+      currentSocket.onmessage = (event) => {
+        if (socket !== currentSocket || !canConnect()) return
 
         let snapshot
         try {
@@ -276,54 +618,99 @@ export default function StockDetailPage() {
         setLiveState({
           symbol,
           resolution,
+          authScope: chartAuthScope,
           candle: snapshot.candle || null,
           connected: true,
         })
       }
 
-      socket.onclose = (event) => {
+      currentSocket.onclose = (event) => {
+        if (socket !== currentSocket) return
+        socket = undefined
+        markDisconnected()
         if (closedByEffect) return
+        if (event.code === 4401 || event.code === 4403) {
+          rejectedByServer = true
+          clearReconnectTimer()
+          return
+        }
 
-        setLiveState((current) => (
-          current.symbol === symbol && current.resolution === resolution
-            ? { ...current, connected: false }
-            : current
-        ))
-
-        if (event.code === 4401 || event.code === 4403) return
-        reconnectTimer = window.setTimeout(connect, 2000)
+        if (reconnectImmediately && canConnect()) {
+          reconnectImmediately = false
+          connect()
+        } else {
+          scheduleReconnect()
+        }
       }
 
-      socket.onerror = () => {
+      currentSocket.onerror = () => {
         // onclose handles reconnects; keep console noise out of the product UI.
       }
     }
 
-    connect()
+    const pauseConnection = (reason) => {
+      reconnectImmediately = false
+      clearReconnectTimer()
+      markDisconnected()
+      if (
+        socket
+        && socket.readyState !== WebSocket.CLOSED
+        && socket.readyState !== WebSocket.CLOSING
+      ) {
+        socket.close(1000, reason)
+      }
+    }
+
+    const resumeConnection = () => {
+      if (!canConnect()) return
+      clearReconnectTimer()
+      if (socket?.readyState === WebSocket.CLOSING) {
+        reconnectImmediately = true
+        return
+      }
+      connect()
+    }
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') resumeConnection()
+      else pauseConnection('page hidden')
+    }
+
+    const handleOnline = () => resumeConnection()
+    const handleOffline = () => pauseConnection('browser offline')
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    window.addEventListener('online', handleOnline)
+    window.addEventListener('offline', handleOffline)
+    resumeConnection()
 
     return () => {
       closedByEffect = true
-      window.clearTimeout(reconnectTimer)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      window.removeEventListener('online', handleOnline)
+      window.removeEventListener('offline', handleOffline)
+      clearReconnectTimer()
       socket?.close(1000, 'route change')
     }
   }, [
     symbol,
     validSymbol,
-    ready,
-    accessToken,
-    access?.technical_allowed,
     resolution,
+    accessToken,
+    chartAuthScope,
   ])
 
   const liveCandle = (
     liveState.symbol === symbol
     && liveState.resolution === resolution
+    && liveState.authScope === chartAuthScope
   ) ? liveState.candle : null
 
   const liveConnected = Boolean(
     liveState.connected
     && liveState.symbol === symbol
     && liveState.resolution === resolution
+    && liveState.authScope === chartAuthScope
   )
 
   const chartDate = quote?.trading_date || ''
@@ -334,18 +721,20 @@ export default function StockDetailPage() {
   const chartRequest = chartDate
     ? chartRequestFor(symbol, chartDate, resolution, effectiveLookbackDays)
     : { key: '', query: '', chartFrom: '' }
-  const chartKey = chartRequest.key
+  const chartKey = chartRequest.key ? `${chartAuthScope}:${chartRequest.key}` : ''
 
   useEffect(() => {
-    if (!validSymbol || !chartDate || !accessToken || !access?.technical_allowed) return undefined
+    if (!validSymbol || !chartDate) return undefined
     if (!ALLOWED_RESOLUTIONS.has(resolution)) return undefined
+
+    if (!accessToken && guestChartUnauthorized) return undefined
 
     let active = true
     loadChartCached({
       key: chartKey,
       symbol,
       query: chartRequest.query,
-      token: accessToken,
+      token: accessToken || undefined,
     })
       .then((data) => {
         if (active) {
@@ -353,21 +742,29 @@ export default function StockDetailPage() {
             key: chartKey,
             symbol,
             resolution,
+            authScope: chartAuthScope,
             data,
             error: '',
+            errorKind: '',
           })
         }
       })
       .catch((error) => {
+        if (!accessToken && error?.status === 401) guestChartUnauthorized = true
         if (!active) return
+        const failure = chartFailure(error, accessToken)
         setChartState((current) => ({
           key: chartKey,
           symbol,
           resolution,
-          data: current.symbol === symbol && current.resolution === resolution
+          authScope: chartAuthScope,
+          data: error?.status !== 401 && error?.status !== 403
+            && current.authScope === chartAuthScope
+            && current.symbol === symbol && current.resolution === resolution
             ? current.data
             : null,
-          error: error?.message || 'Không tải được biểu đồ.',
+          error: failure.message,
+          errorKind: failure.kind,
         }))
       })
 
@@ -382,34 +779,7 @@ export default function StockDetailPage() {
     chartRequest.query,
     resolution,
     accessToken,
-    access?.technical_allowed,
-  ])
-
-  useEffect(() => {
-    if (!validSymbol || !chartDate || !accessToken || !access?.technical_allowed) return undefined
-
-    const timer = window.setTimeout(() => {
-      for (const nextResolution of ALLOWED_RESOLUTIONS) {
-        if (nextResolution === resolution) continue
-        const next = chartRequestFor(symbol, chartDate, nextResolution)
-        if (getCachedChart(next.key)) continue
-        loadChartCached({
-          key: next.key,
-          symbol,
-          query: next.query,
-          token: accessToken,
-        }).catch(() => {})
-      }
-    }, 120)
-
-    return () => window.clearTimeout(timer)
-  }, [
-    symbol,
-    validSymbol,
-    chartDate,
-    resolution,
-    accessToken,
-    access?.technical_allowed,
+    chartAuthScope,
   ])
 
   if (!validSymbol) {
@@ -431,17 +801,23 @@ export default function StockDetailPage() {
       ? 'is-negative'
       : ''
 
-  const exactChart = chartState.key === chartKey ? chartState.data : null
+  const chartStateIsCurrent = chartState.authScope === chartAuthScope
+  const guestChartBlocked = !accessToken && guestChartUnauthorized
+  const exactChart = chartStateIsCurrent && chartState.key === chartKey ? chartState.data : null
   const reusableChart = (
+    chartStateIsCurrent
+    &&
     chartState.symbol === symbol
     && chartState.resolution === resolution
   ) ? chartState.data : null
-  const chart = exactChart || reusableChart
-  const chartError = chartState.key === chartKey && !chartState.data
-    ? chartState.error
-    : ''
+  const chart = guestChartBlocked ? null : exactChart || reusableChart
+  const chartError = guestChartBlocked
+    ? chartFailure({ status: 401 }, null).message
+    : chartStateIsCurrent && chartState.key === chartKey && !chartState.data
+      ? chartState.error
+      : ''
   const bars = Array.isArray(chart?.bars) ? chart.bars : []
-  const chartLoading = access?.technical_allowed && !chart && !chartError
+  const chartLoading = !chart && !chartError
   const loadingOlderHistory = Boolean(
     chart
     && chartState.symbol === symbol
@@ -472,188 +848,78 @@ export default function StockDetailPage() {
   }
 
   const accessLoading = ready && user && !fetchedAccess && !accessError
+  const cccStateIsCurrent = (
+    cccState.symbol === symbol
+    && cccState.authToken === accessToken
+  )
+  const radarStateIsCurrent = radarState.authToken === accessToken
+
+  let chartContent
+  if (chartError) {
+    chartContent = <div className={`detail-state${guestChartBlocked || chartState.errorKind === 'neutral' ? '' : ' is-error'}`}>{chartError}</div>
+  } else if (chartLoading) {
+    chartContent = <div className="detail-state">Đang tải biểu đồ kỹ thuật…</div>
+  } else {
+    chartContent = (
+      <Suspense fallback={<div className="detail-state">Đang tải chart engine…</div>}>
+        <TradingChart
+          key={`${chartAuthScope}:${symbol}:${resolution}`}
+          bars={bars}
+          resolution={resolution}
+          onResolutionChange={setResolution}
+          loading={chartLoading}
+          loadingOlder={loadingOlderHistory}
+          hasMoreHistory={hasMoreHistory}
+          onNeedOlderHistory={loadOlderHistory}
+          liveCandle={liveCandle}
+          liveConnected={liveConnected}
+        />
+      </Suspense>
+    )
+  }
 
   return (
-    <div className="page stock-detail-page">
-      <section className="stock-identity">
-        <div className="stock-identity-main">
-          <div className="stock-symbol-row">
-            <strong>{symbol}</strong>
-            {quote?.exchange ? <span>{quote.exchange}</span> : null}
-            {quote?.trading_session ? <span>Phiên {quote.trading_session}</span> : null}
-          </div>
-          <p>
-            Public Market Quote · nguồn {quote?.source || 'SSI'} · phiên {quote?.trading_date || '—'}
-          </p>
-        </div>
-        <Link className="back-to-scanner" to="/danh-sach">← Bộ quét</Link>
-      </section>
-
-      {quoteError ? (
-        <section className="stock-error-panel">
-          <strong>Không tải được Public Market Quote</strong>
-          <p>{quoteError}</p>
-        </section>
-      ) : (
-        <section className="quote-strip" aria-busy={quoteLoading}>
-          <article className="quote-primary">
-            <small>Giá hiện tại</small>
-            <strong className={changeClass}>{quoteLoading ? '…' : formatNumber(quote?.last_price)}</strong>
-            <span className={changeClass}>{quoteLoading ? 'Đang tải' : formatPercent(quote?.ratio_change)}</span>
-          </article>
-          <article>
-            <small>Khối lượng lũy kế</small>
-            <strong>{quoteLoading ? '…' : formatNumber(quote?.total_volume)}</strong>
-            <span>{quote?.event_time || '—'}</span>
-          </article>
-          <article>
-            <small>Tham chiếu</small>
-            <strong>{quoteLoading ? '…' : formatNumber(quote?.ref_price)}</strong>
-            <span>SSI_STREAM</span>
-          </article>
-          <article>
-            <small>Trong phiên</small>
-            <strong>{quoteLoading ? '…' : `${formatNumber(quote?.low)} – ${formatNumber(quote?.high)}`}</strong>
-            <span>O {formatNumber(quote?.open)} · C {formatNumber(quote?.close)}</span>
-          </article>
-        </section>
+    <StockDetailV3View
+      symbol={symbol}
+      metadata={metadata}
+      metadataLoading={metadataLoading}
+      quote={quote}
+      quoteLoading={quoteLoading}
+      quoteError={quoteError}
+      changeClass={changeClass}
+      formatNumber={formatNumber}
+      formatPercent={formatPercent}
+      chartContent={chartContent}
+      liveConnected={liveConnected}
+      activeDetailTab={activeDetailTab}
+      onActiveDetailTabChange={setActiveDetailTab}
+      ready={ready}
+      user={user}
+      accessLoading={accessLoading}
+      accessError={accessError}
+      access={access}
+      publicContext={publicContextState.symbol === symbol ? publicContextState.data : null}
+      publicContextError={publicContextState.symbol === symbol ? publicContextState.error : ''}
+      ccc={cccStateIsCurrent && access?.technical_allowed ? cccState.data : null}
+      cccError={cccStateIsCurrent ? cccState.error : ''}
+      cccUnavailable={capabilityUnavailable.ccc}
+      cccBlockedStatus={cccBlockedStatus}
+      cccLoading={Boolean(
+        activeDetailTab === 'technical'
+        && access?.technical_allowed
+        && !cccStateIsCurrent
+        && !capabilityUnavailable.ccc
       )}
-
-      <section className="stock-detail-grid">
-        <div className="stock-main-column">
-          <section className="detail-card">
-            <header className="detail-card-header">
-              <div>
-                <span className="detail-eyebrow">Price / Volume</span>
-                <h2>Biểu đồ kỹ thuật</h2>
-              </div>
-              {chart ? (
-                <div className="chart-source">
-                  {chart.count} bars · {Object.keys(chart.source_counts || {}).join(', ') || 'SSI'}
-                </div>
-              ) : null}
-            </header>
-
-            {!ready ? (
-              <div className="detail-state">Đang kiểm tra phiên đăng nhập…</div>
-            ) : !user ? (
-              <div className="technical-lock">
-                <strong>Đăng nhập để mở vùng kỹ thuật</strong>
-                <p>Giá thị trường vẫn công khai. Biểu đồ kỹ thuật được kiểm tra quyền ở server.</p>
-                <Link to="/dang-nhap">Đăng nhập</Link>
-              </div>
-            ) : accessLoading ? (
-              <div className="detail-state">Đang kiểm tra technical entitlement…</div>
-            ) : accessError ? (
-              <div className="detail-state is-error">{accessError}</div>
-            ) : access && !access.technical_allowed ? (
-              <div className="technical-lock">
-                <strong>CCC Technical Intelligence ngoài phạm vi hiện tại</strong>
-                <p>Public quote vẫn hiển thị. Backend không trả technical payload cho mã ngoài entitlement.</p>
-                <span>{access.reason || 'OUTSIDE_ENTITLEMENT'}</span>
-              </div>
-            ) : chartError ? (
-              <div className="detail-state is-error">{chartError}</div>
-            ) : chartLoading ? (
-              <div className="detail-state">Đang tải biểu đồ kỹ thuật…</div>
-            ) : (
-              <Suspense fallback={<div className="detail-state">Đang tải chart engine…</div>}>
-                <TradingChart
-                  key={`${symbol}:${resolution}`}
-                  bars={bars}
-                  resolution={resolution}
-                  onResolutionChange={setResolution}
-                  loading={chartLoading}
-                  loadingOlder={loadingOlderHistory}
-                  hasMoreHistory={hasMoreHistory}
-                  onNeedOlderHistory={loadOlderHistory}
-                  liveCandle={liveCandle}
-                  liveConnected={liveConnected}
-                />
-              </Suspense>
-            )}
-          </section>
-        </div>
-
-        <section className="detail-card signal-card">
-          <header className="detail-card-header">
-            <div>
-              <span className="detail-eyebrow">CCC Technical Intelligence</span>
-              <h2>Trạng thái CCC V2</h2>
-            </div>
-          </header>
-
-          {!ready ? (
-            <div className="signal-state-box is-neutral">Đang kiểm tra phiên…</div>
-          ) : !user ? (
-            <div className="signal-state-box is-locked">
-              <strong>Đăng nhập để xem</strong>
-              <span>Signal state là protected technical intelligence.</span>
-            </div>
-          ) : accessLoading ? (
-            <div className="signal-state-box is-neutral">Đang kiểm tra quyền…</div>
-          ) : access?.technical_allowed ? (
-            <>
-              <div className="signal-state-box is-pending">
-                <strong>Chờ Signal Engine V2 output</strong>
-                <span>Không dùng lại ý nghĩa 2/4 · 3/4 · 4/4 của V1.</span>
-              </div>
-              <div className="signal-heat-placeholder" aria-label="CCC heat bar đang chờ engine">
-                <span />
-                <span />
-                <span />
-                <span />
-              </div>
-              <dl className="technical-meta">
-                <div>
-                  <dt>Quyền kỹ thuật</dt>
-                  <dd>{access.reason || 'ALLOWED'}</dd>
-                </div>
-                <div>
-                  <dt>Plan</dt>
-                  <dd>{access.plan_code || '—'}</dd>
-                </div>
-                <div>
-                  <dt>VIP tạm thời</dt>
-                  <dd>{access.vip_day_active ? 'Đang hoạt động' : 'Không'}</dd>
-                </div>
-              </dl>
-            </>
-          ) : (
-            <div className="signal-state-box is-locked">
-              <strong>Ngoài phạm vi technical</strong>
-              <span>{access?.reason || 'OUTSIDE_ENTITLEMENT'}</span>
-            </div>
-          )}
-        </section>
-
-        <section className="detail-card data-trust-card">
-          <header className="detail-card-header">
-            <div>
-              <span className="detail-eyebrow">Data Trust</span>
-              <h2>Dữ liệu phiên</h2>
-            </div>
-          </header>
-          <dl className="technical-meta">
-            <div>
-              <dt>Quote source</dt>
-              <dd>{quote?.source || '—'}</dd>
-            </div>
-            <div>
-              <dt>Trading date</dt>
-              <dd>{quote?.trading_date || '—'}</dd>
-            </div>
-            <div>
-              <dt>Last event</dt>
-              <dd>{quote?.event_time || '—'}</dd>
-            </div>
-            <div>
-              <dt>Chart bars</dt>
-              <dd>{chart?.count ?? '—'}</dd>
-            </div>
-          </dl>
-        </section>
-      </section>
-    </div>
+      radar={radarStateIsCurrent && !capabilityUnavailable.radar ? radarState.data : null}
+      radarError={radarStateIsCurrent ? radarState.error : ''}
+      radarUnavailable={capabilityUnavailable.radar}
+      radarBlockedStatus={radarBlockedStatus}
+      financial={financialState.symbol === symbol ? financialState.data : null}
+      financialError={financialState.symbol === symbol ? financialState.error : ''}
+      financialLoading={financialState.symbol !== symbol}
+      quarterly={quarterlyState.symbol === symbol ? quarterlyState.data : null}
+      quarterlyError={quarterlyState.symbol === symbol ? quarterlyState.error : ''}
+      quarterlyLoading={quarterlyState.symbol !== symbol}
+    />
   )
 }

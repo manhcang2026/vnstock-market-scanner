@@ -1,50 +1,110 @@
-# VNStock Market Scanner — Backend v2
+﻿# Chuyện Chợ Chứng — CCC V3
 
-Backend mới phục vụ Dashboard quét 258 mã cổ phiếu Việt Nam.
+This repository contains the active V3 codebase for Chuyện Chợ Chứng.
 
-## Luồng chạy
+## Active source tree
 
-1. GAS trigger gọi GitHub Actions.
-2. Python lấy dữ liệu và tính toàn bộ chỉ báo.
-3. Python gửi bảng hoàn chỉnh tới GAS ingestion API để ghi Google Sheet.
-4. GAS `doGet()` chỉ đọc `Dashboard_Current` và trả JSON.
-5. Dashboard đọc JSON từ GAS.
+- `website-v2-react/`
+  - Current React V3 frontend.
+  - Despite the historical folder name, this is the active V3 frontend source.
+  - Do not use legacy `website/` or `website-next/`; those versions are preserved in Git history/tags only.
 
-## Lịch
+- `services/ssi_realtime_shadow/`
+  - Current SSI market-data backend/runtime.
+  - Contains SSI collector, market calculations, REST API and WebSocket runtime.
+  - Folder name is historical; do not rename it while VPS deployment still depends on it.
 
-- `daily-baseline.yml`: 01:00 hằng ngày, do GAS gọi.
-- `intraday-scan.yml`: mỗi 10 phút trong giờ giao dịch, do GAS gọi.
+- `infra/supabase-user-system/`
+  - Migrations/contracts that belong to the existing Supabase user/account system.
+  - This is the OLD Supabase project used for Auth, Watchlist, Package/VIP and entitlement.
 
-## Bốn tín hiệu
+- `supabase/`
+  - Reserved exclusively for the NEW `ccc-ssi-v2` temporary market PostgreSQL project.
+  - Never place OLD market migrations or OLD user-system migrations here.
 
-1. Giá hiện tại tăng từ 3% so với giá đóng cửa phiên gần nhất.
-2. Khối lượng lũy kế đạt từ 200% KLTB10.
-3. Giá hiện tại lớn hơn MA200.
-4. RVOL30 đạt từ 200%, so khối lượng 30 phút gần nhất với đúng khung giờ của tối đa 10 phiên trước.
+- `tools/financial/`
+  - Metadata / industry / fundamental / BCTC utility pipeline for the OLD Supabase project.
 
-RVOL30 tự tích lũy từ ngày triển khai và không tính xuyên giờ nghỉ trưa.
+## V3 architecture
 
-## Google Sheet
+### Market data
 
-Chạy `setupNewBackend()` một lần để tạo:
+SSI FastConnect is the only canonical market-data provider.
 
-- `Daily_Baseline`
-- `Intraday_Snapshots`
-- `Dashboard_Current`
-- `Run_Log`
+Do not mix providers.
+Do not fall back to legacy Supabase market data.
+Missing data is NULL / unavailable; missing data is never zero.
 
-## Cấu hình GAS Script Properties
+Runtime path:
 
-- `GITHUB_TOKEN`
-- `GAS_API_SECRET`
+Browser
+→ VPS REST `/api/v2/*` and WebSocket `/api/v2/live`
+→ SSI collector / CCC engine
+→ market persistence
 
-Điền `SPREADSHEET_ID` trong `gas/00_Config.gs`, sau đó deploy Web App.
+During V3 stabilization, market persistence is the NEW Supabase PostgreSQL project:
 
-## GitHub Secrets
+`ccc-ssi-v2`
 
-- `GAS_WEB_APP_URL`
-- `GAS_API_SECRET`
+This database is temporary and must remain portable PostgreSQL.
 
-## Cài trigger
+When V3 is stable, schema/data will be migrated PostgreSQL-to-PostgreSQL to the VPS.
+Frontend API and WebSocket contracts must not change because of that migration.
 
-Chạy `installBackendTriggers()` một lần trong GAS.
+### OLD Supabase
+
+The existing Supabase project remains responsible for:
+
+- Auth / sessions
+- Profiles
+- Watchlist
+- Plans / packages
+- Subscription / VIP access
+- Entitlement
+- Stock/company metadata
+- Industry metadata
+- Fundamental data
+- `financial_latest`
+- `financial_quarterly`
+- BCTC research
+
+It is not a market-data fallback for V3.
+
+### NEW Supabase
+
+`ccc-ssi-v2` is used only as a temporary V3 market database so the database can be inspected, audited and stabilized easily.
+
+Do not expose NEW Supabase directly to browser code.
+
+Do not put its privileged credentials in React/Vite source.
+
+## Frontend
+
+The current frontend is:
+
+`website-v2-react/`
+
+Browser-facing market requests remain same-origin:
+
+- `/api/v2/*`
+- `/api/v2/live`
+
+Do not point browser market-data code directly at the NEW Supabase project.
+
+The frontend may continue to use OLD Supabase for its approved user/account/public metadata/fundamental responsibilities.
+
+## Historical code
+
+Legacy GAS/GSheet, V1 frontend, V2 static frontend, old VNStock scanner and old market-data workflows were removed from the active V3 tree.
+
+They remain recoverable from Git history and safety tags.
+
+## Agent workflow
+
+Read:
+
+1. `AGENTS.md`
+2. `docs/workflow/CODEX_BUDGET_MODE.md`
+3. only the current architecture/product documents relevant to the task
+
+Do not scan historical Git branches unless explicitly requested.

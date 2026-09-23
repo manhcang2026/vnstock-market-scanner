@@ -1,268 +1,165 @@
-## CCC Market Data — Source of Truth
+﻿# AGENTS.md — Chuyện Chợ Chứng V3
 
-Before modifying CCC market-data ingestion, historical data, baseline,
-RVOL, ATO/ATC, EOD, current state, or signal baseline eligibility, read:
+These rules apply to coding/design agents working in this repository.
 
-`docs/architecture/CCC_DATA_PIPELINE_RESET_20260921.md`
+## 1. Current V3 sources
 
-If an older document, code comment, prompt, or implementation assumption
-conflicts with that document, the reset plan wins unless explicitly
-superseded.
+Active frontend:
 
-# AGENTS.md — Chuyện Chợ Chứng repository instructions
+`website-v2-react/`
 
-These rules apply to all coding/design agents working in this repository.
+Active SSI/backend runtime:
 
-## 1. Production frontend source of truth
+`services/ssi_realtime_shadow/`
 
-The current production frontend is:
+The folder names are historical. Do not rename them unless the current task explicitly requests it.
 
-```text
-website/
-```
+Legacy GAS/GSheet, `website/`, `website-next/`, root legacy `src/`, and old GitHub Actions are not V3 sources of truth.
 
-It is a static HawkHost frontend.
+## 2. Read only what is needed
 
-Do **not** assume the old React/Lovable `dashboard/` project exists or is production.
+Before coding:
 
-The obsolete `dashboard/` frontend was intentionally removed on 2026-08-20.
+1. read this file;
+2. read `docs/workflow/CODEX_BUDGET_MODE.md`;
+3. read only the architecture/product files directly relevant to the task;
+4. start from files supplied in the task.
 
-Before any frontend task, inspect:
+Do not scan the whole repository or Git history merely to rebuild context already supplied.
 
-- `website/index.html`
-- `website/VERSION.txt`
-- current versioned JS in `website/assets/`
-- current versioned CSS in `website/assets/`
+## 3. Market-data authority
 
-## 2. UI/UX standard
+SSI is the only canonical market-data provider for V3.
 
-Before modifying user-facing UI, read:
+Never silently mix providers.
 
-1. `docs/ui-ux/CCC_UIUX_MASTER.md`
-2. `docs/ui-ux/CCC_COMPONENT_RULES.md`
-3. relevant section in `docs/ui-ux/CCC_PAGE_PATTERNS.md`
-4. before completion: `docs/ui-ux/CCC_UIUX_QA_CHECKLIST.md`
+Never use OLD Supabase market tables as a fallback.
 
-CCC UI/UX Design System is authoritative.
+Missing market data means NULL / unavailable.
+Missing data is not zero.
 
-For the approved Phase 1 implementation, also read:
+## 4. Database ownership
 
-- `docs/ui-ux/CCC_LOVABLE_PHASE1_DESIGN_REFERENCE_v1.0.md`
-- `docs/ui-ux/CCC_PHASE1_DESIGN_PORT_CONTRACT_v1.0.md`
+### OLD Supabase
 
-## 3. Current production routes
+OLD Supabase owns user/account/product-supporting data such as:
 
-- `/`
-- `/danh-sach`
-- `/so-sanh-theo-nganh`
-- `/sang-loc-co-ban`
+- Auth / profiles
+- Watchlist
+- Plans / packages
+- subscriptions / VIP
+- entitlement
+- symbol/company/exchange/industry metadata
+- fundamental/BCTC data
 
-Do not delete or silently replace a production route during visual redesign.
+OLD Supabase migration material that remains relevant lives under:
 
-## 4. Real frontend data
+`infra/supabase-user-system/`
 
-Current website uses Supabase frontend data including:
+### NEW Supabase
 
-- `stock_snapshot`
-- `financial_latest`
-- `stock_metadata`
-- `financial_quarterly`
+The NEW project is:
 
-Do not fabricate production fields.
+`ccc-ssi-v2`
 
-## 5. Scanner core logic
+It is a temporary PostgreSQL market-data persistence and validation environment for V3.
 
-Current four scanner signals:
+Repository migration files for NEW belong under:
 
-- Giá tăng ≥ 3%
-- KL ngày ≥ 200% KLTB10
-- Trên MA200
-- RVOL30 ≥ 200%
+`supabase/`
 
-MA10 is reference/sort data, not a fifth signal.
+Do not place OLD Supabase migrations in `supabase/`.
 
-A visual redesign must not modify this logic.
+Do not expose NEW Supabase directly to frontend/browser code.
 
-## 6. Scanner universe
+The NEW database must remain portable PostgreSQL so it can later migrate to VPS PostgreSQL.
 
-Frontend actions must never remove a symbol from or stop collection in the backend scanner universe.
+## 5. Frontend/API boundary
 
-Filter/hide/watchlist operations are display/personalization only.
+Browser market-data requests use:
 
-## 7. Fundamental score
+- HTTP `/api/v2/*`
+- WebSocket `/api/v2/live`
 
-Do not normalize an incomplete score to 100 unless the approved business rule explicitly changes.
+The frontend must not depend on whether the backend market database is currently Supabase PostgreSQL or VPS PostgreSQL.
 
-Show score coverage / points available clearly.
+Database migration must not require a frontend API-contract rewrite.
 
-## 8. Light and Dark
+## 6. Runtime preservation
 
-Both are production features.
+The current VPS REST/WebSocket/chart runtime is already in use.
 
-All major UI changes must support and QA both themes.
+Do not delete or replace current SQLite/storage/runtime code merely because a new PostgreSQL layer is being designed.
 
-## 9. Mockup approval gate
+Migration must be staged:
 
-For a major visual redesign:
+1. preserve working runtime;
+2. build and validate NEW PostgreSQL persistence;
+3. switch backend storage safely;
+4. verify API/WS/chart behavior;
+5. remove obsolete runtime storage only after cutover is proven.
 
-- create PC mockup;
-- create mobile mockup;
-- include Light/Dark direction;
-- obtain Product Owner approval before implementing the major visual change.
+## 7. Core logic
 
-## 10. Lovable gate
+Do not change RVOL definitions, baseline math, MA logic, auction logic, signal thresholds, entitlement semantics or universe behavior unless explicitly requested.
 
-Lovable is optional.
+Production thresholds and proprietary CCC logic remain server-side.
 
-Lovable Phase 1 is a design reference only, not production/runtime source or implementation architecture.
+## 8. Security
 
-Never call/use Lovable without explicit Product Owner approval.
+Never commit:
 
-A reserve of up to 50 credits exists but is not permission to spend it.
+- database passwords;
+- service-role / secret keys;
+- SSI credentials;
+- private API credentials;
+- access tokens.
 
-Before using Lovable:
+Frontend may contain only browser-safe publishable configuration.
 
-1. propose exact task;
-2. explain advantage;
-3. estimate credits;
-4. wait for approval.
+## 9. Scope lock
 
-## LOVABLE ACCESS POLICY — HARD GATE
+When the task provides repository, branch, HEAD/base, folder or file allowlist:
 
-For this repository, Lovable is an external DESIGN REFERENCE.
+- use that scope;
+- do not rediscover the whole project;
+- do not edit unrelated files;
+- do not perform unrelated refactors.
 
-DEFAULT POLICY:
+If an out-of-scope dependency must be changed, explain why.
 
-Lovable access is READ-ONLY unless the Product Owner explicitly approves a specific write action in the current conversation.
+## 10. Testing
 
-### READ-ONLY ALLOWED WITHOUT NEW APPROVAL
+Visual frontend work:
+- do not start local server by default;
+- do not run browser/screenshot/full-build tests by default;
+- Product Owner performs real visual/runtime verification.
 
-Only for inspecting the already-approved Phase 1 reference:
+Core/backend/database/auth/security work:
+- run focused tests;
+- use broader validation when blast radius justifies it.
 
-- `get_project`
-- `list_files`
-- `read_file`
-- `list_messages`
-- `get_message`
-- `list_edits`
-- `get_diff`
-- `get_project_knowledge`
-- `get_workspace_knowledge`
+## 11. Git/deploy
 
-These actions may only be used to extract/reference existing Lovable data.
+Unless explicitly requested, do not:
 
-### FORBIDDEN WITHOUT EXPLICIT PRODUCT OWNER APPROVAL
+- commit;
+- push;
+- merge;
+- rebase;
+- switch branch;
+- deploy;
+- change VPS/production state.
 
-Never perform any Lovable action that can create, edit, mutate, publish, deploy, configure, upload, delete, connect, provision or otherwise change Lovable state unless the Product Owner explicitly approves THAT action.
+## 12. Completion report
 
-This includes, but is not limited to:
+Keep reports short:
 
-- `send_message`
-- `create_project`
-- deploy / publish actions
-- `set_project_knowledge`
-- `set_workspace_knowledge`
-- `enable_database`
-- database `INSERT` / `UPDATE` / `DELETE` / DDL
-- project visibility changes
-- connector changes
-- workspace/project skill updates
-- uploads
-- edits
-- deletes
-- any future Lovable tool with write/mutation semantics
+1. files changed;
+2. main changes;
+3. validation;
+4. Product Owner/runtime checks still pending;
+5. diff stat;
+6. necessary out-of-scope changes.
 
-IMPORTANT:
-
-- Plugin presence is NOT permission to write.
-- Previous approval for a different Lovable action is NOT reusable.
-- Previous Phase 1 approval is NOT permission for future writes.
-- Available Lovable credits are NOT permission to spend them.
-- Plan mode is NOT automatically read-only if the action can modify Lovable.
-- Never use `send_message` merely to inspect or analyze the project.
-- Never ask Lovable itself to perform extraction when read tools can retrieve the data.
-- If uncertain whether an action is read-only, treat it as WRITE and STOP.
-
-### REQUIRED WRITE APPROVAL
-
-Before any Lovable write action:
-
-1. Explain exactly what Lovable action is proposed.
-2. Explain what it will change.
-3. Wait for explicit Product Owner approval in the current conversation.
-4. Perform only the specifically approved action.
-
-If approval is absent:
-
-STOP and do not call the write action.
-
-### PHASE 1 EXTRACTION SPECIAL RULE
-
-For Lovable Phase 1 extraction:
-
-READ existing source/files/messages only.
-
-Do NOT:
-
-- send prompts/messages to Lovable
-- request Lovable to redesign anything
-- modify code
-- modify knowledge
-- deploy
-- publish
-- connect backend
-- use Lovable credits
-
-The extraction exists only to transfer the already-approved Phase 1 design reference into this repository.
-
-## UI/UX PRO MAX SKILL — SUPPORTING REFERENCE ONLY
-
-This repository may use the local UI/UX Pro Max skill under `.agent/`.
-
-The skill is a supporting design-intelligence tool only.
-
-It MUST NOT override:
-
-1. explicit Product Owner decisions;
-2. `CCC_PHASE1_DESIGN_PORT_CONTRACT_v1.0.md`;
-3. `CCC_LOVABLE_PHASE1_DESIGN_REFERENCE_v1.0.md`;
-4. `CCC_UIUX_MASTER.md`;
-5. `CCC_COMPONENT_RULES.md`;
-6. `CCC_PAGE_PATTERNS.md`.
-
-Use the skill to improve implementation quality, accessibility, responsive behavior, spacing, typography, usability and visual polish.
-
-Do NOT use the skill to reinterpret locked product rules, change the approved Phase 1 design direction, introduce a new design language, or redesign pages from personal preference.
-
-When the skill conflicts with a locked CCC rule:
-
-CCC rules win.
-
-## 11. Secrets
-
-Never place:
-
-- Supabase service-role key;
-- database password;
-- secret API credentials
-
-inside public frontend source.
-
-Do not replace a publishable frontend key with a privileged secret.
-
-## 12. Deployment/versioning
-
-For a production website release:
-
-- update `website/VERSION.txt`;
-- use explicit JS/CSS asset versioning/cache busting;
-- commit source to Git before/with deployment;
-- keep rollback possible.
-
-Do not make permanent HawkHost-only changes that are absent from Git.
-
-## 13. Completion
-
-A UI task is not complete because it looks good in one screenshot.
-
-Run the relevant items in `docs/ui-ux/CCC_UIUX_QA_CHECKLIST.md`.
+Stop when the requested task is complete.

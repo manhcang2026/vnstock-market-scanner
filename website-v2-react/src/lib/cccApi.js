@@ -1,4 +1,4 @@
-const API_BASE = import.meta.env.VITE_CCC_API_BASE || '/api/v2'
+const API_BASE = '/api/v2'
 
 async function requestJson(path, { token, signal } = {}) {
   const headers = {}
@@ -29,6 +29,22 @@ export function fetchQuote(symbol, options) {
 
 export function fetchTechnicalAccess(symbol, options) {
   return requestJson(`/access/${encodeURIComponent(symbol)}`, options)
+}
+
+export function fetchPublicStockContext(symbol, options) {
+  return requestJson(`/stock-detail/${encodeURIComponent(symbol)}`, options)
+}
+
+export function fetchCccIntelligence(symbol, options) {
+  return requestJson(`/ccc/${encodeURIComponent(symbol)}`, options)
+}
+
+export function fetchRadar(options) {
+  return requestJson('/radar', options)
+}
+
+export function fetchScanner(options) {
+  return requestJson('/scanner', options)
 }
 
 export function fetchChart(symbol, query = '', options) {

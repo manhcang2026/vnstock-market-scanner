@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
-import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../auth/AuthContext'
-import { findUniqueStockByName } from '../../lib/stockSearch'
+import { findStockMetadataBySymbol, findUniqueStockByName } from '../../lib/stockSearch'
+import StockDetailShell from './StockDetailShell'
 
 const navItems = [
   { to: '/', label: 'Tổng quan', short: 'Tổng quan' },
@@ -20,7 +21,10 @@ export default function AppShell() {
   const [theme, setTheme] = useState(() => localStorage.getItem('ccc-theme') || 'dark')
   const [searchBusy, setSearchBusy] = useState(false)
   const navigate = useNavigate()
+  const location = useLocation()
   const { user, ready } = useAuth()
+  const isStockDetail = /^\/co-phieu\/[^/]+\/?$/.test(location.pathname)
+  const isScanner = /^\/danh-sach\/?$/.test(location.pathname)
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -38,25 +42,39 @@ export default function AppShell() {
       return
     }
 
-    if (SYMBOL_RE.test(tickerQuery)) {
-      navigate(`/co-phieu/${encodeURIComponent(tickerQuery)}`)
-      return
-    }
-
     setSearchBusy(true)
     try {
-      const match = await findUniqueStockByName(rawQuery)
+      const exactTicker = SYMBOL_RE.test(tickerQuery)
+        ? await findStockMetadataBySymbol(tickerQuery)
+        : null
+      const match = exactTicker || await findUniqueStockByName(rawQuery)
       if (match?.symbol) {
         navigate(`/co-phieu/${encodeURIComponent(match.symbol)}`)
         return
       }
     } catch {
-      // Fall through to Scanner search when metadata lookup is unavailable.
+      navigate(`/danh-sach?q=${encodeURIComponent(rawQuery)}&lookup=unavailable`)
+      return
     } finally {
       setSearchBusy(false)
     }
 
-    navigate(`/danh-sach?q=${encodeURIComponent(tickerQuery)}`)
+    navigate(`/danh-sach?q=${encodeURIComponent(rawQuery)}`)
+  }
+
+  if (isStockDetail || isScanner) {
+    return (
+      <StockDetailShell
+        theme={theme}
+        onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+        onSearch={onSearch}
+        searchBusy={searchBusy}
+        user={user}
+        ready={ready}
+      >
+        <Outlet />
+      </StockDetailShell>
+    )
   }
 
   return (
