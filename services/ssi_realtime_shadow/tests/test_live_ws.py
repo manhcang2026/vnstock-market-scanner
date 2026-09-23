@@ -1,7 +1,11 @@
 from pathlib import Path
+import asyncio
+import json
 import sqlite3
 
-from app.live_ws import LiveSQLiteStore, _bucket_start
+from websockets.exceptions import ConnectionClosed
+
+from app.live_ws import LiveGateway, LiveSQLiteStore, _bucket_start
 
 
 def _make_db(path: Path) -> None:
@@ -112,3 +116,67 @@ def test_snapshot_builds_daily_candle(tmp_path: Path) -> None:
     assert candle["low"] == 72900
     assert candle["close"] == 73800
     assert candle["volume"] == 310000
+
+
+def test_public_chart_subscription_does_not_require_token(tmp_path: Path) -> None:
+    class FakeWebSocket:
+        async def recv(self):
+            return json.dumps({
+                "type": "subscribe",
+                "channel": "chart",
+                "symbol": "HPG",
+                "resolution": 15,
+            })
+
+    gateway = LiveGateway(store=LiveSQLiteStore(tmp_path / "missing.db"))
+    symbol, resolution, token = asyncio.run(
+        gateway._receive_subscription(FakeWebSocket())
+    )
+
+    assert (symbol, resolution, token) == ("HPG", 15, "")
+
+
+def test_anonymous_handler_enters_public_snapshot_path() -> None:
+    class SnapshotStore:
+        def __init__(self):
+            self.calls = []
+
+        def snapshot(self, *, symbol, resolution):
+            self.calls.append((symbol, resolution))
+            return {
+                "type": "snapshot",
+                "symbol": symbol,
+                "resolution": resolution,
+                "quote": None,
+                "candle": None,
+                "server_time": "2026-09-23T10:00:00+07:00",
+            }
+
+    class FakeWebSocket:
+        def __init__(self):
+            self.sent = []
+
+        async def recv(self):
+            return json.dumps({
+                "type": "subscribe",
+                "channel": "chart",
+                "symbol": "HPG",
+                "resolution": 15,
+            })
+
+        async def send(self, message):
+            self.sent.append(json.loads(message))
+            raise ConnectionClosed(None, None)
+
+        async def close(self, *, code, reason):
+            raise AssertionError(f"public subscription was rejected: {code} {reason}")
+
+    store = SnapshotStore()
+    websocket = FakeWebSocket()
+    gateway = LiveGateway(store=store)
+
+    asyncio.run(gateway.handler(websocket))
+
+    assert store.calls == [("HPG", 15)]
+    assert websocket.sent[0]["type"] == "snapshot"
+    assert websocket.sent[0]["symbol"] == "HPG"

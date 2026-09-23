@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-import hashlib
 import os
-import threading
-import time
 from dataclasses import dataclass
 
 import requests
@@ -23,6 +20,47 @@ class EntitlementServiceUnavailable(Exception):
     """The entitlement authority could not be reached or returned invalid data."""
 
 
+def _require_payload(payload: object, error_code: str) -> dict:
+    if not isinstance(payload, dict):
+        raise EntitlementServiceUnavailable(error_code)
+    return payload
+
+
+def _required_bool(payload: dict, key: str, error_code: str) -> bool:
+    value = payload.get(key)
+    if type(value) is not bool:
+        raise EntitlementServiceUnavailable(error_code)
+    return value
+
+
+def _optional_bool(
+    payload: dict,
+    key: str,
+    error_code: str,
+    *,
+    default: bool = False,
+) -> bool:
+    if key not in payload:
+        return default
+    return _required_bool(payload, key, error_code)
+
+
+def _required_string(payload: dict, key: str, error_code: str) -> str:
+    value = payload.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise EntitlementServiceUnavailable(error_code)
+    return value
+
+
+def _optional_string(payload: dict, key: str, error_code: str) -> str | None:
+    value = payload.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise EntitlementServiceUnavailable(error_code)
+    return value
+
+
 @dataclass(frozen=True)
 class TechnicalAccessDecision:
     symbol: str
@@ -35,18 +73,35 @@ class TechnicalAccessDecision:
     vip_day_ends_at: str | None = None
 
     @classmethod
-    def from_payload(cls, payload: dict) -> "TechnicalAccessDecision":
+    def from_payload(cls, payload: object) -> "TechnicalAccessDecision":
+        data = _require_payload(payload, "INVALID_ENTITLEMENT_RESPONSE")
         return cls(
-            symbol=str(payload.get("symbol") or "").upper(),
-            technical_allowed=bool(payload.get("technical_allowed")),
-            reason=str(payload.get("reason") or "UNKNOWN"),
-            plan_code=payload.get("plan_code"),
-            subscription_status=payload.get("subscription_status"),
-            effective_full_market_access=bool(
-                payload.get("effective_full_market_access", False)
+            symbol=_required_string(
+                data, "symbol", "INVALID_ENTITLEMENT_RESPONSE"
+            ).upper(),
+            technical_allowed=_required_bool(
+                data, "technical_allowed", "INVALID_ENTITLEMENT_RESPONSE"
             ),
-            vip_day_active=bool(payload.get("vip_day_active", False)),
-            vip_day_ends_at=payload.get("vip_day_ends_at"),
+            reason=_required_string(
+                data, "reason", "INVALID_ENTITLEMENT_RESPONSE"
+            ),
+            plan_code=_optional_string(
+                data, "plan_code", "INVALID_ENTITLEMENT_RESPONSE"
+            ),
+            subscription_status=_optional_string(
+                data, "subscription_status", "INVALID_ENTITLEMENT_RESPONSE"
+            ),
+            effective_full_market_access=_optional_bool(
+                data,
+                "effective_full_market_access",
+                "INVALID_ENTITLEMENT_RESPONSE",
+            ),
+            vip_day_active=_optional_bool(
+                data, "vip_day_active", "INVALID_ENTITLEMENT_RESPONSE"
+            ),
+            vip_day_ends_at=_optional_string(
+                data, "vip_day_ends_at", "INVALID_ENTITLEMENT_RESPONSE"
+            ),
         )
 
     def to_public_payload(self) -> dict:
@@ -60,6 +115,47 @@ class TechnicalAccessDecision:
             "vip_day_active": self.vip_day_active,
             "vip_day_ends_at": self.vip_day_ends_at,
         }
+
+
+@dataclass(frozen=True)
+class TechnicalAccessScope:
+    effective_full_market_access: bool
+    vip_day_active: bool
+    allowed_symbols: frozenset[str]
+    plan_code: str | None = None
+    subscription_status: str | None = None
+    vip_day_ends_at: str | None = None
+
+    @classmethod
+    def from_payload(cls, payload: object) -> "TechnicalAccessScope":
+        data = _require_payload(payload, "INVALID_SCOPE_RESPONSE")
+        symbols = data.get("allowed_symbols")
+        if not isinstance(symbols, list) or any(
+            not isinstance(symbol, str) or not symbol.strip() for symbol in symbols
+        ):
+            raise EntitlementServiceUnavailable("INVALID_SCOPE_RESPONSE")
+        return cls(
+            effective_full_market_access=_required_bool(
+                data,
+                "effective_full_market_access",
+                "INVALID_SCOPE_RESPONSE",
+            ),
+            vip_day_active=_required_bool(
+                data, "vip_day_active", "INVALID_SCOPE_RESPONSE"
+            ),
+            allowed_symbols=frozenset(
+                symbol.strip().upper() for symbol in symbols
+            ),
+            plan_code=_optional_string(
+                data, "plan_code", "INVALID_SCOPE_RESPONSE"
+            ),
+            subscription_status=_optional_string(
+                data, "subscription_status", "INVALID_SCOPE_RESPONSE"
+            ),
+            vip_day_ends_at=_optional_string(
+                data, "vip_day_ends_at", "INVALID_SCOPE_RESPONSE"
+            ),
+        )
 
 
 def extract_bearer_token(value: str | None) -> str | None:
@@ -90,8 +186,6 @@ class SupabaseEntitlementClient:
         supabase_url: str | None = None,
         supabase_key: str | None = None,
         timeout_seconds: float = 2.5,
-        cache_ttl_seconds: float = 10.0,
-        cache_max_entries: int = 2048,
         session: requests.Session | None = None,
     ) -> None:
         self.supabase_url = (
@@ -101,59 +195,13 @@ class SupabaseEntitlementClient:
             supabase_key or os.getenv("SUPABASE_KEY") or DEFAULT_SUPABASE_KEY
         )
         self.timeout_seconds = float(timeout_seconds)
-        self.cache_ttl_seconds = max(0.0, float(cache_ttl_seconds))
-        self.cache_max_entries = max(32, int(cache_max_entries))
         self.session = session or requests.Session()
-        self._cache: dict[str, tuple[float, TechnicalAccessDecision]] = {}
-        self._lock = threading.Lock()
-
-    @staticmethod
-    def _cache_key(token: str, symbol: str) -> str:
-        token_digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
-        return f"{token_digest}:{symbol.upper()}"
-
-    def _get_cached(self, key: str) -> TechnicalAccessDecision | None:
-        if self.cache_ttl_seconds <= 0:
-            return None
-        now = time.monotonic()
-        with self._lock:
-            item = self._cache.get(key)
-            if item is None:
-                return None
-            expires_at, decision = item
-            if expires_at <= now:
-                self._cache.pop(key, None)
-                return None
-            return decision
-
-    def _put_cached(self, key: str, decision: TechnicalAccessDecision) -> None:
-        if self.cache_ttl_seconds <= 0:
-            return
-        now = time.monotonic()
-        with self._lock:
-            if len(self._cache) >= self.cache_max_entries:
-                expired = [
-                    cache_key
-                    for cache_key, (expires_at, _) in self._cache.items()
-                    if expires_at <= now
-                ]
-                for cache_key in expired:
-                    self._cache.pop(cache_key, None)
-                if len(self._cache) >= self.cache_max_entries:
-                    # Small bounded cache: simple full reset is safer than unbounded growth.
-                    self._cache.clear()
-            self._cache[key] = (now + self.cache_ttl_seconds, decision)
 
     def check(self, *, token: str | None, symbol: str) -> TechnicalAccessDecision:
         if not token:
             raise AuthenticationRequired("AUTH_REQUIRED")
 
         normalized_symbol = str(symbol or "").strip().upper()
-        key = self._cache_key(token, normalized_symbol)
-        cached = self._get_cached(key)
-        if cached is not None:
-            return cached
-
         endpoint = f"{self.supabase_url}/rest/v1/rpc/get_my_technical_access"
         headers = {
             "apikey": self.supabase_key,
@@ -184,9 +232,37 @@ class SupabaseEntitlementClient:
         except ValueError as exc:
             raise EntitlementServiceUnavailable("INVALID_ENTITLEMENT_RESPONSE") from exc
 
-        if not isinstance(payload, dict) or "technical_allowed" not in payload:
-            raise EntitlementServiceUnavailable("INVALID_ENTITLEMENT_RESPONSE")
+        return TechnicalAccessDecision.from_payload(payload)
 
-        decision = TechnicalAccessDecision.from_payload(payload)
-        self._put_cached(key, decision)
-        return decision
+    def scope(self, *, token: str | None) -> TechnicalAccessScope:
+        """Resolve full-market or active Watchlist scope in one server call."""
+        if not token:
+            raise AuthenticationRequired("AUTH_REQUIRED")
+
+        endpoint = f"{self.supabase_url}/rest/v1/rpc/get_my_technical_scope"
+        headers = {
+            "apikey": self.supabase_key,
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        }
+        try:
+            response = self.session.post(
+                endpoint,
+                headers=headers,
+                json={},
+                timeout=self.timeout_seconds,
+            )
+        except requests.RequestException as exc:
+            raise EntitlementServiceUnavailable("SUPABASE_UNAVAILABLE") from exc
+
+        if response.status_code in (401, 403):
+            raise AuthenticationRequired("INVALID_OR_EXPIRED_SESSION")
+        if response.status_code >= 400:
+            raise EntitlementServiceUnavailable(
+                f"TECHNICAL_SCOPE_RPC_HTTP_{response.status_code}"
+            )
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise EntitlementServiceUnavailable("INVALID_SCOPE_RESPONSE") from exc
+        return TechnicalAccessScope.from_payload(payload)
