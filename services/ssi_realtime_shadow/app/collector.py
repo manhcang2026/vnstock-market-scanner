@@ -7,6 +7,11 @@ from datetime import datetime
 from typing import Any, Callable, Iterable
 
 from .auction import AuctionEvent, AuctionSessionAccumulator
+from .canonical_market_store import (
+    CanonicalMarketStore,
+    RealtimeMarketEvent,
+    RealtimeWriteResult,
+)
 from .market_session import (
     VN_TZ,
     market_day_feed_start,
@@ -43,6 +48,11 @@ def _to_float(value: Any) -> float | None:
         return None
 
 
+def _to_positive_float(value: Any) -> float | None:
+    parsed = _to_float(value)
+    return parsed if parsed is not None and parsed > 0 else None
+
+
 def _to_int(value: Any) -> int | None:
     if value in (None, ""):
         return None
@@ -63,6 +73,19 @@ def _parse_time(value: Any, fallback: datetime) -> tuple[str, str]:
         except ValueError:
             pass
     return fallback.strftime("%H:%M:%S"), fallback.strftime("%H:%M")
+
+
+def _parse_provider_time(value: Any) -> tuple[str, str] | None:
+    if value in (None, ""):
+        return None
+    text = str(value).strip()
+    for fmt in ("%H:%M:%S", "%H:%M:%S.%f", "%H%M%S"):
+        try:
+            parsed = datetime.strptime(text, fmt)
+            return parsed.strftime("%H:%M:%S"), parsed.strftime("%H:%M")
+        except ValueError:
+            pass
+    return None
 
 
 def _first_non_empty(mapping: dict[str, Any], *names: str) -> Any:
@@ -153,6 +176,16 @@ def _extract_payloads(message: Any) -> Iterable[dict[str, Any]]:
 @dataclass
 class CollectorStats:
     received_messages: int = 0
+    identified_events: int = 0
+    canonical_events_written: int = 0
+    partial_events_written: int = 0
+    late_events_merged: int = 0
+    latest_quote_updates: int = 0
+    latest_quote_skipped_late: int = 0
+    auction_events_processed: int = 0
+    post_commit_projection_errors: int = 0
+    malformed_identity_events: int = 0
+    canonical_write_errors: int = 0
     accepted_events: int = 0
     ignored_outside_universe: int = 0
     ignored_without_price: int = 0
@@ -176,11 +209,16 @@ class QuoteCollector:
     def __init__(
         self,
         universe: set[str],
-        store: SQLiteStore,
+        store: SQLiteStore | None,
         *,
         started_at: datetime | None = None,
         volume_event_handler: Callable[[VolumeEvent], object] | None = None,
         extra_stats_provider: Callable[[], dict[str, object]] | None = None,
+        canonical_store: CanonicalMarketStore | None = None,
+        post_commit_hook: Callable[
+            [RealtimeMarketEvent, RealtimeWriteResult], object
+        ]
+        | None = None,
     ) -> None:
         self.universe = universe
         self.store = store
@@ -192,6 +230,8 @@ class QuoteCollector:
         self.last_event_at: datetime | None = None
         self.volume_event_handler = volume_event_handler
         self.extra_stats_provider = extra_stats_provider
+        self.canonical_store = canonical_store
+        self.post_commit_hook = post_commit_hook
         self.auction_accumulator = AuctionSessionAccumulator()
 
     def _can_seed_from_zero(self, event_at: datetime, exchange: str | None) -> bool:
@@ -215,6 +255,7 @@ class QuoteCollector:
         for payload in payloads:
             symbol = str(_first(payload, "Symbol") or "").strip().upper()
             if not symbol:
+                self.stats.malformed_identity_events += 1
                 continue
             if symbol not in self.universe:
                 self.stats.ignored_outside_universe += 1
@@ -238,6 +279,7 @@ class QuoteCollector:
             trading_date = parse_trading_date(raw_trading_date, fallback=now.date())
             if trading_date is None:
                 self.stats.ignored_malformed_trading_date += 1
+                self.stats.malformed_identity_events += 1
                 LOG.warning(
                     "Ignoring SSI payload for %s: malformed TradingDate=%r",
                     symbol,
@@ -254,13 +296,42 @@ class QuoteCollector:
                 )
                 continue
 
-            event_time, minute = _parse_time(_first(payload, "Time"), now)
+            raw_event_time = _first(payload, "Time")
+            parsed_provider_time = _parse_provider_time(raw_event_time)
+            if self.canonical_store is not None and parsed_provider_time is None:
+                self.stats.malformed_identity_events += 1
+                LOG.warning(
+                    "Ignoring SSI payload for %s: unusable Time=%r",
+                    symbol,
+                    raw_event_time,
+                )
+                continue
+            event_time, minute = parsed_provider_time or _parse_time(raw_event_time, now)
             event_at = _event_datetime(trading_date, event_time)
-            last_price = _to_float(_first(payload, "LastPrice", "Close"))
+            last_price = _to_positive_float(_first(payload, "LastPrice"))
+            if last_price is None:
+                last_price = _to_positive_float(_first(payload, "Close"))
             total_volume = _to_int(_first(payload, "TotalVol", "TotalVolume"))
             provider_session = str(
                 _first(payload, "TradingSession") or ""
             ).strip().upper()
+
+            self.stats.identified_events += 1
+            if self.canonical_store is not None:
+                self._persist_canonical_event(
+                    payload=payload,
+                    symbol=symbol,
+                    exchange=exchange,
+                    trading_date=trading_date,
+                    event_time=event_time,
+                    minute=minute,
+                    event_at=event_at,
+                    price=(last_price if last_price is not None and last_price > 0 else None),
+                    total_volume=total_volume,
+                    provider_session=provider_session,
+                    observed_at=now,
+                )
+                continue
 
             if last_price is None or last_price <= 0:
                 self.stats.ignored_without_price += 1
@@ -526,9 +597,207 @@ class QuoteCollector:
                         provider_session,
                     )
 
+    def _persist_canonical_event(
+        self,
+        *,
+        payload: dict[str, Any],
+        symbol: str,
+        exchange: str | None,
+        trading_date: str,
+        event_time: str,
+        minute: str,
+        event_at: datetime,
+        price: float | None,
+        total_volume: int | None,
+        provider_session: str,
+        observed_at: datetime,
+    ) -> None:
+        assert self.canonical_store is not None
+        event = RealtimeMarketEvent(
+            symbol=symbol,
+            trading_date=trading_date,
+            event_at=event_at,
+            minute=minute,
+            exchange=exchange,
+            price=price,
+            total_volume=total_volume,
+            provider_session=provider_session,
+            ref_price=_to_positive_float(_first(payload, "RefPrice")),
+            open=_to_positive_float(_first(payload, "Open")),
+            high=_to_positive_float(_first(payload, "High")),
+            low=_to_positive_float(_first(payload, "Low")),
+            close=_to_positive_float(_first(payload, "Close")),
+            bid_price1=_to_positive_float(_first(payload, "BidPrice1")),
+            bid_vol1=_to_int(_first(payload, "BidVol1")),
+            ask_price1=_to_positive_float(_first(payload, "AskPrice1")),
+            ask_vol1=_to_int(_first(payload, "AskVol1")),
+            change=_to_float(_first(payload, "Change")),
+            ratio_change=_to_float(_first(payload, "RatioChange")),
+            trading_status=str(_first(payload, "TradingStatus") or "") or None,
+            seed_volume_from_zero=self._can_seed_from_zero(event_at, exchange),
+        )
+        try:
+            result = self.canonical_store.write_realtime_event(
+                event, observed_at=observed_at
+            )
+        except ValueError:
+            self.stats.malformed_identity_events += 1
+            LOG.exception(
+                "Ignoring SSI event with unusable canonical identity: symbol=%s time=%s",
+                symbol,
+                event_time,
+            )
+            return
+        except Exception:
+            self.stats.canonical_write_errors += 1
+            LOG.exception(
+                "Canonical SSI persistence failed: symbol=%s minute=%s",
+                symbol,
+                minute,
+            )
+            return
+
+        self.stats.canonical_events_written += 1
+        self.stats.accepted_events += 1
+        if result.partial_event:
+            self.stats.partial_events_written += 1
+        if result.late_event:
+            self.stats.late_events_merged += 1
+        if result.latest_quote_updated:
+            self.stats.latest_quote_updates += 1
+        elif result.late_event:
+            self.stats.latest_quote_skipped_late += 1
+        if provider_session in {"ATO", "ATC"}:
+            self.stats.auction_events_processed += 1
+        diagnostic_session = provider_session or "<EMPTY>"
+        self.stats.provider_session_counts[diagnostic_session] = (
+            self.stats.provider_session_counts.get(diagnostic_session, 0) + 1
+        )
+        self.last_event_at = observed_at
+
+        # Transitional hot storage and all calculations are projections. The
+        # canonical yearly shard is already committed before any code below runs.
+        if self.store is not None and price is not None and not result.late_event:
+            try:
+                updated_at = observed_at.isoformat()
+                with self.store.live_event_transaction():
+                    self.store.upsert_minute_bar(
+                        trading_date=trading_date,
+                        minute=minute,
+                        symbol=symbol,
+                        price=price,
+                        volume_delta=result.volume_delta,
+                        total_volume=result.effective_total_volume,
+                        is_partial=result.partial_event,
+                        exchange=exchange,
+                        quality_status=(
+                            "VOLUME_REGRESSION"
+                            if result.volume_regression
+                            else "PARTIAL" if result.partial_event else "TRUSTED"
+                        ),
+                        has_gap=False,
+                        gap_from=None,
+                        gap_to=None,
+                        updated_at=updated_at,
+                        event_time=event_time,
+                    )
+                    self.store.upsert_latest_quote(
+                        {
+                            "symbol": symbol,
+                            "trading_date": trading_date,
+                            "event_time": event_time,
+                            "last_price": price,
+                            "total_volume": result.effective_total_volume,
+                            "ref_price": event.ref_price,
+                            "open": event.open,
+                            "high": event.high,
+                            "low": event.low,
+                            "close": event.close,
+                            "bid_price1": event.bid_price1,
+                            "bid_vol1": event.bid_vol1,
+                            "ask_price1": event.ask_price1,
+                            "ask_vol1": event.ask_vol1,
+                            "change": event.change,
+                            "ratio_change": event.ratio_change,
+                            "exchange": exchange,
+                            "trading_session": provider_session,
+                            "trading_status": event.trading_status,
+                            "updated_at": updated_at,
+                        }
+                    )
+                self.store.commit()
+            except Exception:
+                self.stats.post_commit_projection_errors += 1
+                LOG.exception(
+                    "Post-commit compatibility projection failed: symbol=%s minute=%s",
+                    symbol,
+                    minute,
+                )
+
+        if exchange is not None and self.volume_event_handler is not None:
+            self.stats.volume_shadow_events += 1
+            try:
+                self.volume_event_handler(
+                    VolumeEvent(
+                        symbol=symbol,
+                        exchange=exchange,
+                        trading_date=trading_date,
+                        event_time=event_at,
+                        minute=minute,
+                        volume_delta=result.volume_delta,
+                        total_volume=result.effective_total_volume,
+                        quality_status=(
+                            "VOLUME_REGRESSION"
+                            if result.volume_regression
+                            else "PARTIAL" if result.partial_event else "TRUSTED"
+                        ),
+                        is_partial=result.partial_event,
+                        has_gap=False,
+                        provider_session=provider_session,
+                        provider_total_volume=total_volume,
+                        data_source="SSI_STREAM",
+                    )
+                )
+            except Exception:
+                self.stats.volume_shadow_event_errors += 1
+                self.stats.post_commit_projection_errors += 1
+                LOG.exception(
+                    "Post-commit calculation failed: symbol=%s minute=%s",
+                    symbol,
+                    minute,
+                )
+
+        if self.post_commit_hook is not None:
+            try:
+                self.post_commit_hook(event, result)
+            except Exception:
+                self.stats.post_commit_projection_errors += 1
+                LOG.exception(
+                    "Optional post-commit hook failed: symbol=%s minute=%s",
+                    symbol,
+                    minute,
+                )
+
+    def advance_time(self, now: datetime) -> int:
+        if self.canonical_store is None:
+            return 0
+        return self.canonical_store.finalize_due_minutes(_as_local(now))
+
     def snapshot_stats(self) -> dict[str, object]:
         values: dict[str, object] = {
             "received_messages": self.stats.received_messages,
+            "identified_events": self.stats.identified_events,
+            "canonical_events_written": self.stats.canonical_events_written,
+            "partial_events_written": self.stats.partial_events_written,
+            "late_events_merged": self.stats.late_events_merged,
+            "latest_quote_updates": self.stats.latest_quote_updates,
+            "latest_quote_skipped_late": self.stats.latest_quote_skipped_late,
+            "auction_events_processed": self.stats.auction_events_processed,
+            "post_commit_projection_errors": (
+                self.stats.post_commit_projection_errors
+            ),
+            "malformed_identity_events": self.stats.malformed_identity_events,
+            "canonical_write_errors": self.stats.canonical_write_errors,
             "accepted_events": self.stats.accepted_events,
             "ignored_outside_universe": self.stats.ignored_outside_universe,
             "ignored_without_price": self.stats.ignored_without_price,

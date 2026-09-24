@@ -21,7 +21,7 @@ class AuctionEvent:
     exchange: str
     trading_date: str
     event_at: datetime
-    price: float
+    price: float | None
     total_volume: int | None
     provider_session: str
     data_source: str = "SSI_STREAM"
@@ -47,10 +47,11 @@ class AuctionEvent:
         if event_at.date() != parsed_date:
             raise ValueError("AuctionEvent date does not match event_at")
         object.__setattr__(self, "event_at", event_at)
-        price = float(self.price)
-        if price <= 0:
-            raise ValueError("AuctionEvent price must be positive")
-        object.__setattr__(self, "price", price)
+        if self.price is not None:
+            price = float(self.price)
+            if price <= 0:
+                raise ValueError("AuctionEvent price must be positive when present")
+            object.__setattr__(self, "price", price)
         if self.total_volume is not None:
             if (
                 isinstance(self.total_volume, bool)
@@ -356,7 +357,7 @@ class AuctionSessionAccumulator:
             )
 
         state.last_structural_event_at = event.event_at
-        if event.provider_session == "LO":
+        if event.provider_session == "LO" and event.price is not None:
             state.last_continuous_price = event.price
 
         if auction_type is None:
@@ -385,7 +386,8 @@ class AuctionSessionAccumulator:
             )
             state.buckets[auction_type] = bucket
         bucket.event_count += 1
-        bucket.auction_price = event.price
+        if event.price is not None:
+            bucket.auction_price = event.price
         bucket.auction_volume += delta
         bucket.end_total_volume = state.high_watermark
         event_at = event.event_at.isoformat()

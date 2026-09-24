@@ -26,6 +26,7 @@ def test_volume_shadow_defaults_disabled_with_explicit_baseline(
     settings = Settings.from_env()
 
     assert not settings.volume_engine_enabled
+    assert settings.canonical_market_dir == ROOT / "data"
     assert settings.volume_baseline_path == ROOT / "fixtures" / "baseline.db"
     assert settings.volume_shadow_symbols == ("HPG", "SHS", "VGI")
 

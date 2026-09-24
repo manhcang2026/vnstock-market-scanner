@@ -11,6 +11,7 @@ services:
       - ./data:/app/data
     environment:
       DATABASE_PATH: /app/data/ssi_shadow.db
+      CANONICAL_MARKET_DIR: /app/data
       VOLUME_BASELINE_PATH: /app/data/ccc_v2_baseline.db
       MARKET_V2_DATABASE_PATH: /app/data/ccc_market_v2.db
       SSI_HISTORY_PATH: /app/data/ssi_history_2026.db

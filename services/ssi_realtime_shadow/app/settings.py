@@ -57,6 +57,7 @@ class Settings:
     ssi_stream_url: str
     ssi_channel: str
     database_path: Path
+    canonical_market_dir: Path
     universe_file: Path | None
     supabase_url: str
     supabase_key: str
@@ -94,6 +95,9 @@ class Settings:
             ssi_stream_url=_env("SSI_STREAM_URL", "https://fc-datahub.ssi.com.vn/"),
             ssi_channel=_env("SSI_CHANNEL", "X:ALL"),
             database_path=Path(db_raw).expanduser(),
+            canonical_market_dir=_service_path(
+                _env("CANONICAL_MARKET_DIR", "data")
+            ),
             universe_file=universe_file,
             supabase_url=_env("SUPABASE_URL", ""),
             supabase_key=_env("SUPABASE_KEY", ""),

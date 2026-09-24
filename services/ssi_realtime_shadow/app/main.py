@@ -5,9 +5,11 @@ import signal
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
 from types import SimpleNamespace
 
+from .canonical_market_store import CanonicalMarketStore
 from .collector import QuoteCollector
 from .live_state_runtime import LiveStateRuntime
 from .market_session import VN_TZ, market_feed_stale
@@ -17,6 +19,69 @@ from .storage import SQLiteStore
 from .universe import load_universe
 
 LOG = logging.getLogger("ssi_shadow")
+
+
+def _reconnect_delay(attempt: int, *, maximum: int = 60) -> int:
+    """Bound retry delay without ever producing a terminal retry state."""
+    return min(maximum, 2 ** min(max(0, int(attempt)), 6))
+
+
+@dataclass
+class _ReconnectBackoff:
+    failed_attempts: int = 0
+    next_attempt_at: float = 0.0
+
+    def ready(self, now: float) -> bool:
+        return now >= self.next_attempt_at
+
+    def failed(self, now: float) -> int:
+        self.failed_attempts += 1
+        delay = _reconnect_delay(self.failed_attempts - 1)
+        self.next_attempt_at = now + delay
+        return delay
+
+    def succeeded(self) -> int:
+        attempts = self.failed_attempts + 1
+        self.failed_attempts = 0
+        self.next_attempt_at = 0.0
+        return attempts
+
+
+def _best_effort_stream_cleanup(stream: object) -> None:
+    stop = getattr(stream, "stop", None)
+    if callable(stop):
+        try:
+            stop()
+            return
+        except Exception:
+            LOG.exception("Old SSI stream stop failed; continuing reconnect")
+    close = getattr(stream, "close", None)
+    if callable(close):
+        try:
+            close()
+        except Exception:
+            LOG.exception("Old SSI stream close failed; continuing reconnect")
+
+
+def _start_replacement_stream(
+    old_stream: object,
+    stream_factory: Callable[[], object],
+    on_message: Callable[[object], None],
+    on_error: Callable[[object], None],
+    channel: str,
+) -> object:
+    _best_effort_stream_cleanup(old_stream)
+    replacement = stream_factory()
+    replacement.start(on_message, on_error, channel)  # type: ignore[attr-defined]
+    return replacement
+
+
+def _advance_minute_finalization(collector: QuoteCollector, now: datetime) -> int:
+    try:
+        return collector.advance_time(now)
+    except Exception:
+        LOG.exception("Canonical minute finalization failed; will retry")
+        return 0
 
 
 class VolumeShadowQALogger:
@@ -156,6 +221,7 @@ def main() -> int:
         commit_every_events=settings.commit_every_events,
         commit_every_seconds=settings.commit_every_seconds,
     )
+    canonical_store = CanonicalMarketStore(settings.canonical_market_dir)
     stop_event = threading.Event()
     stream_error = threading.Event()
     volume_engine = _start_volume_shadow(settings)
@@ -210,6 +276,7 @@ def main() -> int:
     except Exception:
         if live_runtime is not None:
             live_runtime.close()
+        canonical_store.close()
         store.close()
         raise
 
@@ -258,6 +325,7 @@ def main() -> int:
             started_at=started_at,
             volume_event_handler=volume_handler,
             extra_stats_provider=live_health,
+            canonical_store=canonical_store,
         )
         store.set_meta("started_at", started_at.isoformat(), started_at.isoformat())
         store.set_meta("channel", settings.ssi_channel, started_at.isoformat())
@@ -267,19 +335,53 @@ def main() -> int:
         store.commit()
 
         LOG.info(
-            "Starting SSI shadow collector: channel=%s universe=%s db=%s",
+            "Starting SSI collector: channel=%s universe=%s canonical_dir=%s projection_db=%s",
             settings.ssi_channel,
             len(universe),
+            settings.canonical_market_dir,
             settings.database_path,
         )
-        stream.start(collector.on_message, on_error, settings.ssi_channel)
+        reconnect_backoff = _ReconnectBackoff()
+        stale_anchor = started_at
+        try:
+            stream.start(collector.on_message, on_error, settings.ssi_channel)
+        except Exception:
+            LOG.exception("Initial SSI stream connection failed; retrying")
+            stream_error.set()
 
         last_stats_log = time.monotonic()
+        stale_logged = False
         while not stop_event.wait(1):
             if stream_error.is_set():
-                raise RuntimeError("SSI stream reported an error; process will exit for restart")
+                monotonic_now = time.monotonic()
+                if reconnect_backoff.ready(monotonic_now):
+                    try:
+                        stream = _start_replacement_stream(
+                            stream,
+                            lambda: MarketDataStream(cfg, MarketDataClient(cfg)),
+                            collector.on_message,
+                            on_error,
+                            settings.ssi_channel,
+                        )
+                    except Exception:
+                        delay = reconnect_backoff.failed(monotonic_now)
+                        LOG.exception(
+                            "SSI reconnect attempt %s failed; retrying in %ss",
+                            reconnect_backoff.failed_attempts,
+                            delay,
+                        )
+                    else:
+                        attempts = reconnect_backoff.succeeded()
+                        stream_error.clear()
+                        stale_anchor = datetime.now(VN_TZ)
+                        stale_logged = False
+                        LOG.info(
+                            "SSI stream reconnected after %s attempt(s)",
+                            attempts,
+                        )
 
             now = datetime.now(VN_TZ)
+            _advance_minute_finalization(collector, now)
             if volume_engine is not None and volume_qa_logger is not None:
                 _advance_volume_shadow(
                     volume_engine,
@@ -288,15 +390,24 @@ def main() -> int:
                     now,
                     live_runtime=live_runtime,
                 )
-            if market_feed_stale(
+            feed_is_stale = market_feed_stale(
                 now,
-                collector_started_at=started_at,
+                collector_started_at=stale_anchor,
                 last_accepted_event_at=collector.last_event_at,
                 stale_after_seconds=settings.stale_stream_seconds,
-            ):
-                raise RuntimeError(
-                    f"SSI stream stale for more than {settings.stale_stream_seconds}s during market session"
-                )
+            )
+            if feed_is_stale:
+                if not stale_logged:
+                    LOG.warning(
+                        "SSI feed has no accepted event for more than %ss; "
+                        "requesting in-process reconnect",
+                        settings.stale_stream_seconds,
+                    )
+                    stale_logged = True
+                if not stream_error.is_set():
+                    stream_error.set()
+            else:
+                stale_logged = False
 
             if time.monotonic() - last_stats_log >= 60:
                 stats = collector.snapshot_stats()
@@ -319,7 +430,10 @@ def main() -> int:
                 if live_runtime is not None:
                     live_runtime.close()
             finally:
-                store.close()
+                try:
+                    canonical_store.close()
+                finally:
+                    store.close()
 
 
 if __name__ == "__main__":
