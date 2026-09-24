@@ -8,8 +8,8 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from .canonical_market_store import AuctionSession, CanonicalMarketStore, utc_now
-from .clean_rest_bootstrap import _finite_float, _nonnegative_int
 from .normalization import parse_trading_date
+from .value_parsing import finite_float, nonnegative_int
 
 
 def _value(row: Mapping[str, Any], *names: str) -> Any:
@@ -40,14 +40,14 @@ def normalize_salvage_row(row: Mapping[str, Any]) -> AuctionSession | None:
     provider_session = str(
         _value(row, "provider_session", "trading_session") or auction_type
     ).strip().upper()
-    auction_price = _finite_float(
+    auction_price = finite_float(
         _value(row, "auction_price", "price", "last_price"), positive=True
     )
-    start_volume = _nonnegative_int(
+    start_volume = nonnegative_int(
         _value(row, "start_total_volume", "start_volume")
     )
-    end_volume = _nonnegative_int(_value(row, "end_total_volume", "end_volume"))
-    auction_volume = _nonnegative_int(
+    end_volume = nonnegative_int(_value(row, "end_total_volume", "end_volume"))
+    auction_volume = nonnegative_int(
         _value(row, "auction_volume", "volume", "volume_delta")
     )
     quality = str(_value(row, "quality_status", "quality") or "PARTIAL").strip().upper()
@@ -57,14 +57,14 @@ def normalize_salvage_row(row: Mapping[str, Any]) -> AuctionSession | None:
         exchange=(str(_value(row, "exchange", "market") or "").strip().upper() or None),
         auction_type=auction_type,
         provider_session=provider_session or None,
-        pre_auction_price=_finite_float(
+        pre_auction_price=finite_float(
             _value(row, "pre_auction_price", "last_continuous_price"), positive=True
         ),
         auction_price=auction_price,
         start_total_volume=start_volume,
         end_total_volume=end_volume,
         auction_volume=auction_volume,
-        event_count=_nonnegative_int(_value(row, "event_count")) or 0,
+        event_count=nonnegative_int(_value(row, "event_count")) or 0,
         first_event_at=(
             str(_value(row, "first_event_at") or "").strip() or None
         ),

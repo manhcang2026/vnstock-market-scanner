@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import math
 import time
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -21,6 +20,10 @@ from .normalization import parse_trading_date
 from .settings import Settings
 from .ssi_historical import SSIHistoricalClient, SSINoDataFound
 from .universe import load_exchange_map
+from .value_parsing import (
+    finite_float as _finite_float,
+    nonnegative_int as _nonnegative_int,
+)
 
 
 class RestFetcher(Protocol):
@@ -51,25 +54,6 @@ def _first(row: Mapping[str, Any], *names: str) -> Any:
         if value is not None and str(value).strip() != "":
             return value
     return None
-
-
-def _finite_float(value: Any, *, positive: bool = False) -> float | None:
-    if value is None or isinstance(value, bool):
-        return None
-    try:
-        number = float(str(value).replace(",", "").strip())
-    except (TypeError, ValueError):
-        return None
-    if not math.isfinite(number) or (positive and number <= 0):
-        return None
-    return number
-
-
-def _nonnegative_int(value: Any) -> int | None:
-    number = _finite_float(value)
-    if number is None or number < 0 or not number.is_integer():
-        return None
-    return int(number)
 
 
 def _exchange(row: Mapping[str, Any], hint: str | None) -> str | None:
