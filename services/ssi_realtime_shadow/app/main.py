@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from types import SimpleNamespace
 
+from .canonical_live_engine import CanonicalLiveEngine
 from .canonical_market_store import CanonicalMarketStore
 from .collector import QuoteCollector
 from .live_state_runtime import LiveStateRuntime
@@ -81,6 +82,18 @@ def _advance_minute_finalization(collector: QuoteCollector, now: datetime) -> in
         return collector.advance_time(now)
     except Exception:
         LOG.exception("Canonical minute finalization failed; will retry")
+        return 0
+
+
+def _advance_canonical_engine(
+    engine: CanonicalLiveEngine | None, now: datetime
+) -> int:
+    if engine is None:
+        return 0
+    try:
+        return engine.advance(now)
+    except Exception:
+        LOG.exception("Canonical live-engine advance failed; collector continues")
         return 0
 
 
@@ -231,6 +244,23 @@ def main() -> int:
         else None
     )
     started_at = datetime.now(VN_TZ)
+    canonical_engine: CanonicalLiveEngine | None = None
+    if settings.canonical_engine_enabled:
+        try:
+            canonical_engine = CanonicalLiveEngine(
+                market_store=canonical_store,
+                engine_path=settings.canonical_engine_path,
+                active_at=started_at,
+            )
+            LOG.info(
+                "Canonical live engine initialized: path=%s stats=%s",
+                settings.canonical_engine_path,
+                canonical_engine.stats(),
+            )
+        except Exception:
+            LOG.exception(
+                "Canonical live engine initialization failed; raw collection continues"
+            )
     live_runtime: LiveStateRuntime | None = None
     if settings.live_state_enabled and volume_engine is not None:
         try:
@@ -253,27 +283,48 @@ def main() -> int:
 
     def live_health() -> dict[str, object]:
         if live_runtime is not None:
-            return live_runtime.health()
-        return {
-            "live_state_enabled": settings.live_state_enabled,
-            "live_state_initialized": False,
-            "live_state_updates": 0,
-            "live_state_errors": int(settings.live_state_enabled),
-            "live_state_last_update_at": None,
-            "live_state_trading_date": started_at.date().isoformat(),
-            "live_state_baseline_as_of_date": (
-                volume_engine.baseline.as_of_date if volume_engine is not None else None
-            ),
-            "live_state_baseline_ready": False,
-            "live_state_market_db_path": str(settings.market_v2_database_path),
-            "live_state_history_available": settings.ssi_history_path.is_file(),
-        }
+            values = live_runtime.health()
+        else:
+            values = {
+                "live_state_enabled": settings.live_state_enabled,
+                "live_state_initialized": False,
+                "live_state_updates": 0,
+                "live_state_errors": int(settings.live_state_enabled),
+                "live_state_last_update_at": None,
+                "live_state_trading_date": started_at.date().isoformat(),
+                "live_state_baseline_as_of_date": (
+                    volume_engine.baseline.as_of_date
+                    if volume_engine is not None
+                    else None
+                ),
+                "live_state_baseline_ready": False,
+                "live_state_market_db_path": str(settings.market_v2_database_path),
+                "live_state_history_available": settings.ssi_history_path.is_file(),
+            }
+        canonical_stats = canonical_engine.stats() if canonical_engine else None
+        values.update(
+            {
+                "canonical_engine_enabled": settings.canonical_engine_enabled,
+                "canonical_engine_initialized": canonical_engine is not None,
+                "canonical_engine_writes": (
+                    canonical_stats.state_writes if canonical_stats else 0
+                ),
+                "canonical_engine_errors": (
+                    canonical_stats.calculation_errors
+                    if canonical_stats
+                    else int(settings.canonical_engine_enabled)
+                ),
+            }
+        )
+        return values
 
     # Universe loading remains after all local live-state hydration so the stream
     # cannot start before the runtime is ready.
     try:
         universe = load_universe(settings)
     except Exception:
+        if canonical_engine is not None:
+            canonical_engine.close()
         if live_runtime is not None:
             live_runtime.close()
         canonical_store.close()
@@ -326,6 +377,9 @@ def main() -> int:
             volume_event_handler=volume_handler,
             extra_stats_provider=live_health,
             canonical_store=canonical_store,
+            post_commit_hook=(
+                canonical_engine.mark_dirty if canonical_engine is not None else None
+            ),
         )
         store.set_meta("started_at", started_at.isoformat(), started_at.isoformat())
         store.set_meta("channel", settings.ssi_channel, started_at.isoformat())
@@ -382,6 +436,7 @@ def main() -> int:
 
             now = datetime.now(VN_TZ)
             _advance_minute_finalization(collector, now)
+            _advance_canonical_engine(canonical_engine, now)
             if volume_engine is not None and volume_qa_logger is not None:
                 _advance_volume_shadow(
                     volume_engine,
@@ -427,6 +482,8 @@ def main() -> int:
             store.commit()
         finally:
             try:
+                if canonical_engine is not None:
+                    canonical_engine.close()
                 if live_runtime is not None:
                     live_runtime.close()
             finally:

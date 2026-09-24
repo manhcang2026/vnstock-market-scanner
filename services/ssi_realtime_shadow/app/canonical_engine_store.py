@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Iterable
 
-from .canonical_market_store import utc_now
+from .canonical_market_store import canonical_date, utc_now
 
 
-ENGINE_SCHEMA_VERSION = "1"
+ENGINE_SCHEMA_VERSION = "2"
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -59,6 +60,9 @@ CREATE TABLE IF NOT EXISTS current_state (
     distance_ma10_pct REAL,
     distance_ma200_pct REAL,
     baseline_sessions_used INTEGER,
+    day_rvol_sessions_used INTEGER,
+    rvol15_sessions_used INTEGER,
+    rvol30_sessions_used INTEGER,
     quality_status TEXT NOT NULL,
     reason_codes_json TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -113,16 +117,23 @@ class CurrentState:
     quality_status: str
     reason_codes_json: str
     updated_at: str = ""
+    day_rvol_sessions_used: int = 0
+    rvol15_sessions_used: int = 0
+    rvol30_sessions_used: int = 0
 
 
 class CanonicalEngineStore:
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.connection = sqlite3.connect(self.path)
+        self._lock = threading.RLock()
+        self.connection = sqlite3.connect(self.path, check_same_thread=False)
         self.connection.row_factory = sqlite3.Row
         self.connection.execute("PRAGMA journal_mode=WAL")
+        self.connection.execute("PRAGMA busy_timeout=5000")
+        self.connection.execute("PRAGMA synchronous=NORMAL")
         self.connection.executescript(SCHEMA_SQL)
+        self._migrate_schema()
         self.connection.execute(
             """INSERT INTO schema_meta(key,value,updated_at) VALUES(?,?,?)
                ON CONFLICT(key) DO UPDATE SET value=excluded.value,
@@ -132,7 +143,8 @@ class CanonicalEngineStore:
         self.connection.commit()
 
     def close(self) -> None:
-        self.connection.close()
+        with self._lock:
+            self.connection.close()
 
     def __enter__(self) -> "CanonicalEngineStore":
         return self
@@ -151,7 +163,7 @@ class CanonicalEngineStore:
         technical_rows = list(technical)
         volume_rows = list(volume)
         current_rows = list(current)
-        with self.connection:
+        with self._lock, self.connection:
             self.connection.execute(
                 "DELETE FROM technical_baseline WHERE as_of_date=?", (as_of_date,)
             )
@@ -182,7 +194,7 @@ class CanonicalEngineStore:
 
     def begin_rebuild(self, as_of_date: str) -> None:
         """Clear disposable output before streaming one symbol at a time."""
-        with self.connection:
+        with self._lock, self.connection:
             self.connection.execute(
                 "DELETE FROM technical_baseline WHERE as_of_date=?", (as_of_date,)
             )
@@ -200,7 +212,7 @@ class CanonicalEngineStore:
     ) -> None:
         """Commit one symbol so rebuild memory is independent of universe size."""
         volume_rows = list(volume)
-        with self.connection:
+        with self._lock, self.connection:
             if technical is not None:
                 self.connection.execute(
                     """INSERT INTO technical_baseline(
@@ -229,12 +241,16 @@ class CanonicalEngineStore:
                    symbol,exchange,trading_date,minute,last_price,
                    cumulative_volume,day_rvol,rvol15,rvol30,price5_pct,
                    price15_pct,ma10,ma200,distance_ma10_pct,
-                   distance_ma200_pct,baseline_sessions_used,quality_status,
+                   distance_ma200_pct,baseline_sessions_used,
+                   day_rvol_sessions_used,rvol15_sessions_used,
+                   rvol30_sessions_used,quality_status,
                    reason_codes_json,updated_at
                ) VALUES(:symbol,:exchange,:trading_date,:minute,:last_price,
                    :cumulative_volume,:day_rvol,:rvol15,:rvol30,:price5_pct,
                    :price15_pct,:ma10,:ma200,:distance_ma10_pct,
-                   :distance_ma200_pct,:baseline_sessions_used,:quality_status,
+                   :distance_ma200_pct,:baseline_sessions_used,
+                   :day_rvol_sessions_used,:rvol15_sessions_used,
+                   :rvol30_sessions_used,:quality_status,
                    :reason_codes_json,:updated_at)
                ON CONFLICT(symbol) DO UPDATE SET
                    exchange=excluded.exchange,trading_date=excluded.trading_date,
@@ -247,11 +263,71 @@ class CanonicalEngineStore:
                    distance_ma10_pct=excluded.distance_ma10_pct,
                    distance_ma200_pct=excluded.distance_ma200_pct,
                    baseline_sessions_used=excluded.baseline_sessions_used,
+                   day_rvol_sessions_used=excluded.day_rvol_sessions_used,
+                   rvol15_sessions_used=excluded.rvol15_sessions_used,
+                   rvol30_sessions_used=excluded.rvol30_sessions_used,
                    quality_status=excluded.quality_status,
                    reason_codes_json=excluded.reason_codes_json,
                    updated_at=excluded.updated_at""",
             values,
         )
+
+    def upsert_current(self, row: CurrentState) -> None:
+        """Commit one disposable live state independently of market storage."""
+        with self._lock, self.connection:
+            self._upsert_current(row)
+
+    def load_technical(
+        self, symbol: str, as_of_date: str
+    ) -> sqlite3.Row | None:
+        with self._lock:
+            return self.connection.execute(
+                """SELECT * FROM technical_baseline
+                   WHERE symbol=? AND as_of_date=?""",
+                (symbol, as_of_date),
+            ).fetchone()
+
+    def load_volume_point(
+        self, symbol: str, minute: str, as_of_date: str
+    ) -> sqlite3.Row | None:
+        with self._lock:
+            return self.connection.execute(
+                """SELECT * FROM volume_baseline_curve
+                   WHERE symbol=? AND minute=? AND as_of_date=?""",
+                (symbol, minute, as_of_date),
+            ).fetchone()
+
+    def current_row(self, symbol: str) -> sqlite3.Row | None:
+        with self._lock:
+            return self.connection.execute(
+                "SELECT * FROM current_state WHERE symbol=?", (symbol,)
+            ).fetchone()
+
+    def expire_current_state(self, trading_date: str) -> int:
+        """Remove stale calculated state without touching today's baselines."""
+        canonical = canonical_date(trading_date)
+        with self._lock, self.connection:
+            cursor = self.connection.execute(
+                """DELETE FROM current_state
+                   WHERE trading_date IS NULL OR trading_date<>?""",
+                (canonical,),
+            )
+        return int(cursor.rowcount)
+
+    def _migrate_schema(self) -> None:
+        columns = {
+            str(row["name"])
+            for row in self.connection.execute("PRAGMA table_info(current_state)")
+        }
+        for name in (
+            "day_rvol_sessions_used",
+            "rvol15_sessions_used",
+            "rvol30_sessions_used",
+        ):
+            if name not in columns:
+                self.connection.execute(
+                    f"ALTER TABLE current_state ADD COLUMN {name} INTEGER"
+                )
 
     @staticmethod
     def _values(row: object) -> dict[str, object]:

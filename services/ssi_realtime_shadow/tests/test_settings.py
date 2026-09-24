@@ -26,7 +26,9 @@ def test_volume_shadow_defaults_disabled_with_explicit_baseline(
     settings = Settings.from_env()
 
     assert not settings.volume_engine_enabled
+    assert not settings.canonical_engine_enabled
     assert settings.canonical_market_dir == ROOT / "data"
+    assert settings.canonical_engine_path == ROOT / "data" / "ccc_engine.db"
     assert settings.volume_baseline_path == ROOT / "fixtures" / "baseline.db"
     assert settings.volume_shadow_symbols == ("HPG", "SHS", "VGI")
 
@@ -98,6 +100,23 @@ def test_live_state_requires_volume_engine(monkeypatch: pytest.MonkeyPatch) -> N
 
     with pytest.raises(RuntimeError, match="requires VOLUME_ENGINE_ENABLED"):
         Settings.from_env()
+
+
+def test_canonical_engine_flag_is_independent_of_legacy_engines(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _required_env(monkeypatch)
+    monkeypatch.setenv("CANONICAL_ENGINE_ENABLED", "true")
+    monkeypatch.setenv("CANONICAL_ENGINE_PATH", "fixtures/canonical-engine.db")
+    monkeypatch.setenv("VOLUME_ENGINE_ENABLED", "false")
+    monkeypatch.setenv("LIVE_STATE_ENABLED", "false")
+
+    settings = Settings.from_env()
+
+    assert settings.canonical_engine_enabled
+    assert settings.canonical_engine_path == ROOT / "fixtures" / "canonical-engine.db"
+    assert not settings.volume_engine_enabled
+    assert not settings.live_state_enabled
 
 
 def test_live_paths_use_service_path_helper(monkeypatch: pytest.MonkeyPatch) -> None:

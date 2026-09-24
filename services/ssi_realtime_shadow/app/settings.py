@@ -68,6 +68,8 @@ class Settings:
     log_level: str
     volume_engine_enabled: bool
     live_state_enabled: bool
+    canonical_engine_enabled: bool
+    canonical_engine_path: Path
     volume_baseline_path: Path
     market_v2_database_path: Path
     ssi_history_path: Path
@@ -108,6 +110,12 @@ class Settings:
             log_level=_env("LOG_LEVEL", "INFO").upper(),
             volume_engine_enabled=volume_engine_enabled,
             live_state_enabled=live_state_enabled,
+            canonical_engine_enabled=_env_bool(
+                "CANONICAL_ENGINE_ENABLED", False
+            ),
+            canonical_engine_path=_service_path(
+                _env("CANONICAL_ENGINE_PATH", "data/ccc_engine.db")
+            ),
             volume_baseline_path=_service_path(
                 baseline_raw
             ),

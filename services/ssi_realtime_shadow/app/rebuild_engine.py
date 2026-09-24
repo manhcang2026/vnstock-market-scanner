@@ -130,7 +130,8 @@ class MarketShardReader:
         if connection is None:
             return {}
         rows = connection.execute(
-            """SELECT symbol,trading_date,minute,exchange,close,volume
+            """SELECT symbol,trading_date,minute,exchange,close,volume,
+                      provider_total_volume
                FROM minute_bars WHERE symbol=? AND trading_date=?
                ORDER BY minute""",
             (symbol, trading_date),
@@ -223,7 +224,7 @@ def exact_price_change(
     return (current_price / anchor - 1.0) * 100.0
 
 
-def _usable_price(value: object) -> float | None:
+def usable_price(value: object) -> float | None:
     if value is None:
         return None
     try:
@@ -248,14 +249,14 @@ def _exchange_for(snapshot: MarketSnapshot) -> str | None:
 
 def _technical(symbol: str, as_of: str, snapshot: MarketSnapshot) -> TechnicalBaseline:
     previous_close = (
-        _usable_price(snapshot.daily_history[0]["close"])
+        usable_price(snapshot.daily_history[0]["close"])
         if snapshot.daily_history
         else None
     )
     closes = [
         close
         for row in snapshot.daily_history
-        if (close := _usable_price(row["close"])) is not None
+        if (close := usable_price(row["close"])) is not None
     ]
     recent10 = closes[:10]
     recent200 = closes[:200]
@@ -270,7 +271,7 @@ def _technical(symbol: str, as_of: str, snapshot: MarketSnapshot) -> TechnicalBa
     )
 
 
-def _grid_volumes(
+def grid_volumes(
     rows: dict[str, sqlite3.Row],
     grid: tuple[VolumeGridPoint, ...],
     *,
@@ -290,7 +291,7 @@ def _grid_volumes(
     return values
 
 
-def _rolling_value(
+def rolling_volume(
     values: list[int | None],
     grid: tuple[VolumeGridPoint, ...],
     index: int,
@@ -339,7 +340,7 @@ def _baseline(
         rows = snapshot.load_completed_session(trading_date)
         if rows is None:
             continue
-        volumes = _grid_volumes(rows, grid, complete=True)
+        volumes = grid_volumes(rows, grid, complete=True)
         cumulative = 0
         cumulative_valid = True
         for index, point in enumerate(grid):
@@ -350,10 +351,10 @@ def _baseline(
                 cumulative += volume
             if cumulative_valid and len(cumulative_samples[point.minute]) < 10:
                 cumulative_samples[point.minute].append(float(cumulative))
-            rolling15 = _rolling_value(volumes, grid, index, 15)
+            rolling15 = rolling_volume(volumes, grid, index, 15)
             if rolling15 is not None and len(samples15.get(point.minute, ())) < 10:
                 samples15[point.minute].append(float(rolling15))
-            rolling30 = _rolling_value(volumes, grid, index, 30)
+            rolling30 = rolling_volume(volumes, grid, index, 30)
             if rolling30 is not None and len(samples30.get(point.minute, ())) < 10:
                 samples30[point.minute].append(float(rolling30))
         if enough():
@@ -387,7 +388,9 @@ def _baseline(
     )
 
 
-def _ratio(numerator: float | int | None, denominator: float | None) -> float | None:
+def safe_ratio(
+    numerator: float | int | None, denominator: float | None
+) -> float | None:
     if numerator is None or denominator is None or denominator <= 0:
         return None
     return float(numerator) / denominator
@@ -419,6 +422,9 @@ def calculate_symbol(
                 distance_ma10_pct=None,
                 distance_ma200_pct=None,
                 baseline_sessions_used=0,
+                day_rvol_sessions_used=0,
+                rvol15_sessions_used=0,
+                rvol30_sessions_used=0,
                 quality_status="PARTIAL",
                 reason_codes_json=json.dumps(["MISSING_EXCHANGE"]),
             ),
@@ -431,26 +437,36 @@ def calculate_symbol(
     candidates = [point.minute for point in grid if point.minute in today]
     selected = candidates[-1] if candidates else None
     selected_row = today.get(selected) if selected else None
-    last_price = _usable_price(selected_row["close"]) if selected_row else None
+    last_price = usable_price(selected_row["close"]) if selected_row else None
     cumulative: int | None = None
     window15: int | None = None
     window30: int | None = None
     if selected is not None:
         index = next(i for i, point in enumerate(grid) if point.minute == selected)
-        volumes = _grid_volumes(
+        cumulative = next(
+            (
+                int(today[point.minute]["provider_total_volume"])
+                for point in reversed(grid[: index + 1])
+                if point.minute in today
+                and today[point.minute]["provider_total_volume"] is not None
+                and int(today[point.minute]["provider_total_volume"]) >= 0
+            ),
+            None,
+        )
+        volumes = grid_volumes(
             today, grid, complete=snapshot.current_session_complete
         )
         prefix = volumes[: index + 1]
-        if all(value is not None for value in prefix):
+        if cumulative is None and all(value is not None for value in prefix):
             cumulative = sum(prefix)  # type: ignore[arg-type]
-        window15 = _rolling_value(volumes, grid, index, 15)
-        window30 = _rolling_value(volumes, grid, index, 30)
+        window15 = rolling_volume(volumes, grid, index, 15)
+        window30 = rolling_volume(volumes, grid, index, 30)
 
     point = baseline_map.get(selected) if selected else None
     closes = {
         minute: close
         for minute, row in today.items()
-        if (close := _usable_price(row["close"])) is not None
+        if (close := usable_price(row["close"])) is not None
     }
     price5 = exact_price_change(
         exchange=exchange,
@@ -468,9 +484,9 @@ def calculate_symbol(
         closes=closes,
         window=15,
     )
-    day_rvol = _ratio(cumulative, point.avg_cumulative_volume if point else None)
-    rvol15 = _ratio(window15, point.avg_volume_15 if point else None)
-    rvol30 = _ratio(window30, point.avg_volume_30 if point else None)
+    day_rvol = safe_ratio(cumulative, point.avg_cumulative_volume if point else None)
+    rvol15 = safe_ratio(window15, point.avg_volume_15 if point else None)
+    rvol30 = safe_ratio(window30, point.avg_volume_30 if point else None)
     distance10 = (
         (last_price / technical.ma10 - 1) * 100
         if last_price is not None and technical.ma10
@@ -515,6 +531,9 @@ def calculate_symbol(
             distance_ma10_pct=distance10,
             distance_ma200_pct=distance200,
             baseline_sessions_used=point.day_sessions_used if point else 0,
+            day_rvol_sessions_used=point.day_sessions_used if point else 0,
+            rvol15_sessions_used=point.rvol15_sessions_used if point else 0,
+            rvol30_sessions_used=point.rvol30_sessions_used if point else 0,
             quality_status="OK" if not reasons else "PARTIAL",
             reason_codes_json=json.dumps(reasons, separators=(",", ":")),
         ),
@@ -539,6 +558,9 @@ def _failed_state(symbol: str, as_of: str, exc: Exception) -> CurrentState:
         distance_ma10_pct=None,
         distance_ma200_pct=None,
         baseline_sessions_used=0,
+        day_rvol_sessions_used=0,
+        rvol15_sessions_used=0,
+        rvol30_sessions_used=0,
         quality_status="FAILED",
         reason_codes_json=json.dumps([f"CALCULATION_ERROR:{type(exc).__name__}"]),
         updated_at=utc_now(),
