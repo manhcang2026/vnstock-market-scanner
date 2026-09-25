@@ -1,4 +1,4 @@
-vnstock==4.0.5
+vnstock @ https://files.pythonhosted.org/packages/d1/37/7bc6d4a83d5c5c4448e01ca6d0d61fdde52839b6baedfdd8dc6f93188736/vnstock-4.0.5-py3-none-any.whl#sha256=4e0596bfc2971fda743636552fd471111454305b37d62661afdfd82be689621f
 vnai==2.5.9
 pandas
 requests
