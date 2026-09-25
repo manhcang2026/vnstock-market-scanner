@@ -199,8 +199,9 @@ def exact_price_change(
     current_price: float | None,
     closes: dict[str, float],
     window: int,
+    unresolved_gap_minutes: set[str] | frozenset[str] = frozenset(),
 ) -> float | None:
-    """Use the exact wall-clock anchor inside the same continuous segment."""
+    """Compare price state at an exact clock anchor in one continuous segment."""
     if current_price is None or not math.isfinite(current_price) or current_price <= 0:
         return None
     try:
@@ -218,10 +219,75 @@ def exact_price_change(
         or selected_session.session_type is not anchor_session.session_type
     ):
         return None
-    anchor = closes.get(anchor_at.strftime("%H:%M"))
-    if anchor is None or not math.isfinite(anchor) or anchor <= 0:
+    anchor = price_state_at(
+        exchange=exchange,
+        trading_date=trading_date,
+        target_minute=anchor_at.strftime("%H:%M"),
+        closes=closes,
+        unresolved_gap_minutes=unresolved_gap_minutes,
+    )
+    if anchor is None:
         return None
     return (current_price / anchor - 1.0) * 100.0
+
+
+def price_state_at(
+    *,
+    exchange: str,
+    trading_date: str,
+    target_minute: str,
+    closes: dict[str, float],
+    unresolved_gap_minutes: set[str] | frozenset[str] = frozenset(),
+) -> float | None:
+    """Return the latest valid price carried within one continuous segment.
+
+    The helper is deliberately pure and symbol/day-bounded. Sparse minutes are
+    no-trade evidence only when the caller has established that fact; callers
+    pass unknown intervals explicitly through ``unresolved_gap_minutes``.
+    """
+    try:
+        selected = datetime.fromisoformat(
+            f"{date.fromisoformat(trading_date).isoformat()}T{target_minute}:00"
+        ).replace(tzinfo=VN_TZ)
+    except (TypeError, ValueError):
+        return None
+    selected_session = classify_market_session(exchange, selected)
+    if not selected_session.is_continuous:
+        return None
+
+    target = selected.strftime("%H:%M")
+    gaps = {
+        str(minute)[:5]
+        for minute in unresolved_gap_minutes
+        if str(minute)[:5] <= target
+    }
+    if target in gaps:
+        return None
+
+    candidates: list[tuple[str, float]] = []
+    for minute, raw_price in closes.items():
+        try:
+            canonical_minute = datetime.strptime(str(minute), "%H:%M").strftime(
+                "%H:%M"
+            )
+        except ValueError:
+            continue
+        price = usable_price(raw_price)
+        if price is None or canonical_minute > target or canonical_minute in gaps:
+            continue
+        candidate_at = datetime.fromisoformat(
+            f"{selected.date().isoformat()}T{canonical_minute}:00"
+        ).replace(tzinfo=VN_TZ)
+        candidate_session = classify_market_session(exchange, candidate_at)
+        if candidate_session.session_id == selected_session.session_id:
+            candidates.append((canonical_minute, price))
+    if not candidates:
+        return None
+
+    source_minute, price = max(candidates)
+    if any(source_minute < gap <= target for gap in gaps):
+        return None
+    return price
 
 
 def usable_price(value: object) -> float | None:
@@ -436,8 +502,6 @@ def calculate_symbol(
     today = snapshot.current_minutes
     candidates = [point.minute for point in grid if point.minute in today]
     selected = candidates[-1] if candidates else None
-    selected_row = today.get(selected) if selected else None
-    last_price = usable_price(selected_row["close"]) if selected_row else None
     cumulative: int | None = None
     window15: int | None = None
     window30: int | None = None
@@ -468,6 +532,30 @@ def calculate_symbol(
         for minute, row in today.items()
         if (close := usable_price(row["close"])) is not None
     }
+    unresolved_price_gaps: set[str] = set()
+    if selected is not None and not snapshot.current_session_complete:
+        selected_session = next(
+            point.session_segment for point in grid if point.minute == selected
+        )
+        unresolved_price_gaps = {
+            point.minute
+            for point in grid
+            if point.is_continuous
+            and point.session_segment == selected_session
+            and point.minute <= selected
+            and point.minute not in today
+        }
+    last_price = (
+        price_state_at(
+            exchange=exchange,
+            trading_date=as_of,
+            target_minute=selected,
+            closes=closes,
+            unresolved_gap_minutes=unresolved_price_gaps,
+        )
+        if selected is not None
+        else None
+    )
     price5 = exact_price_change(
         exchange=exchange,
         trading_date=as_of,
@@ -475,6 +563,7 @@ def calculate_symbol(
         current_price=last_price,
         closes=closes,
         window=5,
+        unresolved_gap_minutes=unresolved_price_gaps,
     )
     price15 = exact_price_change(
         exchange=exchange,
@@ -483,6 +572,7 @@ def calculate_symbol(
         current_price=last_price,
         closes=closes,
         window=15,
+        unresolved_gap_minutes=unresolved_price_gaps,
     )
     day_rvol = safe_ratio(cumulative, point.avg_cumulative_volume if point else None)
     rvol15 = safe_ratio(window15, point.avg_volume_15 if point else None)

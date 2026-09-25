@@ -7,7 +7,12 @@ from threading import Thread
 
 import pytest
 
-from app.canonical_market_store import CanonicalMarketStore, RealtimeMarketEvent
+from app.canonical_market_store import (
+    MARKET_SCHEMA_VERSION,
+    SCHEMA_SQL,
+    CanonicalMarketStore,
+    RealtimeMarketEvent,
+)
 from app.collector import QuoteCollector
 from app.main import (
     _ReconnectBackoff,
@@ -138,6 +143,7 @@ def test_latest_quote_day_rollover_clears_previous_day_market_state(
     assert row["exchange"] == "HOSE"
     for field in (
         "last_price",
+        "last_price_at",
         "total_volume",
         "ref_price",
         "open",
@@ -243,6 +249,69 @@ def test_late_event_corrects_history_without_rewinding_latest_and_stays_finalize
     assert connection.execute(
         "SELECT volume FROM minute_bars WHERE minute='09:12'"
     ).fetchone()[0] == 25
+
+
+def test_volume_only_event_preserves_price_and_its_provenance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = [_moment(9, 11, 10)]
+    collector, store = _collector(tmp_path, monkeypatch, now=clock)
+    collector.on_message(_event(Time="09:11:10", LastPrice=90, TotalVol=100))
+    clock[0] = _moment(10, 0, 10)
+    collector.on_message(_event(Time="10:00:10", LastPrice=None, TotalVol=200))
+
+    row = store.connection(2026).execute(
+        """SELECT event_time,last_price,last_price_at,total_volume
+           FROM latest_quotes WHERE symbol='HPG'"""
+    ).fetchone()
+    assert tuple(row) == (
+        "10:00:10",
+        90,
+        "09:11:10",
+        200,
+    )
+
+
+def test_existing_market_db_adds_nullable_price_provenance_without_data_loss(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "ccc_market_2026.db"
+    connection = sqlite3.connect(path)
+    legacy_schema = SCHEMA_SQL.replace(
+        "    event_time TEXT,\n    last_price REAL,\n    last_price_at TEXT,\n",
+        "    event_time TEXT,\n    last_price REAL,\n",
+        1,
+    )
+    connection.executescript(legacy_schema)
+    connection.execute(
+        """INSERT INTO latest_quotes(
+               symbol,trading_date,event_time,last_price,total_volume,updated_at
+           ) VALUES('HPG', ?, '10:00:10', 90, 200, 'before-migration')""",
+        (DAY,),
+    )
+    connection.execute(
+        """INSERT INTO schema_meta(key,value,updated_at)
+           VALUES('schema_version','3','before-migration')"""
+    )
+    connection.commit()
+    connection.close()
+
+    with CanonicalMarketStore(tmp_path) as store:
+        migrated = store.connection(2026)
+        columns = {
+            row[1] for row in migrated.execute("PRAGMA table_info(latest_quotes)")
+        }
+        row = migrated.execute(
+            """SELECT event_time,last_price,last_price_at,total_volume,updated_at
+               FROM latest_quotes WHERE symbol='HPG'"""
+        ).fetchone()
+        version = migrated.execute(
+            "SELECT value FROM schema_meta WHERE key='schema_version'"
+        ).fetchone()[0]
+
+    assert "last_price_at" in columns
+    assert tuple(row) == ("10:00:10", 90, None, 200, "before-migration")
+    assert version == MARKET_SCHEMA_VERSION == "4"
 
 
 def test_minute_finalizes_at_three_second_grace_only(

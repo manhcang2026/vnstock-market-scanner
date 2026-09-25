@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Iterable, Mapping
 
 
-MARKET_SCHEMA_VERSION = "3"
+MARKET_SCHEMA_VERSION = "4"
 MINUTE_FINALIZATION_GRACE_SECONDS = 3
 
 
@@ -74,6 +74,7 @@ CREATE TABLE IF NOT EXISTS latest_quotes (
     trading_date TEXT NOT NULL,
     event_time TEXT,
     last_price REAL,
+    last_price_at TEXT,
     total_volume INTEGER,
     ref_price REAL,
     open REAL,
@@ -327,6 +328,7 @@ class CanonicalMarketStore:
                 ("last_price_at", "last_price_at TEXT"),
             ),
             "latest_quotes": (
+                ("last_price_at", "last_price_at TEXT"),
                 ("bid_price1", "bid_price1 REAL"),
                 ("bid_vol1", "bid_vol1 INTEGER"),
                 ("ask_price1", "ask_price1 REAL"),
@@ -730,7 +732,8 @@ class CanonicalMarketStore:
         updated_at: str,
     ) -> bool:
         columns = (
-            "symbol", "trading_date", "event_time", "last_price", "total_volume",
+            "symbol", "trading_date", "event_time", "last_price", "last_price_at",
+            "total_volume",
             "ref_price", "open", "high", "low", "close", "bid_price1",
             "bid_vol1", "ask_price1", "ask_vol1", "change", "ratio_change",
             "exchange", "provider_session", "trading_status", "updated_at",
@@ -740,6 +743,11 @@ class CanonicalMarketStore:
             trading_date,
             event.event_at.strftime("%H:%M:%S"),
             event.price if event.price is not None and event.price > 0 else None,
+            (
+                event.event_at.strftime("%H:%M:%S")
+                if event.price is not None and event.price > 0
+                else None
+            ),
             effective_total_volume,
             event.ref_price,
             event.open,

@@ -21,7 +21,12 @@ from app.clean_rest_bootstrap import (
     run_bootstrap,
 )
 from app import rebuild_engine as rebuild_module
-from app.rebuild_engine import MarketShardReader, exact_price_change, rebuild_engine
+from app.rebuild_engine import (
+    MarketShardReader,
+    exact_price_change,
+    price_state_at,
+    rebuild_engine,
+)
 from app.ssi_historical import SSINoDataFound
 
 
@@ -359,7 +364,7 @@ def test_price_windows_require_exact_same_segment_clock_anchor(
         assert result == pytest.approx(expected)
 
 
-def test_missing_exact_price_anchor_returns_null() -> None:
+def test_price_anchor_uses_carried_state_at_exact_clock_minute() -> None:
     assert exact_price_change(
         exchange="HNX",
         trading_date="2026-09-24",
@@ -367,7 +372,106 @@ def test_missing_exact_price_anchor_returns_null() -> None:
         current_price=110,
         closes={"09:14": 100},
         window=5,
+    ) == pytest.approx(10)
+
+
+def test_price_state_carries_multiple_silent_minutes_and_price15_anchor() -> None:
+    closes = {"09:20": 100, "09:25": 101, "09:30": 115}
+
+    assert price_state_at(
+        exchange="HNX",
+        trading_date="2026-09-24",
+        target_minute="09:24",
+        closes=closes,
+    ) == 100
+    assert exact_price_change(
+        exchange="HNX",
+        trading_date="2026-09-24",
+        current_minute="09:35",
+        current_price=115,
+        closes=closes,
+        window=15,
+    ) == pytest.approx(15)
+
+
+def test_price_state_resets_at_lunch_and_gap_until_reestablished() -> None:
+    assert price_state_at(
+        exchange="HNX",
+        trading_date="2026-09-24",
+        target_minute="13:01",
+        closes={"11:29": 100},
     ) is None
+    assert price_state_at(
+        exchange="HNX",
+        trading_date="2026-09-24",
+        target_minute="11:29",
+        closes={"11:23": 100},
+        unresolved_gap_minutes={"11:24", "11:25", "11:26"},
+    ) is None
+    assert price_state_at(
+        exchange="HNX",
+        trading_date="2026-09-24",
+        target_minute="11:29",
+        closes={"11:23": 100, "11:27": 110},
+        unresolved_gap_minutes={"11:24", "11:25", "11:26"},
+    ) == 110
+
+
+def test_offline_rebuild_carries_sparse_price_only_with_session_proof(
+    tmp_path: Path,
+) -> None:
+    with CanonicalMarketStore(tmp_path) as store:
+        store.upsert_daily_bars(
+            [DailyBar("AAA", "2026-09-24", exchange="HNX", close=110)]
+        )
+        store.upsert_minute_bars(
+            [
+                MinuteBar(
+                    "AAA", "2026-09-24", "11:23", exchange="HNX",
+                    close=100, volume=10,
+                ),
+                MinuteBar(
+                    "AAA", "2026-09-24", "11:29", exchange="HNX",
+                    close=110, volume=10,
+                ),
+            ]
+        )
+
+    unproven_path = tmp_path / "engine-unproven.db"
+    rebuild_engine(
+        market_db_dir=tmp_path,
+        engine_db=unproven_path,
+        as_of_date="2026-09-24",
+    )
+    connection = sqlite3.connect(unproven_path)
+    try:
+        assert connection.execute(
+            "SELECT price5_pct FROM current_state WHERE symbol='AAA'"
+        ).fetchone()[0] is None
+    finally:
+        connection.close()
+
+    with CanonicalMarketStore(tmp_path) as store:
+        store.mark_rest_sessions_completed(
+            mode="minute",
+            symbol="AAA",
+            resolution=1,
+            rows_by_date={"2026-09-24": 2},
+        )
+    proven_path = tmp_path / "engine-proven.db"
+    rebuild_engine(
+        market_db_dir=tmp_path,
+        engine_db=proven_path,
+        as_of_date="2026-09-24",
+    )
+    connection = sqlite3.connect(proven_path)
+    try:
+        assert connection.execute(
+            "SELECT price5_pct FROM current_state WHERE symbol='AAA'"
+        ).fetchone()[0] == pytest.approx(10)
+    finally:
+        connection.close()
+    assert _count(tmp_path / "ccc_market_2026.db", "minute_bars") == 2
 
 
 def test_broad_job_checkpoint_does_not_prove_unobserved_session(tmp_path: Path) -> None:

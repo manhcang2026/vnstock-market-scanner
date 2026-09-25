@@ -94,7 +94,35 @@ Do not discard an entire event merely because one field is missing.
 
 ---
 
-## 5. ATO / ATC are realtime-priority data
+## 5. Price state / Price5 / Price15
+
+This section is locked for derived continuous-session price calculations.
+
+1. `minute_bars` must not create synthetic flat-price rows merely because no
+   trade occurred in a minute.
+2. Derived price state at minute T is the most recent valid traded price at or
+   before T within the same continuous-session segment.
+3. An elapsed no-trade minute carries the preceding valid price state forward.
+4. An unresolved GAP/MISSING interval breaks price carry. A missing trade is
+   not the same thing as a missing feed.
+5. Price state never crosses lunch, an auction/continuous-session boundary, or
+   a trading-day boundary.
+6. Price5 compares `price_state(T)` with `price_state(T-5 clock minutes)`; both
+   states must be inside the same continuous-session segment.
+7. Price15 applies the same rule at the exact T-15 clock-minute anchor.
+8. If the exact anchor minute has no trade, its carried price state is correct;
+   this is not nearest-minute substitution.
+9. Price state is NULL until the first valid traded price in the current
+   continuous-session segment.
+10. Missing price state nulls only the affected price metric. It never changes
+    canonical persistence, RVOL, MA, or other independent metrics.
+
+Price state is derived calculation state only. It must never be written back as
+a fabricated canonical minute bar.
+
+---
+
+## 6. ATO / ATC are realtime-priority data
 
 Explicit auction evidence is more time-sensitive than ordinary continuous-session minute OHLCV.
 
@@ -123,7 +151,7 @@ Why: SSI REST may recover minute OHLCV later, but it cannot be assumed to reprod
 
 ---
 
-## 6. Recoverable vs realtime-only priorities
+## 7. Recoverable vs realtime-only priorities
 
 ### Usually recoverable later from SSI REST
 
@@ -151,7 +179,7 @@ When forced to choose, preserve realtime-only evidence before derived metrics.
 
 ---
 
-## 7. REST reconciliation
+## 8. REST reconciliation
 
 CCC accepts that realtime can have gaps.
 
@@ -180,7 +208,7 @@ Daily provider volume and the sum of minute volumes may differ. Do not fabricate
 
 ---
 
-## 8. Calculation isolation
+## 9. Calculation isolation
 
 RVOL, MA, Price5/15, auction metrics and signals read canonical market data and write derived state.
 
@@ -211,7 +239,7 @@ Other independent metrics continue.
 
 ---
 
-## 9. Quality / trust semantics
+## 10. Quality / trust semantics
 
 Quality is **description, not permission**.
 
@@ -233,7 +261,7 @@ Each metric decides only whether its own required inputs exist.
 
 ---
 
-## 10. Baseline philosophy
+## 11. Baseline philosophy
 
 Target up to 10 usable historical sessions.
 
@@ -251,7 +279,7 @@ No baseline rule may stop raw SSI collection.
 
 ---
 
-## 11. Stream outage behavior
+## 12. Stream outage behavior
 
 Provider/network silence is an operational condition, not a reason to destroy the collector.
 
@@ -269,7 +297,7 @@ The external watchdog exists to recover a CCC process that is truly hung/not pro
 
 ---
 
-## 12. Universe direction
+## 13. Universe direction
 
 The product direction is **the full Vietnamese equity market**, not a permanent 800-symbol ceiling.
 
@@ -285,7 +313,7 @@ Derivatives/non-equity products remain a separate scope unless explicitly approv
 
 ---
 
-## 13. Clean database direction
+## 14. Clean database direction
 
 After cleanup, keep canonical market data logically separate from derived/calculated data.
 
@@ -310,7 +338,7 @@ Before deleting old/reset/replay/proof databases, first salvage any realtime-onl
 
 ---
 
-## 14. Legacy Supabase scanner compatibility rule
+## 15. Legacy Supabase scanner compatibility rule
 
 The currently deployed legacy websites remain online and continue to read the OLD Supabase market/scanner tables.
 
@@ -343,7 +371,7 @@ Therefore:
 
 ---
 
-## 15. Minimum production tests for the new collector
+## 16. Minimum production tests for the new collector
 
 Before the next production session, focus on these core behaviors:
 
@@ -359,7 +387,7 @@ Broader metric tests are secondary to proving loss-tolerant canonical ingestion.
 
 ---
 
-## 16. One-line operating principle
+## 17. One-line operating principle
 
 > **SSI gives what it gives. CCC stores what it can identify, recovers what it can later, marks what remains missing, calculates only what available inputs support, and keeps moving.**
 

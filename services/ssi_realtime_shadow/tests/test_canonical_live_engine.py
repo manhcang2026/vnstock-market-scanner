@@ -17,6 +17,8 @@ from app.canonical_engine_store import (
 )
 from app.canonical_live_engine import CanonicalLiveEngine
 from app.canonical_market_store import (
+    MARKET_SCHEMA_VERSION,
+    SCHEMA_SQL,
     CanonicalMarketStore,
     MinuteBar,
     RealtimeMarketEvent,
@@ -111,6 +113,106 @@ def _state(engine: CanonicalLiveEngine) -> sqlite3.Row:
     row = engine.engine_store.current_row("AAA")
     assert row is not None
     return row
+
+
+def _legacy_v3_shard(path: Path, trading_date: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(path)
+    legacy_schema = SCHEMA_SQL.replace(
+        "    event_time TEXT,\n    last_price REAL,\n    last_price_at TEXT,\n",
+        "    event_time TEXT,\n    last_price REAL,\n",
+        1,
+    )
+    connection.executescript(legacy_schema)
+    connection.execute(
+        """INSERT INTO minute_bars(
+               symbol,trading_date,minute,exchange,close,volume,
+               provider_total_volume,source,quality_status,is_finalized,
+               event_count,updated_at
+           ) VALUES('AAA',?,'09:20','HNX',110,10,100,'SSI','TRUSTED',1,1,
+                    'before-migration')""",
+        (trading_date,),
+    )
+    connection.execute(
+        """INSERT INTO latest_quotes(
+               symbol,trading_date,event_time,last_price,total_volume,exchange,
+               provider_session,updated_at
+           ) VALUES('AAA',?,'09:20:10',999,100,'HNX','LO',
+                    'before-migration')""",
+        (trading_date,),
+    )
+    connection.execute(
+        """INSERT INTO schema_meta(key,value,updated_at)
+           VALUES('schema_version','3','before-migration')"""
+    )
+    connection.commit()
+    connection.close()
+
+
+def _assert_v4_shard_preserved(path: Path, trading_date: str) -> None:
+    connection = sqlite3.connect(path)
+    try:
+        columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(latest_quotes)")
+        }
+        version = connection.execute(
+            "SELECT value FROM schema_meta WHERE key='schema_version'"
+        ).fetchone()[0]
+        minute = connection.execute(
+            """SELECT close,volume,provider_total_volume FROM minute_bars
+               WHERE symbol='AAA' AND trading_date=?""",
+            (trading_date,),
+        ).fetchone()
+        quote = connection.execute(
+            """SELECT event_time,last_price,last_price_at,total_volume
+               FROM latest_quotes WHERE symbol='AAA' AND trading_date=?""",
+            (trading_date,),
+        ).fetchone()
+    finally:
+        connection.close()
+
+    assert "last_price_at" in columns
+    assert version == MARKET_SCHEMA_VERSION == "4"
+    assert minute == (110, 10, 100)
+    assert quote == ("09:20:10", 999, None, 100)
+
+
+def test_startup_migrates_v3_shard_before_readonly_projection(
+    tmp_path: Path,
+) -> None:
+    market_dir = tmp_path / "market"
+    shard = market_dir / "ccc_market_2026.db"
+    _legacy_v3_shard(shard, DAY)
+
+    engine = CanonicalLiveEngine(
+        market_store=CanonicalMarketStore(market_dir),
+        engine_path=tmp_path / "engine.db",
+        active_at=_after("09:20"),
+    )
+
+    assert engine.advance(_after("09:20")) == 1
+    assert _state(engine)["last_price"] == 110
+    _assert_v4_shard_preserved(shard, DAY)
+
+
+def test_year_rollover_migrates_new_shard_before_readonly_projection(
+    tmp_path: Path,
+) -> None:
+    market_dir = tmp_path / "market"
+    rollover_day = "2027-01-04"
+    rollover_at = datetime(2027, 1, 4, 9, 21, 3, tzinfo=VN_TZ)
+    shard = market_dir / "ccc_market_2027.db"
+    _legacy_v3_shard(shard, rollover_day)
+    engine = CanonicalLiveEngine(
+        market_store=CanonicalMarketStore(market_dir),
+        engine_path=tmp_path / "engine.db",
+        active_at=datetime(2026, 12, 31, 15, 1, tzinfo=VN_TZ),
+    )
+
+    assert engine.advance(rollover_at) == 1
+    assert _state(engine)["trading_date"] == rollover_day
+    assert _state(engine)["last_price"] == 110
+    _assert_v4_shard_preserved(shard, rollover_day)
 
 
 def test_startup_expires_old_state_but_preserves_today_baseline(
@@ -286,7 +388,7 @@ def test_pm_window_resets_and_never_bridges_lunch(tmp_path: Path) -> None:
     ("target", "anchor", "expected5", "expected15"),
     [
         ("09:20", "09:15", 10.0, None),
-        ("09:20", "09:05", None, 10.0),
+        ("09:20", "09:05", 10.0, 10.0),
         ("13:02", "12:57", None, None),
         ("13:05", "13:00", 10.0, None),
     ],
@@ -316,6 +418,174 @@ def test_price_windows_use_exact_same_segment_anchors(
     state = _state(engine)
     assert state["price5_pct"] == pytest.approx(expected5) if expected5 is not None else state["price5_pct"] is None
     assert state["price15_pct"] == pytest.approx(expected15) if expected15 is not None else state["price15_pct"] is None
+
+
+def test_price5_forward_fills_anchor_without_synthetic_minute_bar(
+    tmp_path: Path,
+) -> None:
+    market = CanonicalMarketStore(tmp_path / "market")
+    market.upsert_minute_bars(
+        [
+            _minute("11:23", close=100, total=100),
+            _minute("11:29", close=110, total=110),
+        ]
+    )
+    engine = CanonicalLiveEngine(
+        market_store=market,
+        engine_path=tmp_path / "engine.db",
+        active_at=_after("11:29"),
+    )
+    _baseline(engine, "11:29")
+
+    assert engine.advance(_after("11:29")) == 1
+    assert _state(engine)["price5_pct"] == pytest.approx(10)
+    rows = market.connection(2026).execute(
+        "SELECT minute FROM minute_bars ORDER BY minute"
+    ).fetchall()
+    assert [row[0] for row in rows] == ["11:23", "11:29"]
+
+
+def test_pm_price_state_starts_with_first_pm_trade_and_then_carries(
+    tmp_path: Path,
+) -> None:
+    market = CanonicalMarketStore(tmp_path / "market")
+    market.upsert_minute_bars(
+        [
+            _minute("11:29", close=100, total=100),
+            _minute("13:00", close=None, total=100),
+            _minute("13:01", close=None, total=100),
+            _minute("13:02", close=110, total=110),
+        ]
+    )
+    engine = CanonicalLiveEngine(
+        market_store=market,
+        engine_path=tmp_path / "engine.db",
+        active_at=_after("13:02"),
+    )
+    _baseline(engine, "13:02", "13:05", "13:07")
+
+    assert engine.advance(_after("13:02")) == 1
+    assert _state(engine)["price5_pct"] is None
+    assert engine.advance(_after("13:05")) == 1
+    assert _state(engine)["price5_pct"] is None
+    assert engine.advance(_after("13:07")) == 1
+    assert _state(engine)["price5_pct"] == pytest.approx(0)
+
+
+def test_am_latest_quote_price_is_not_pm_price_state(tmp_path: Path) -> None:
+    market = CanonicalMarketStore(tmp_path / "market")
+    market.write_realtime_event(
+        RealtimeMarketEvent(
+            symbol="AAA", trading_date=DAY, event_at=_at("11:29", 10),
+            minute="11:29", exchange="HNX", price=100, total_volume=100,
+        ),
+        observed_at=_after("11:29"),
+    )
+    market.write_realtime_event(
+        RealtimeMarketEvent(
+            symbol="AAA", trading_date=DAY, event_at=_at("13:01", 10),
+            minute="13:01", exchange="HNX", price=None, total_volume=110,
+        ),
+        observed_at=_after("13:01"),
+    )
+    engine = CanonicalLiveEngine(
+        market_store=market,
+        engine_path=tmp_path / "engine.db",
+        active_at=_after("13:01"),
+    )
+    _baseline(engine, "13:01", "13:02")
+
+    assert engine.advance(_after("13:01")) == 1
+    assert _state(engine)["last_price"] is None
+    quote = market.connection(2026).execute(
+        """SELECT event_time,last_price,last_price_at FROM latest_quotes
+           WHERE symbol='AAA'"""
+    ).fetchone()
+    assert tuple(quote) == ("13:01:10", 100, "11:29:10")
+
+    market.write_realtime_event(
+        RealtimeMarketEvent(
+            symbol="AAA", trading_date=DAY, event_at=_at("13:02", 10),
+            minute="13:02", exchange="HNX", price=110, total_volume=120,
+        ),
+        observed_at=_after("13:02"),
+    )
+    assert engine.advance(_after("13:02")) == 1
+    assert _state(engine)["last_price"] == 110
+
+
+def test_gap_breaks_price_carry_and_post_gap_trade_reestablishes_state(
+    tmp_path: Path,
+) -> None:
+    market = CanonicalMarketStore(tmp_path / "market")
+    market.upsert_minute_bars(
+        [
+            _minute("11:23", close=100, total=100),
+            _minute("11:29", close=None, total=110),
+        ]
+    )
+    market.record_data_gap(
+        year=2026,
+        trading_date=DAY,
+        reason="STREAM_OUTAGE",
+        source="SSI_STREAM",
+        status="OPEN",
+        symbol="AAA",
+        minute_from="11:24",
+        minute_to="11:26",
+    )
+    engine = CanonicalLiveEngine(
+        market_store=market,
+        engine_path=tmp_path / "engine.db",
+        active_at=_after("11:29"),
+    )
+    _baseline(engine, "11:29")
+
+    assert engine.advance(_after("11:29")) == 1
+    state = _state(engine)
+    assert state["last_price"] is None
+    assert state["price5_pct"] is None
+    assert state["ma10"] == 100
+
+    market.upsert_minute_bars([_minute("11:27", close=110, total=105)])
+    engine.mark_dirty(_event("11:27"), _result())
+    assert engine.advance(_after("11:29")) == 1
+    state = _state(engine)
+    assert state["last_price"] == 110
+    assert state["price5_pct"] is None
+    assert state["ma10"] == 100
+
+
+def test_price_state_change_leaves_rvol_and_ma_formulas_unchanged(
+    tmp_path: Path,
+) -> None:
+    market = CanonicalMarketStore(tmp_path / "market")
+    market.upsert_minute_bars(
+        [
+            _minute(
+                f"09:{value:02d}",
+                close=100 if value == 0 else 110 if value == 29 else None,
+                volume=10,
+                total=(value + 1) * 10,
+            )
+            for value in range(30)
+        ]
+    )
+    engine = CanonicalLiveEngine(
+        market_store=market,
+        engine_path=tmp_path / "engine.db",
+        active_at=_after("09:29"),
+    )
+    _baseline(engine, "09:29", ma10=100, ma200=100, denominator=100)
+
+    assert engine.advance(_after("09:29")) == 1
+    state = _state(engine)
+    assert state["price5_pct"] == pytest.approx(10)
+    assert state["day_rvol"] == pytest.approx(3)
+    assert state["rvol15"] == pytest.approx(1.5)
+    assert state["rvol30"] == pytest.approx(3)
+    assert state["ma10"] == 100
+    assert state["ma200"] == 100
 
 
 def test_missing_metrics_are_independent(tmp_path: Path) -> None:
@@ -511,9 +781,14 @@ def test_latest_quote_price_survives_volume_only_tick_and_late_correction(
         "SELECT close FROM minute_bars WHERE symbol='AAA' AND minute='09:11'"
     ).fetchone()[0] == 95
     latest = connection.execute(
-        "SELECT event_time,last_price FROM latest_quotes WHERE symbol='AAA'"
+        """SELECT event_time,last_price,last_price_at
+           FROM latest_quotes WHERE symbol='AAA'"""
     ).fetchone()
-    assert tuple(latest) == ("10:00:10", 90)
+    assert tuple(latest) == (
+        "10:00:10",
+        90,
+        "09:11:10",
+    )
     state = _state(engine)
     assert state["minute"] == "10:00"
     assert state["last_price"] == 90

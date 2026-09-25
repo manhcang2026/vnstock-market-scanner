@@ -18,7 +18,13 @@ from .canonical_market_store import (
     RealtimeWriteResult,
 )
 from .market_session import VN_TZ, normalize_exchange
-from .rebuild_engine import exact_price_change, rolling_volume, safe_ratio, usable_price
+from .rebuild_engine import (
+    exact_price_change,
+    price_state_at,
+    rolling_volume,
+    safe_ratio,
+    usable_price,
+)
 from .volume_baseline import VolumeGridPoint, volume_market_grid
 
 
@@ -112,7 +118,7 @@ class CanonicalLiveMarketReader:
             )
             latest = connection.execute(
                 """SELECT symbol,trading_date,event_time,last_price,total_volume,
-                          exchange,provider_session
+                          last_price_at,exchange,provider_session
                    FROM latest_quotes
                    WHERE symbol=? AND trading_date=?""",
                 (canonical_symbol, trading_date),
@@ -181,10 +187,12 @@ class CanonicalLiveEngine:
         engine_path: str | Path,
         active_at: datetime,
     ) -> None:
+        self._market_store = market_store
         self.engine_store = CanonicalEngineStore(engine_path)
-        self.market_reader = CanonicalLiveMarketReader(market_store)
         self._lock = threading.RLock()
         self._trading_date = _local(active_at).date().isoformat()
+        self._prepare_market_schema(self._trading_date)
+        self.market_reader = CanonicalLiveMarketReader(market_store)
         self.engine_store.expire_current_state(self._trading_date)
         self._active = set(self.market_reader.live_symbols(self._trading_date))
         self._dirty = {symbol: "" for symbol in self._active}
@@ -193,6 +201,10 @@ class CanonicalLiveEngine:
         self._last_projected: dict[str, str] = {}
         self._state_writes = 0
         self._calculation_errors = 0
+
+    def _prepare_market_schema(self, trading_date: str) -> None:
+        """Migrate the active writer shard before any read-only v4 query."""
+        self._market_store.connection(date.fromisoformat(trading_date).year)
 
     def mark_dirty(
         self, event: RealtimeMarketEvent, _result: RealtimeWriteResult
@@ -219,6 +231,7 @@ class CanonicalLiveEngine:
         trading_date = local.date().isoformat()
         with self._lock:
             if trading_date != self._trading_date:
+                self._prepare_market_schema(trading_date)
                 self.engine_store.expire_current_state(trading_date)
                 self._trading_date = trading_date
                 self._active = set(self.market_reader.live_symbols(trading_date))
@@ -327,26 +340,6 @@ class CanonicalLiveEngine:
             for minute, row in row_by_minute.items()
             if (close := usable_price(row["close"])) is not None
         }
-        minute_price = next(
-            (
-                price
-                for row in reversed(elapsed_rows)
-                if (price := usable_price(row["close"])) is not None
-            ),
-            None,
-        )
-        latest_quote_price = (
-            usable_price(latest_quote["last_price"])
-            if latest_quote is not None
-            and latest_quote["event_time"] is not None
-            and str(latest_quote["event_time"])[:5] <= target_minute
-            else None
-        )
-        latest_price = (
-            latest_quote_price
-            if latest_quote_price is not None
-            else minute_price
-        )
         cumulative_evidence = next(
             (
                 (str(row["minute"]), int(row["provider_total_volume"]))
@@ -369,6 +362,43 @@ class CanonicalLiveEngine:
                 for point in grid
                 if start <= point.minute <= end
             )
+
+        latest_quote_price = None
+        if latest_quote is not None:
+            quoted_price = usable_price(latest_quote["last_price"])
+            price_at = latest_quote["last_price_at"]
+            if quoted_price is not None and price_at:
+                try:
+                    provenance_text = str(price_at)
+                    provenance = (
+                        datetime.fromisoformat(provenance_text)
+                        if "T" in provenance_text
+                        else datetime.fromisoformat(
+                            f"{trading_date}T{provenance_text}"
+                        ).replace(tzinfo=VN_TZ)
+                    )
+                except ValueError:
+                    provenance = None
+                if provenance is not None and provenance.date().isoformat() == trading_date:
+                    source_minute = provenance.strftime("%H:%M")
+                    latest_quote_price = price_state_at(
+                        exchange=exchange,
+                        trading_date=trading_date,
+                        target_minute=target_minute,
+                        closes={source_minute: quoted_price},
+                        unresolved_gap_minutes=gap_minutes,
+                    )
+        latest_price = (
+            latest_quote_price
+            if latest_quote_price is not None
+            else price_state_at(
+                exchange=exchange,
+                trading_date=trading_date,
+                target_minute=target_minute,
+                closes=closes,
+                unresolved_gap_minutes=gap_minutes,
+            )
+        )
 
         cumulative_gap_uncertain = any(
             minute <= target_minute
@@ -428,6 +458,7 @@ class CanonicalLiveEngine:
             current_price=latest_price,
             closes=closes,
             window=5,
+            unresolved_gap_minutes=gap_minutes,
         )
         price15 = exact_price_change(
             exchange=exchange,
@@ -436,6 +467,7 @@ class CanonicalLiveEngine:
             current_price=latest_price,
             closes=closes,
             window=15,
+            unresolved_gap_minutes=gap_minutes,
         )
         distance10 = (
             (latest_price / ma10 - 1.0) * 100.0
