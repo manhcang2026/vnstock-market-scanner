@@ -116,6 +116,7 @@ export default function StockDetailShell({
     || user?.user_metadata?.full_name
     || user?.email?.split('@')[0]
     || 'Đăng nhập'
+  const accountPath = user ? '/tai-khoan' : '/dang-nhap'
 
   useEffect(() => {
     if (drawerOpen) drawerCloseRef.current?.focus()
@@ -210,7 +211,7 @@ export default function StockDetailShell({
           <button
             type="button"
             className="stock-header-account"
-            onClick={() => navigate('/dang-nhap')}
+            onClick={() => navigate(accountPath)}
             title={user?.email || 'Tài khoản'}
           >
             <Icon name="account" size={17} />
@@ -258,7 +259,7 @@ export default function StockDetailShell({
               ))}
             </nav>
             <div className="stock-v3-drawer-footer">
-              <button type="button" onClick={() => navigate('/dang-nhap')}>
+              <button type="button" onClick={() => navigate(accountPath)}>
                 <Icon name="account" />
                 <span>{user ? accountName : 'Đăng nhập / Tài khoản'}</span>
               </button>
@@ -333,7 +334,10 @@ export default function StockDetailShell({
                 <Icon name="close" />
               </button>
             </header>
-            <button type="button" className="stock-v3-sheet-row" onClick={() => navigate('/dang-nhap')}>
+            <button type="button" className="stock-v3-sheet-row" onClick={() => {
+              setMoreOpen(false)
+              navigate(accountPath)
+            }}>
               <Icon name="account" />
               <span>
                 <strong>Tài khoản</strong>

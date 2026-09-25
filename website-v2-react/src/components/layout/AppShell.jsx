@@ -25,6 +25,7 @@ export default function AppShell() {
   const { user, ready } = useAuth()
   const isStockDetail = /^\/co-phieu\/[^/]+\/?$/.test(location.pathname)
   const isScanner = /^\/danh-sach\/?$/.test(location.pathname)
+  const isAccount = /^\/tai-khoan\/?$/.test(location.pathname)
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -62,7 +63,7 @@ export default function AppShell() {
     navigate(`/danh-sach?q=${encodeURIComponent(rawQuery)}`)
   }
 
-  if (isStockDetail || isScanner) {
+  if (isStockDetail || isScanner || isAccount) {
     return (
       <StockDetailShell
         theme={theme}
@@ -110,7 +111,7 @@ export default function AppShell() {
           <button
             type="button"
             className="account-button"
-            onClick={() => navigate('/dang-nhap')}
+            onClick={() => navigate(user ? '/tai-khoan' : '/dang-nhap')}
             title={user?.email || 'Tài khoản'}
           >
             <span>{ready && user ? '●' : '○'}</span>
