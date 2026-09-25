@@ -32,3 +32,5 @@ Thumbs.db
 
 # Service-local test virtualenv
 services/ssi_realtime_shadow/.venv-test/
+/du lieu rieng/
+/ccc_*.diff
