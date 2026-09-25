@@ -1,0 +1,122 @@
+/* CCC v19 alpha.17 — member experience, DS mã theo dõi, entitlement & VIP Day */
+
+/* Account hierarchy: action-heavy DS mã theo dõi in main, compact plan in rail. */
+body.ccc-account-route .ccc-watchlist-main-card{padding:20px!important}
+body.ccc-account-route .ccc-plan-rail-card{padding:18px!important}
+body.ccc-account-route .ccc-plan-rail-card .ccc-current-plan-strip{grid-template-columns:1fr!important;gap:8px!important}
+body.ccc-account-route .ccc-plan-rail-card .ccc-current-plan-strip>div{padding:10px 11px!important}
+body.ccc-account-route .ccc-plan-rail-card .ccc-account-cycle.compact{display:grid!important;grid-template-columns:1fr!important;gap:4px!important}
+body.ccc-account-route .ccc-plan-rail-card .ccc-account-cycle strong{text-align:left!important}
+body.ccc-account-route .ccc-plan-rail-card .ccc-plan-explorer-head{align-items:flex-start;flex-direction:column;gap:3px}
+body.ccc-account-route .ccc-plan-rail-card .ccc-plan-choices{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:7px!important;overflow:visible!important}
+body.ccc-account-route .ccc-plan-rail-card .ccc-plan-choice{min-width:0!important;min-height:72px!important;padding:9px!important}
+body.ccc-account-route .ccc-plan-rail-card .ccc-plan-preview{padding:11px!important}
+body.ccc-account-route .ccc-plan-rail-card .ccc-plan-preview-grid{grid-template-columns:1fr!important}
+
+.ccc-vip-day-offer{display:grid;gap:10px;margin-top:14px;padding:13px;border:1px solid color-mix(in oklab,var(--rvol) 42%,var(--border));border-radius:var(--radius-lg);background:color-mix(in oklab,var(--rvol-bg) 58%,var(--surface-1))}
+.ccc-vip-day-offer>div>span{display:block;color:var(--rvol);font-size:10.5px;font-weight:850;letter-spacing:.08em}
+.ccc-vip-day-offer>div>strong{display:block;margin-top:3px;font-size:14px;line-height:1.35}
+.ccc-vip-day-offer>div>small{display:block;margin-top:4px;color:var(--muted-foreground);font-size:11px;line-height:1.45}
+.ccc-vip-day-offer button{min-height:38px;border:1px solid var(--border-strong);border-radius:var(--radius-md);background:var(--surface-2);color:var(--foreground);font-size:12px;font-weight:800;opacity:.72}
+
+/* DS mã theo dõi */
+.ccc-watchlist-live-card{min-width:0}
+.ccc-wl-loading{display:flex;align-items:center;gap:10px;min-height:82px;color:var(--muted-foreground)}
+.ccc-wl-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:16px 0}
+.ccc-wl-metrics>div{min-width:0;padding:12px 13px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface-2)}
+.ccc-wl-metrics span,.ccc-wl-metrics strong{display:block}
+.ccc-wl-metrics span{color:var(--muted-foreground);font-size:12px}
+.ccc-wl-metrics strong{margin-top:4px;font-size:15px;line-height:1.35;overflow-wrap:anywhere}
+.ccc-wl-banner,.ccc-wl-feedback{display:grid;gap:3px;margin:11px 0;padding:11px 13px;border-radius:var(--radius-md);font-size:12.5px;line-height:1.5}
+.ccc-wl-banner.info{border:1px solid color-mix(in oklab,var(--volume) 42%,var(--border));background:var(--volume-bg)}
+.ccc-wl-banner.danger,.ccc-wl-feedback.error{border:1px solid color-mix(in oklab,var(--negative) 42%,var(--border));background:var(--negative-bg);color:var(--negative)}
+.ccc-wl-feedback.success{border:1px solid color-mix(in oklab,var(--positive) 42%,var(--border));background:var(--positive-bg);color:var(--positive)}
+.ccc-wl-editor{margin-top:16px}
+.ccc-wl-search-wrap{position:relative;z-index:15}
+.ccc-wl-search-wrap>label,.ccc-wl-list-head>span{display:block;margin-bottom:7px;font-size:13px;font-weight:750}
+.ccc-wl-search-box{position:relative}
+#ccc-wl-search{width:100%;height:44px;padding:0 13px;border:1px solid var(--input);border-radius:var(--radius-md);background:var(--surface-2);color:var(--foreground);font:inherit;font-size:14px;outline:0}
+#ccc-wl-search:focus{border-color:var(--ring);box-shadow:0 0 0 3px var(--focus-ring)}
+.ccc-wl-search-results{position:absolute;z-index:40;top:calc(100% + 6px);left:0;right:0;max-height:340px;overflow:auto;padding:5px;border:1px solid var(--border-strong);border-radius:var(--radius-lg);background:var(--elevated);box-shadow:0 18px 44px oklch(0 0 0/.22)}
+.ccc-wl-search-status{padding:12px;color:var(--muted-foreground);font-size:12.5px}
+.ccc-wl-result{width:100%;display:grid;grid-template-columns:38px minmax(0,1fr) auto;align-items:center;gap:10px;padding:9px;border:0;border-radius:var(--radius-md);background:transparent;color:var(--foreground);text-align:left;cursor:pointer}
+.ccc-wl-result:hover:not(:disabled),.ccc-wl-result:focus-visible:not(:disabled){background:var(--surface-3);outline:0}
+.ccc-wl-result:disabled{opacity:.55;cursor:not-allowed}
+.ccc-wl-result-copy{display:grid;min-width:0;grid-template-columns:auto 1fr;column-gap:8px;align-items:baseline}
+.ccc-wl-result-copy b{font-size:14px}
+.ccc-wl-result-copy small{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted-foreground);font-size:12.5px}
+.ccc-wl-result-copy em{grid-column:1/-1;color:var(--muted-foreground);font-size:10.5px;font-style:normal}
+.ccc-wl-result>strong{font-size:11.5px;white-space:nowrap}
+.ccc-wl-logo{position:relative;display:grid;width:38px;height:38px;place-items:center;overflow:hidden;border:1px solid var(--border);border-radius:9px;background:var(--surface-2);font-size:10px;font-weight:800}
+.ccc-wl-logo img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:var(--surface-1);z-index:1}
+.ccc-wl-logo.small{width:36px;height:36px}
+.ccc-wl-list-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:18px}
+.ccc-wl-list-head small{color:var(--muted-foreground);font-size:11.5px}
+.ccc-wl-selected-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.ccc-wl-selected-row{display:grid;grid-template-columns:36px minmax(0,1fr) 30px;align-items:center;gap:10px;min-width:0;padding:9px 10px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface-2)}
+.ccc-wl-selected-row>div{min-width:0}
+.ccc-wl-selected-row strong{font-size:13.5px}
+.ccc-wl-selected-row span,.ccc-wl-selected-row small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ccc-wl-selected-row span{margin-top:1px;color:var(--foreground);font-size:12px}
+.ccc-wl-selected-row small{margin-top:1px;color:var(--muted-foreground);font-size:10.5px}
+.ccc-wl-selected-row>button{width:28px;height:28px;display:grid;place-items:center;border:1px solid var(--border);border-radius:50%;background:var(--surface-1);color:var(--muted-foreground);font-size:17px;cursor:pointer}
+.ccc-wl-selected-row>button:hover{border-color:var(--negative);color:var(--negative);background:var(--negative-bg)}
+.ccc-wl-empty{padding:20px;border:1px dashed var(--border-strong);border-radius:var(--radius-md);color:var(--muted-foreground);font-size:12.5px;text-align:center}
+.ccc-wl-actions{display:flex;justify-content:flex-end;gap:9px;margin-top:15px}
+.ccc-wl-actions .ccc-account-secondary{width:auto;margin-top:0}
+.ccc-wl-rule-note{margin:10px 0 0;color:var(--muted-foreground);font-size:11.5px;line-height:1.5}
+
+/* Overview real entitlement */
+.ccc-vip-active-chip{display:inline-flex;align-items:center;min-height:28px;padding:0 10px;border:1px solid color-mix(in oklab,var(--rvol) 55%,var(--border));border-radius:999px;background:var(--rvol-bg);color:var(--rvol);font-size:11px;font-weight:800}
+.ccc-overview-empty{display:grid;place-items:start;gap:8px;padding:28px 24px;border-top:1px solid var(--border);background:var(--surface-1)}
+.ccc-overview-empty strong{font-size:16px}
+.ccc-overview-empty>span{max-width:680px;color:var(--muted-foreground);font-size:13px;line-height:1.55}
+.ccc-overview-empty>div{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
+.ccc-overview-empty a,.ccc-overview-empty button,.ccc-overview-upsell-actions a,.ccc-overview-upsell-actions button{display:inline-flex;align-items:center;justify-content:center;min-height:39px;padding:0 13px;border-radius:var(--radius-md);font-size:12px;font-weight:800;text-decoration:none;cursor:pointer}
+.ccc-overview-empty a,.ccc-overview-upsell-actions a{border:1px solid var(--border-strong);background:var(--surface-2);color:var(--foreground)}
+.ccc-overview-empty button,.ccc-overview-upsell-actions button{border:1px solid var(--primary);background:var(--primary);color:var(--primary-foreground)}
+.ccc-overview-upsell{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:22px;margin-top:14px;padding:17px 18px;border:1px solid color-mix(in oklab,var(--rvol) 38%,var(--border));border-radius:var(--radius-lg);background:color-mix(in oklab,var(--rvol-bg) 45%,var(--surface-1))}
+.ccc-overview-upsell>div:first-child>span{display:block;color:var(--rvol);font-size:10.5px;font-weight:850;letter-spacing:.07em}
+.ccc-overview-upsell>div:first-child>strong{display:block;margin-top:3px;font-size:15px;line-height:1.4}
+.ccc-overview-upsell p{margin:4px 0 0;color:var(--muted-foreground);font-size:12px;line-height:1.5}
+.ccc-overview-upsell-actions{display:grid;gap:7px;min-width:230px}
+.ccc-entitled-row{cursor:default!important}
+
+/* VIP preview */
+.ccc-vip-backdrop{position:fixed;inset:0;z-index:2000;display:grid;place-items:center;padding:20px;background:oklch(0 0 0/.62);backdrop-filter:blur(4px)}
+.ccc-vip-dialog{position:relative;width:min(520px,100%);max-height:calc(100dvh - 40px);overflow:auto;padding:25px;border:1px solid var(--border-strong);border-radius:var(--radius-xl);background:var(--elevated);box-shadow:0 24px 80px oklch(0 0 0/.36)}
+.ccc-vip-close{position:absolute;top:13px;right:13px;width:34px;height:34px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface-2);color:var(--foreground);font-size:22px}
+.ccc-vip-kicker{display:block;color:var(--rvol);font-size:11px;font-weight:850;letter-spacing:.08em}
+.ccc-vip-dialog h2{margin:5px 42px 5px 0;font-size:23px;line-height:1.2}
+.ccc-vip-price{display:block;margin:12px 0 15px;font-size:26px}.ccc-vip-price small{font-size:13px;font-weight:600;color:var(--muted-foreground)}
+.ccc-vip-dialog ul{display:grid;gap:8px;margin:0;padding-left:20px;color:var(--foreground);font-size:13px;line-height:1.5}
+.ccc-vip-disabled{width:100%;min-height:44px;margin-top:18px;border:1px solid var(--primary);border-radius:var(--radius-md);background:var(--primary);color:var(--primary-foreground);font-weight:800;opacity:.7}
+.ccc-vip-dialog>p{margin:9px 0 0;color:var(--muted-foreground);font-size:11px;line-height:1.5;text-align:center}
+
+@media(max-width:1279px){
+  body.ccc-account-route .ccc-plan-rail-card .ccc-plan-choices{grid-template-columns:repeat(4,minmax(0,1fr))!important}
+}
+@media(max-width:900px){
+  .ccc-wl-selected-list{grid-template-columns:1fr}
+  .ccc-overview-upsell{grid-template-columns:1fr;gap:12px}
+  .ccc-overview-upsell-actions{display:flex;flex-wrap:wrap;min-width:0}
+}
+@media(max-width:767px){
+  body.ccc-account-route .ccc-plan-rail-card .ccc-plan-choices{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+  .ccc-wl-metrics{grid-template-columns:1fr}
+  .ccc-wl-selected-list{grid-template-columns:1fr}
+  .ccc-wl-actions{display:grid;grid-template-columns:1fr 1fr}
+  .ccc-wl-actions .ccc-account-secondary,.ccc-wl-actions .ccc-account-primary{width:100%}
+  .ccc-overview-upsell{margin-inline:0;padding:14px}
+}
+@media(max-width:430px){
+  .ccc-wl-actions{grid-template-columns:1fr}
+  .ccc-wl-result{grid-template-columns:36px minmax(0,1fr)}
+  .ccc-wl-result>strong{display:none}
+  .ccc-vip-backdrop{padding:0;align-items:end}
+  .ccc-vip-dialog{width:100%;max-height:92dvh;border-radius:var(--radius-xl) var(--radius-xl) 0 0}
+}
+
+/* Prevent real signed-in users from seeing mock technical rows before entitlement resolves. */
+body.ccc-member-entitlement-loading main.lovable-overview #overview-results,
+body.ccc-member-entitlement-loading main.lovable-overview #overview-locked-slot{visibility:hidden}
