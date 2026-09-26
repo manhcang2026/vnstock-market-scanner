@@ -251,6 +251,7 @@ def main() -> int:
                 market_store=canonical_store,
                 engine_path=settings.canonical_engine_path,
                 active_at=started_at,
+                signal_enabled=settings.canonical_signal_enabled,
             )
             LOG.info(
                 "Canonical live engine initialized: path=%s stats=%s",
@@ -313,6 +314,27 @@ def main() -> int:
                     canonical_stats.calculation_errors
                     if canonical_stats
                     else int(settings.canonical_engine_enabled)
+                ),
+                "canonical_signal_enabled": settings.canonical_signal_enabled,
+                "canonical_signal_initialized": (
+                    canonical_stats.canonical_signal_initialized
+                    if canonical_stats
+                    else False
+                ),
+                "canonical_signal_writes": (
+                    canonical_stats.canonical_signal_writes
+                    if canonical_stats
+                    else 0
+                ),
+                "canonical_signal_events": (
+                    canonical_stats.canonical_signal_events
+                    if canonical_stats
+                    else 0
+                ),
+                "canonical_signal_errors": (
+                    canonical_stats.canonical_signal_errors
+                    if canonical_stats
+                    else int(settings.canonical_signal_enabled)
                 ),
             }
         )

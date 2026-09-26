@@ -938,6 +938,132 @@ def test_engine_exception_keeps_canonical_commit_and_last_usable_state(
     engine.market_reader.read_live_day = original  # type: ignore[method-assign]
 
 
+def test_canonical_signal_disabled_leaves_metrics_projection_unchanged(
+    tmp_path: Path,
+) -> None:
+    market = CanonicalMarketStore(tmp_path / "market")
+    market.upsert_minute_bars([_minute("09:14", total=100)])
+    engine = CanonicalLiveEngine(
+        market_store=market,
+        engine_path=tmp_path / "engine.db",
+        active_at=_after("09:14"),
+    )
+    _baseline(engine, "09:14")
+
+    assert engine.advance(_after("09:14")) == 1
+    assert _state(engine)["minute"] == "09:14"
+    assert engine.engine_store.signal_row("AAA") is None
+    stats = engine.stats()
+    assert not stats.canonical_signal_enabled
+    assert not stats.canonical_signal_initialized
+    assert stats.canonical_signal_writes == 0
+    assert stats.canonical_signal_events == 0
+    assert stats.canonical_signal_errors == 0
+
+
+def test_canonical_signal_enabled_writes_and_counts_projection(
+    tmp_path: Path,
+) -> None:
+    market = CanonicalMarketStore(tmp_path / "market")
+    market.upsert_minute_bars([_minute("09:14", total=100)])
+    engine = CanonicalLiveEngine(
+        market_store=market,
+        engine_path=tmp_path / "engine.db",
+        active_at=_after("09:14"),
+        signal_enabled=True,
+    )
+    _baseline(engine, "09:14")
+
+    assert engine.advance(_after("09:14")) == 1
+    signal = engine.engine_store.signal_row("AAA")
+    assert signal is not None
+    assert signal["session_type"] == "AM_CONTINUOUS"
+    stats = engine.stats()
+    assert stats.canonical_signal_enabled
+    assert stats.canonical_signal_initialized
+    assert stats.canonical_signal_writes == 1
+    assert stats.canonical_signal_events == 0
+    assert stats.canonical_signal_errors == 0
+
+
+def test_lunch_restart_preserves_positive_signal_using_observation_clock(
+    tmp_path: Path,
+) -> None:
+    market = CanonicalMarketStore(tmp_path / "market")
+    market.upsert_minute_bars(
+        [
+            _minute("11:13", close=100, volume=100, total=100),
+            _minute("11:28", close=102, volume=100, total=200),
+            _minute("11:29", close=90, volume=100, total=300),
+        ]
+    )
+    engine_path = tmp_path / "engine.db"
+    engine = CanonicalLiveEngine(
+        market_store=market,
+        engine_path=engine_path,
+        active_at=_after("11:28"),
+        signal_enabled=True,
+    )
+    _baseline(engine, "11:28", "11:29", denominator=100)
+
+    assert engine.advance(_after("11:28")) == 1
+    first = engine.engine_store.signal_row("AAA")
+    assert first is not None
+    assert first["signal_state"] == "FLOW_PRICE_CONFIRMED"
+    assert first["session_type"] == "AM_CONTINUOUS"
+    assert engine.engine_store.connection.execute(
+        "SELECT COUNT(*) FROM signal_events"
+    ).fetchone()[0] == 1
+    engine.close()
+
+    restarted = CanonicalLiveEngine(
+        market_store=market,
+        engine_path=engine_path,
+        active_at=_at("12:00"),
+        signal_enabled=True,
+    )
+    assert restarted.advance(_at("12:00")) == 1
+    preserved = restarted.engine_store.signal_row("AAA")
+    assert preserved is not None
+    assert preserved["signal_state"] == "FLOW_PRICE_CONFIRMED"
+    assert preserved["session_type"] == "LUNCH_BREAK"
+    assert preserved["minute"] == "11:29"
+    assert restarted.engine_store.connection.execute(
+        "SELECT COUNT(*) FROM signal_events"
+    ).fetchone()[0] == 1
+
+
+def test_signal_projection_failure_does_not_rollback_current_state(
+    tmp_path: Path,
+) -> None:
+    market = CanonicalMarketStore(tmp_path / "market")
+    market.upsert_minute_bars([_minute("09:14", total=100)])
+    engine = CanonicalLiveEngine(
+        market_store=market,
+        engine_path=tmp_path / "engine.db",
+        active_at=_after("09:14"),
+        signal_enabled=True,
+    )
+    _baseline(engine, "09:14")
+
+    class BrokenSignalProjector:
+        def project(self, _state: CurrentState, _observed_at: datetime):
+            raise sqlite3.OperationalError("signal write failed")
+
+    engine.signal_projector = BrokenSignalProjector()  # type: ignore[assignment]
+
+    assert engine.advance(_after("09:14")) == 1
+    assert _state(engine)["minute"] == "09:14"
+    stats = engine.stats()
+    assert stats.state_writes == 1
+    assert stats.calculation_errors == 0
+    assert stats.canonical_signal_enabled
+    assert stats.canonical_signal_initialized
+    assert stats.canonical_signal_writes == 0
+    assert stats.canonical_signal_events == 0
+    assert stats.canonical_signal_errors == 1
+
+
 def test_main_engine_wrapper_is_fail_open() -> None:
     class Broken:
         def advance(self, _now: datetime) -> int:

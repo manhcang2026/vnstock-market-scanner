@@ -69,6 +69,7 @@ class Settings:
     volume_engine_enabled: bool
     live_state_enabled: bool
     canonical_engine_enabled: bool
+    canonical_signal_enabled: bool
     canonical_engine_path: Path
     volume_baseline_path: Path
     market_v2_database_path: Path
@@ -112,6 +113,9 @@ class Settings:
             live_state_enabled=live_state_enabled,
             canonical_engine_enabled=_env_bool(
                 "CANONICAL_ENGINE_ENABLED", False
+            ),
+            canonical_signal_enabled=_env_bool(
+                "CANONICAL_SIGNAL_ENABLED", False
             ),
             canonical_engine_path=_service_path(
                 _env("CANONICAL_ENGINE_PATH", "data/ccc_engine.db")

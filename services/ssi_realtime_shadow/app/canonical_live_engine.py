@@ -6,16 +6,18 @@ import json
 import logging
 import sqlite3
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from .canonical_engine_store import CanonicalEngineStore, CurrentState
+from .canonical_signal_projector import CanonicalSignalProjector
 from .canonical_market_store import (
     MINUTE_FINALIZATION_GRACE_SECONDS,
     CanonicalMarketStore,
     RealtimeMarketEvent,
     RealtimeWriteResult,
+    utc_now,
 )
 from .market_session import VN_TZ, normalize_exchange
 from .rebuild_engine import (
@@ -38,6 +40,11 @@ class ProjectorStats:
     state_writes: int
     calculation_errors: int
     trading_date: str
+    canonical_signal_enabled: bool
+    canonical_signal_initialized: bool
+    canonical_signal_writes: int
+    canonical_signal_events: int
+    canonical_signal_errors: int
 
 
 class CanonicalLiveMarketReader:
@@ -186,14 +193,31 @@ class CanonicalLiveEngine:
         market_store: CanonicalMarketStore,
         engine_path: str | Path,
         active_at: datetime,
+        signal_enabled: bool = False,
     ) -> None:
         self._market_store = market_store
         self.engine_store = CanonicalEngineStore(engine_path)
         self._lock = threading.RLock()
+        self._signal_enabled = signal_enabled
+        self._signal_writes = 0
+        self._signal_events = 0
+        self._signal_errors = 0
+        self.signal_projector: CanonicalSignalProjector | None = None
+        if signal_enabled:
+            try:
+                self.signal_projector = CanonicalSignalProjector(self.engine_store)
+            except Exception:
+                self._signal_errors += 1
+                LOG.exception(
+                    "Canonical signal projector initialization failed; "
+                    "canonical metrics continue"
+                )
         self._trading_date = _local(active_at).date().isoformat()
         self._prepare_market_schema(self._trading_date)
         self.market_reader = CanonicalLiveMarketReader(market_store)
         self.engine_store.expire_current_state(self._trading_date)
+        if self.signal_projector is not None:
+            self.engine_store.expire_signal_state(self._trading_date)
         self._active = set(self.market_reader.live_symbols(self._trading_date))
         self._dirty = {symbol: "" for symbol in self._active}
         self._dirty_generation = {symbol: 0 for symbol in self._active}
@@ -233,6 +257,8 @@ class CanonicalLiveEngine:
             if trading_date != self._trading_date:
                 self._prepare_market_schema(trading_date)
                 self.engine_store.expire_current_state(trading_date)
+                if self.signal_projector is not None:
+                    self.engine_store.expire_signal_state(trading_date)
                 self._trading_date = trading_date
                 self._active = set(self.market_reader.live_symbols(trading_date))
                 self._dirty = {symbol: "" for symbol in self._active}
@@ -264,6 +290,8 @@ class CanonicalLiveEngine:
                 state = self._calculate(symbol, trading_date, local)
                 if state is None:
                     continue
+                if not state.updated_at:
+                    state = replace(state, updated_at=utc_now())
                 self.engine_store.upsert_current(state)
             except Exception:
                 with self._lock:
@@ -273,6 +301,21 @@ class CanonicalLiveEngine:
                     symbol,
                 )
                 continue
+            if self.signal_projector is not None:
+                try:
+                    signal_result = self.signal_projector.project(state, local)
+                except Exception:
+                    with self._lock:
+                        self._signal_errors += 1
+                    LOG.exception(
+                        "Canonical signal projection failed; metrics remain committed: "
+                        "symbol=%s",
+                        symbol,
+                    )
+                else:
+                    with self._lock:
+                        self._signal_writes += int(signal_result.state_written)
+                        self._signal_events += int(signal_result.event_appended)
             with self._lock:
                 self._last_projected[symbol] = str(state.minute)
                 dirty_minute = self._dirty.get(symbol)
@@ -543,6 +586,11 @@ class CanonicalLiveEngine:
                 state_writes=self._state_writes,
                 calculation_errors=self._calculation_errors,
                 trading_date=self._trading_date,
+                canonical_signal_enabled=self._signal_enabled,
+                canonical_signal_initialized=self.signal_projector is not None,
+                canonical_signal_writes=self._signal_writes,
+                canonical_signal_events=self._signal_events,
+                canonical_signal_errors=self._signal_errors,
             )
 
     def close(self) -> None:

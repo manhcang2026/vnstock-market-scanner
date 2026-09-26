@@ -27,6 +27,7 @@ def test_volume_shadow_defaults_disabled_with_explicit_baseline(
 
     assert not settings.volume_engine_enabled
     assert not settings.canonical_engine_enabled
+    assert not settings.canonical_signal_enabled
     assert settings.canonical_market_dir == ROOT / "data"
     assert settings.canonical_engine_path == ROOT / "data" / "ccc_engine.db"
     assert settings.volume_baseline_path == ROOT / "fixtures" / "baseline.db"
@@ -115,6 +116,21 @@ def test_canonical_engine_flag_is_independent_of_legacy_engines(
 
     assert settings.canonical_engine_enabled
     assert settings.canonical_engine_path == ROOT / "fixtures" / "canonical-engine.db"
+    assert not settings.volume_engine_enabled
+    assert not settings.live_state_enabled
+
+
+def test_canonical_signal_flag_is_independent_of_legacy_engines(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _required_env(monkeypatch)
+    monkeypatch.setenv("CANONICAL_SIGNAL_ENABLED", "true")
+    monkeypatch.setenv("VOLUME_ENGINE_ENABLED", "false")
+    monkeypatch.setenv("LIVE_STATE_ENABLED", "false")
+
+    settings = Settings.from_env()
+
+    assert settings.canonical_signal_enabled
     assert not settings.volume_engine_enabled
     assert not settings.live_state_enabled
 
