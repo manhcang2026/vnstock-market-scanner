@@ -9,6 +9,8 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable, Mapping
 
+from .market_session import SessionType, classify_market_session
+
 
 MARKET_SCHEMA_VERSION = "4"
 MINUTE_FINALIZATION_GRACE_SECONDS = 3
@@ -646,7 +648,31 @@ class CanonicalMarketStore:
                         corrected_total=int(minute_provider_total),
                     )
 
-                if provider_session in {"ATO", "ATC"}:
+                exchange = str(event.exchange or "").strip().upper()
+                exchange_session = (
+                    classify_market_session(exchange, event.event_at)
+                    if exchange in {"HOSE", "HNX", "UPCOM"}
+                    else None
+                )
+                if (
+                    provider_session
+                    and provider_session != "ATO"
+                    and exchange == "HOSE"
+                ):
+                    self._finalize_realtime_ato(
+                        connection,
+                        symbol=symbol,
+                        trading_date=trading_date,
+                        exchange=exchange,
+                        transition_at=event.event_at,
+                        updated_at=now,
+                    )
+                if (
+                    provider_session == "ATO"
+                    and exchange == "HOSE"
+                    and exchange_session is not None
+                    and exchange_session.session_type is SessionType.OPEN_AUCTION
+                ):
                     self._upsert_realtime_auction(
                         connection,
                         event=event,
@@ -659,10 +685,24 @@ class CanonicalMarketStore:
                         quality_status=quality,
                         updated_at=now,
                     )
-                elif provider_session:
+                elif provider_session == "ATC":
+                    self._upsert_realtime_auction(
+                        connection,
+                        event=event,
+                        symbol=symbol,
+                        trading_date=trading_date,
+                        event_iso=event_iso,
+                        price=price,
+                        total_volume=total_volume,
+                        prior_latest=latest,
+                        quality_status=quality,
+                        updated_at=now,
+                    )
+                elif provider_session and provider_session != "ATO":
                     connection.execute(
                         """UPDATE auction_sessions SET finalized=1,updated_at=?
-                           WHERE symbol=? AND trading_date=? AND finalized=0""",
+                           WHERE symbol=? AND trading_date=? AND auction_type='ATC'
+                             AND finalized=0""",
                         (now, symbol, trading_date),
                     )
 
@@ -790,6 +830,52 @@ class CanonicalMarketStore:
         return bool(cursor.rowcount)
 
     @staticmethod
+    def _finalize_realtime_ato(
+        connection: sqlite3.Connection,
+        *,
+        symbol: str,
+        trading_date: str,
+        exchange: str,
+        transition_at: datetime,
+        updated_at: str,
+    ) -> None:
+        existing_row = connection.execute(
+            """SELECT * FROM auction_sessions
+               WHERE symbol=? AND trading_date=? AND auction_type='ATO'
+                 AND exchange=? AND finalized=0""",
+            (symbol, trading_date, exchange),
+        ).fetchone()
+        if existing_row is None:
+            return
+        existing = dict(existing_row)
+        last_event_text = existing.get("last_event_at")
+        if last_event_text is None:
+            return
+        try:
+            last_event_at = datetime.fromisoformat(str(last_event_text))
+        except ValueError:
+            return
+        evidence_session = classify_market_session(exchange, last_event_at)
+        if (
+            evidence_session.session_type is not SessionType.OPEN_AUCTION
+            or evidence_session.session_end is None
+            or transition_at < evidence_session.session_end
+            or transition_at <= last_event_at
+        ):
+            return
+        connection.execute(
+            """UPDATE auction_sessions SET finalized=1,updated_at=?
+               WHERE symbol=? AND trading_date=? AND auction_type='ATO'
+                 AND exchange=? AND finalized=0""",
+            (
+                updated_at,
+                symbol,
+                trading_date,
+                exchange,
+            ),
+        )
+
+    @staticmethod
     def _upsert_realtime_auction(
         connection: sqlite3.Connection,
         *,
@@ -810,6 +896,8 @@ class CanonicalMarketStore:
             (symbol, trading_date, auction_type),
         ).fetchone()
         existing = dict(existing_row) if existing_row is not None else {}
+        if auction_type == "ATO" and int(existing.get("finalized") or 0):
+            return
         prior_total = (
             int(prior_latest["total_volume"])
             if prior_latest is not None
@@ -829,11 +917,20 @@ class CanonicalMarketStore:
         end_total = existing.get("end_total_volume")
         if total_volume is not None:
             end_total = total_volume if end_total is None else max(int(end_total), total_volume)
-        auction_volume = (
-            max(0, int(end_total) - int(start_total))
-            if end_total is not None and start_total is not None
-            else None
-        )
+        if auction_type == "ATO":
+            auction_volume = (
+                int(end_total) - int(start_total)
+                if end_total is not None
+                and start_total is not None
+                and int(end_total) >= int(start_total)
+                else None
+            )
+        else:
+            auction_volume = (
+                max(0, int(end_total) - int(start_total))
+                if end_total is not None and start_total is not None
+                else None
+            )
         pre_auction_price = existing.get("pre_auction_price")
         if (
             auction_type == "ATC"
@@ -849,9 +946,20 @@ class CanonicalMarketStore:
         last_event = max(
             value for value in (existing.get("last_event_at"), event_iso) if value
         )
-        auction_price = price if price is not None else existing.get("auction_price")
+        auction_price = existing.get("auction_price")
+        if price is not None and (
+            auction_type != "ATO"
+            or existing.get("last_event_at") is None
+            or event_iso >= str(existing["last_event_at"])
+        ):
+            auction_price = price
         if existing.get("quality_status") == "VOLUME_REGRESSION":
             quality_status = "VOLUME_REGRESSION"
+        elif (
+            auction_type == "ATO"
+            and (auction_volume is None or auction_price is None)
+        ):
+            quality_status = "PARTIAL"
         connection.execute(
             """INSERT INTO auction_sessions(
                    symbol,trading_date,exchange,auction_type,provider_session,
