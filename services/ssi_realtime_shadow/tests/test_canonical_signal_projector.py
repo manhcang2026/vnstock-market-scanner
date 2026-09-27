@@ -234,18 +234,16 @@ def test_missing_price_and_rvol_are_preserved_as_none(tmp_path: Path) -> None:
     assert not technical.metrics_trusted
 
 
-def test_previous_positive_state_can_become_momentum_maintained(
+def test_price_confirmed_state_can_become_momentum_maintained(
     tmp_path: Path,
 ) -> None:
     projector = _projector(tmp_path)
     _project(
         projector,
         _state(
-            day_rvol=1.2,
-            rvol15=1.8,
-            rvol30=1.8,
-            price5_pct=0.5,
-            price15_pct=0.8,
+            day_rvol=1.4,
+            rvol30=2.0,
+            price15_pct=1.2,
         )
     )
     _project(
@@ -254,7 +252,7 @@ def test_previous_positive_state_can_become_momentum_maintained(
     )
     row = _signal(projector)
     assert row["signal_state"] == "MOMENTUM_MAINTAINED"
-    assert row["previous_signal_state"] == "FLOW_APPEARING"
+    assert row["previous_signal_state"] == "FLOW_PRICE_CONFIRMED"
     assert projector.engine_store.connection.execute(
         "SELECT COUNT(*) FROM signal_events"
     ).fetchone()[0] == 2

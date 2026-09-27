@@ -12,8 +12,8 @@
 # while preserving the public frontend signal contract.
 # ============================================================
 
-config_version: "cfg-20260922-beta-002"
-engine_version: "2.0.1-beta"
+config_version: "cfg-20260922-beta-003"
+engine_version: "2.0.2-beta"
 
 contract:
   signal_contract_version: "ccc-state-v1"
@@ -250,10 +250,15 @@ state_model:
     - "WATCHING"
     - "NORMAL"
 
-  positive_previous_states:
+  momentum_maintained_previous_states:
+    - "FLOW_PRICE_CONFIRMED"
+    - "MOMENTUM_MAINTAINED"
+
+  momentum_weakening_previous_states:
     - "FLOW_APPEARING"
     - "FLOW_PRICE_CONFIRMED"
     - "MOMENTUM_MAINTAINED"
+    - "MOMENTUM_WEAKENING"
 
   inactive_sessions:
     - "LUNCH_BREAK"

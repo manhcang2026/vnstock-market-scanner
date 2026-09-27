@@ -74,7 +74,7 @@ def _continuous_candidates(
     ))):
         candidates.add(str(shock["resulting_state"]))
 
-    if previous in config.positive_previous_states:
+    if previous in config.momentum_weakening_previous_states:
         weakening = raw["negative_flow"]["momentum_weakening"]
         weak = _all(state, (
             ("price5_pct", "<=", weakening["price5_pct_max"]),
@@ -86,6 +86,7 @@ def _continuous_candidates(
         if weakening["enabled"] and weak:
             candidates.add("MOMENTUM_WEAKENING")
 
+    if previous in config.momentum_maintained_previous_states:
         maintained = raw["positive_flow"]["momentum_maintained"]
         keep = _all(state, (
             ("rvol30", ">=", maintained["rvol30_min"]),

@@ -39,7 +39,7 @@ def state(**changes: object) -> TechnicalState:
         ("WATCHING", None, {"rvol30": 2.0, "price15_pct": 0.30}),
         ("FLOW_APPEARING", None, {"day_rvol": 1.2, "rvol15": 1.8, "rvol30": 1.8, "price5_pct": 0.5, "price15_pct": 0.8}),
         ("FLOW_PRICE_CONFIRMED", None, {"day_rvol": 1.4, "rvol30": 2.0, "price15_pct": 1.2}),
-        ("MOMENTUM_MAINTAINED", "FLOW_APPEARING", {"rvol30": 1.4, "price15_pct": -0.2}),
+        ("MOMENTUM_MAINTAINED", "FLOW_PRICE_CONFIRMED", {"rvol30": 1.4, "price15_pct": -0.2}),
         ("MOMENTUM_WEAKENING", "FLOW_PRICE_CONFIRMED", {"rvol30": 1.2, "price5_pct": -0.5, "price15_pct": -0.8}),
         ("SELLING_PRESSURE", None, {"day_rvol": 1.2, "rvol15": 1.8, "rvol30": 1.8, "price5_pct": -0.8, "price15_pct": -1.2}),
         ("SELLING_PRESSURE", None, {"rvol15": 2.5, "price5_pct": -1.5}),
@@ -117,10 +117,89 @@ def test_ma_context_preserves_above_below_and_never_emits_near() -> None:
     assert all(not code.startswith("NEAR_MA") for code in result.reason_codes)
 
 
+def test_flow_appearing_cannot_transition_directly_to_momentum_maintained() -> None:
+    technical = state(rvol30=1.4, price15_pct=-0.2)
+    assert classify_signal(
+        technical, "FLOW_APPEARING", CONFIG
+    ).signal_state != "MOMENTUM_MAINTAINED"
+
+
+def test_flow_appearing_remains_appearing_without_price_confirmation() -> None:
+    technical = state(
+        day_rvol=1.2, rvol15=1.8, rvol30=1.8,
+        price5_pct=0.5, price15_pct=0.8,
+    )
+    assert classify_signal(
+        technical, "FLOW_APPEARING", CONFIG
+    ).signal_state == "FLOW_APPEARING"
+
+
+def test_flow_appearing_advances_when_price_confirmation_becomes_true() -> None:
+    technical = state(day_rvol=1.4, rvol30=2.0, price15_pct=1.2)
+    assert classify_signal(
+        technical, "FLOW_APPEARING", CONFIG
+    ).signal_state == "FLOW_PRICE_CONFIRMED"
+
+
+@pytest.mark.parametrize(
+    "previous", ("FLOW_PRICE_CONFIRMED", "MOMENTUM_MAINTAINED")
+)
+def test_momentum_maintained_requires_confirmed_or_maintained_previous_state(
+    previous: str,
+) -> None:
+    technical = state(rvol30=1.4, price15_pct=-0.2)
+    assert classify_signal(
+        technical, previous, CONFIG
+    ).signal_state == "MOMENTUM_MAINTAINED"
+
+
+@pytest.mark.parametrize(
+    "previous",
+    (
+        "FLOW_APPEARING",
+        "FLOW_PRICE_CONFIRMED",
+        "MOMENTUM_MAINTAINED",
+        "MOMENTUM_WEAKENING",
+    ),
+)
+def test_momentum_weakening_enters_and_persists_while_conditions_hold(
+    previous: str,
+) -> None:
+    technical = state(rvol30=1.2, price5_pct=-0.5, price15_pct=-0.8)
+    assert classify_signal(
+        technical, previous, CONFIG
+    ).signal_state == "MOMENTUM_WEAKENING"
+
+
+def test_momentum_weakening_exits_when_conditions_clear() -> None:
+    technical = state(rvol30=1.0, price5_pct=0.0, price15_pct=0.0)
+    assert classify_signal(
+        technical, "MOMENTUM_WEAKENING", CONFIG
+    ).signal_state == "NORMAL"
+
+
+def test_selling_pressure_is_unchanged_for_weakening_previous_state() -> None:
+    technical = state(
+        day_rvol=1.2, rvol15=1.8, rvol30=1.8,
+        price5_pct=-0.8, price15_pct=-1.2,
+    )
+    assert classify_signal(
+        technical, "MOMENTUM_WEAKENING", CONFIG
+    ).signal_state == "SELLING_PRESSURE"
+
+
+def test_direct_normal_or_watching_to_price_confirmed_remains_allowed() -> None:
+    technical = state(day_rvol=1.4, rvol30=2.0, price15_pct=1.2)
+    for previous in ("NORMAL", "WATCHING"):
+        assert classify_signal(
+            technical, previous, CONFIG
+        ).signal_state == "FLOW_PRICE_CONFIRMED"
+
+
 def test_recent_high_is_optional_but_applied_when_available() -> None:
     candidate = state(rvol30=1.4, price15_pct=0.0)
-    assert classify_signal(candidate, "FLOW_APPEARING", CONFIG).signal_state == "MOMENTUM_MAINTAINED"
-    assert classify_signal(replace(candidate, recent_high_retreat_pct=1.21), "FLOW_APPEARING", CONFIG).signal_state != "MOMENTUM_MAINTAINED"
+    assert classify_signal(candidate, "FLOW_PRICE_CONFIRMED", CONFIG).signal_state == "MOMENTUM_MAINTAINED"
+    assert classify_signal(replace(candidate, recent_high_retreat_pct=1.21), "FLOW_PRICE_CONFIRMED", CONFIG).signal_state != "MOMENTUM_MAINTAINED"
 
 
 def test_ato_and_atc_quality_gates_use_their_own_exact10_coverage() -> None:
