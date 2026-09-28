@@ -373,7 +373,7 @@ Current versions:
 
 ```text
 signal contract = ccc-state-v1
-engine_version  = 2.0.2-beta
+engine_version  = 2.0.3-beta
 config_version  = cfg-20260922-beta-003
 timezone        = Asia/Ho_Chi_Minh
 ```
@@ -417,6 +417,21 @@ FLOW_APPEARING
 `MOMENTUM_WEAKENING` may persist while weakening conditions remain true; it is no longer forced to disappear after one minute.
 
 Direct `NORMAL/WATCHING -> FLOW_PRICE_CONFIRMED` remains valid if the stronger confirmed thresholds are already satisfied.
+
+### 8.3 Continuous-minute boundary projection
+
+Signal projection distinguishes the metric/evidence session from the
+observation/runtime session. A newly eligible continuous minute is classified
+using the session containing `trading_date + minute`, even when its three-second
+finalization grace crosses into lunch, close auction, post-trading, or closed.
+This includes 11:29 for all exchanges, 14:29 for HOSE/HNX, and 14:59 for UPCOM.
+
+Freshness is explicit engine context: the minute must have become eligible
+during the current live-engine lifetime or have genuinely new eligible dirty
+evidence. State merely loaded after a restart during an inactive session keeps
+observation-clock preservation behavior and cannot manufacture a historical
+transition. Actual `OPEN_AUCTION` and `CLOSE_AUCTION` projections remain
+skipped; auction minutes are never reinterpreted as continuous minutes.
 
 ---
 

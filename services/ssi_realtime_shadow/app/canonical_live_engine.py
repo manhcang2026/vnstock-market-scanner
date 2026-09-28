@@ -180,6 +180,14 @@ def _target_point(
     return (grid, eligible[-1]) if eligible else None
 
 
+def _minute_eligible_at(trading_date: str, minute: str) -> datetime:
+    return datetime.fromisoformat(
+        f"{trading_date}T{minute}:00"
+    ).replace(tzinfo=VN_TZ) + timedelta(
+        minutes=1, seconds=MINUTE_FINALIZATION_GRACE_SECONDS
+    )
+
+
 class CanonicalLiveEngine:
     """Projects active symbols at most once per eligible minute.
 
@@ -202,6 +210,7 @@ class CanonicalLiveEngine:
         self._signal_writes = 0
         self._signal_events = 0
         self._signal_errors = 0
+        self._active_at = _local(active_at)
         self.signal_projector: CanonicalSignalProjector | None = None
         if signal_enabled:
             try:
@@ -303,7 +312,23 @@ class CanonicalLiveEngine:
                 continue
             if self.signal_projector is not None:
                 try:
-                    signal_result = self.signal_projector.project(state, local)
+                    eligible_at = _minute_eligible_at(
+                        state.trading_date, state.minute
+                    )
+                    became_eligible_while_active = (
+                        self._active_at <= eligible_at <= local
+                    )
+                    has_new_eligible_evidence = (
+                        projection_generation > 0 and dirty_is_eligible
+                    )
+                    signal_result = self.signal_projector.project(
+                        state,
+                        local,
+                        fresh_continuous_minute=(
+                            became_eligible_while_active
+                            or has_new_eligible_evidence
+                        ),
+                    )
                 except Exception:
                     with self._lock:
                         self._signal_errors += 1

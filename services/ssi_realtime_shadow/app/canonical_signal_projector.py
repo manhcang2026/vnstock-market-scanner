@@ -19,15 +19,38 @@ class SignalProjectionResult:
     event_appended: bool
 
 
-def _session_type(state: CurrentState, observed_at: datetime) -> str:
+def _local(moment: datetime) -> datetime:
+    return (
+        moment.replace(tzinfo=VN_TZ)
+        if moment.tzinfo is None
+        else moment.astimezone(VN_TZ)
+    )
+
+
+def _observation_session_type(state: CurrentState, observed_at: datetime) -> str:
     if not state.exchange:
         raise ValueError("canonical signal projection requires exchange")
-    moment = (
-        observed_at.replace(tzinfo=VN_TZ)
-        if observed_at.tzinfo is None
-        else observed_at.astimezone(VN_TZ)
-    )
-    return classify_market_session(state.exchange, moment).session_type.value
+    return classify_market_session(
+        state.exchange, _local(observed_at)
+    ).session_type.value
+
+
+def _metric_session_type(state: CurrentState) -> str:
+    if not state.exchange or not state.trading_date or not state.minute:
+        raise ValueError(
+            "canonical signal metric-session projection requires exchange/date/minute"
+        )
+    moment = datetime.fromisoformat(
+        f"{state.trading_date}T{state.minute}:00"
+    ).replace(tzinfo=VN_TZ)
+    session_type = classify_market_session(
+        state.exchange, moment
+    ).session_type.value
+    if session_type not in {"AM_CONTINUOUS", "PM_CONTINUOUS"}:
+        raise ValueError(
+            "fresh continuous projection requires a continuous metric minute"
+        )
+    return session_type
 
 
 def _canonical_reasons(state: CurrentState) -> frozenset[str]:
@@ -43,6 +66,8 @@ def build_technical_state(
     state: CurrentState,
     config: SignalConfig,
     observed_at: datetime,
+    *,
+    session_type: str | None = None,
 ) -> TechnicalState:
     """Map canonical continuous metrics without fabricating unavailable values."""
     sessions_used = min(
@@ -58,7 +83,11 @@ def build_technical_state(
         and "NO_BASELINE" not in reasons
     )
     return TechnicalState(
-        session_type=_session_type(state, observed_at),
+        session_type=(
+            session_type
+            if session_type is not None
+            else _observation_session_type(state, observed_at)
+        ),
         last_price=state.last_price,
         day_rvol=state.day_rvol,
         rvol15=state.rvol15,
@@ -84,11 +113,19 @@ class CanonicalSignalProjector:
         self.config = config or load_signal_config()
 
     def project(
-        self, state: CurrentState, observed_at: datetime
+        self,
+        state: CurrentState,
+        observed_at: datetime,
+        *,
+        fresh_continuous_minute: bool = False,
     ) -> SignalProjectionResult:
         if not state.trading_date or not state.minute:
             raise ValueError("canonical signal projection requires date/minute")
-        session_type = _session_type(state, observed_at)
+        session_type = (
+            _metric_session_type(state)
+            if fresh_continuous_minute
+            else _observation_session_type(state, observed_at)
+        )
         if session_type in {"OPEN_AUCTION", "CLOSE_AUCTION"}:
             return SignalProjectionResult(False, False)
         previous_row = self.engine_store.signal_row(state.symbol)
@@ -98,7 +135,12 @@ class CanonicalSignalProjector:
             and previous_row["trading_date"] == state.trading_date
         ):
             previous = str(previous_row["signal_state"])
-        technical = build_technical_state(state, self.config, observed_at)
+        technical = build_technical_state(
+            state,
+            self.config,
+            observed_at,
+            session_type=session_type,
+        )
         decision = classify_signal(technical, previous, self.config)
         timestamp = state.updated_at or utc_now()
         event_appended = self.engine_store.upsert_signal(

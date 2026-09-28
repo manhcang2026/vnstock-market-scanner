@@ -40,7 +40,7 @@ def test_ready_fixture_reports_locked_versions_and_ato_partial_warning(
     assert report["ready_for_live_signal"] is True
     assert report["contract_version"] == "ccc-state-v1"
     assert report["config_version"] == "cfg-20260922-beta-003"
-    assert report["engine_version"] == "2.0.2-beta"
+    assert report["engine_version"] == "2.0.3-beta"
     assert report["market_schema_version"] == 3
     assert report["db_quick_check"] == {
         "hot": "ok",

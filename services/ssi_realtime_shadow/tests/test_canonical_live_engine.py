@@ -986,6 +986,105 @@ def test_canonical_signal_enabled_writes_and_counts_projection(
     assert stats.canonical_signal_errors == 0
 
 
+@pytest.mark.parametrize(
+    ("exchange", "target", "anchor15", "anchor5", "expected_session"),
+    (
+        ("HOSE", "14:29", "14:14", "14:24", "PM_CONTINUOUS"),
+        ("HNX", "14:29", "14:14", "14:24", "PM_CONTINUOUS"),
+        ("UPCOM", "14:59", "14:44", "14:54", "PM_CONTINUOUS"),
+        ("HNX", "11:29", "11:14", "11:24", "AM_CONTINUOUS"),
+    ),
+)
+def test_fresh_boundary_minute_uses_metric_session_and_emits_once(
+    tmp_path: Path,
+    exchange: str,
+    target: str,
+    anchor15: str,
+    anchor5: str,
+    expected_session: str,
+) -> None:
+    market = CanonicalMarketStore(tmp_path / exchange)
+    market.upsert_minute_bars(
+        [
+            _minute(anchor15, exchange=exchange, close=100, volume=0, total=100),
+            _minute(anchor5, exchange=exchange, close=100, volume=0, total=100),
+            _minute(target, exchange=exchange, close=102, volume=200, total=140),
+        ]
+    )
+    observed_at = _after(target)
+    engine = CanonicalLiveEngine(
+        market_store=market,
+        engine_path=tmp_path / f"engine-{exchange}-{target.replace(':', '')}.db",
+        active_at=observed_at - timedelta(seconds=1),
+        signal_enabled=True,
+    )
+    _baseline(engine, target, denominator=100)
+    assert engine.signal_projector is not None
+    engine.signal_projector.project(
+        replace(
+            _current_state(),
+            exchange=exchange,
+            minute=anchor5,
+            rvol30=1,
+            updated_at="2026-09-25T03:00:00+00:00",
+        ),
+        _at(anchor5),
+    )
+
+    assert engine.advance(observed_at) == 1
+    signal = engine.engine_store.signal_row("AAA")
+    assert signal is not None
+    assert signal["minute"] == target
+    assert signal["session_type"] == expected_session
+    assert signal["signal_state"] == "FLOW_PRICE_CONFIRMED"
+    assert engine.engine_store.connection.execute(
+        "SELECT COUNT(*) FROM signal_events"
+    ).fetchone()[0] == 1
+
+    assert engine.advance(observed_at) == 0
+    assert engine.engine_store.connection.execute(
+        "SELECT COUNT(*) FROM signal_events"
+    ).fetchone()[0] == 1
+
+
+def test_normal_to_watching_transition_is_persisted_at_boundary(
+    tmp_path: Path,
+) -> None:
+    market = CanonicalMarketStore(tmp_path / "market")
+    market.upsert_minute_bars(
+        [_minute("14:29", exchange="HOSE", total=130)]
+    )
+    observed_at = _after("14:29")
+    engine = CanonicalLiveEngine(
+        market_store=market,
+        engine_path=tmp_path / "engine.db",
+        active_at=observed_at - timedelta(seconds=1),
+        signal_enabled=True,
+    )
+    _baseline(engine, "14:29", denominator=100)
+    assert engine.signal_projector is not None
+    engine.signal_projector.project(
+        replace(
+            _current_state(),
+            exchange="HOSE",
+            minute="14:28",
+            rvol30=1,
+            updated_at="2026-09-25T07:28:00+00:00",
+        ),
+        _at("14:28"),
+    )
+
+    assert engine.advance(observed_at) == 1
+    signal = engine.engine_store.signal_row("AAA")
+    assert signal is not None
+    assert signal["session_type"] == "PM_CONTINUOUS"
+    assert signal["previous_signal_state"] == "NORMAL"
+    assert signal["signal_state"] == "WATCHING"
+    assert engine.engine_store.connection.execute(
+        "SELECT COUNT(*) FROM signal_events"
+    ).fetchone()[0] == 1
+
+
 def test_lunch_restart_preserves_positive_signal_using_observation_clock(
     tmp_path: Path,
 ) -> None:
@@ -1033,6 +1132,61 @@ def test_lunch_restart_preserves_positive_signal_using_observation_clock(
     ).fetchone()[0] == 1
 
 
+@pytest.mark.parametrize(
+    ("exchange", "target", "observed"),
+    (
+        ("HOSE", "14:29", "14:35"),
+        ("HNX", "14:29", "14:35"),
+        ("UPCOM", "14:59", "15:10"),
+    ),
+)
+def test_inactive_restart_does_not_reclassify_stale_boundary_minute(
+    tmp_path: Path, exchange: str, target: str, observed: str
+) -> None:
+    market = CanonicalMarketStore(tmp_path / exchange)
+    market.upsert_minute_bars(
+        [_minute(target, exchange=exchange, total=140)]
+    )
+    engine_path = tmp_path / f"engine-{exchange}.db"
+    seed = CanonicalLiveEngine(
+        market_store=market,
+        engine_path=engine_path,
+        active_at=_at("14:00"),
+        signal_enabled=True,
+    )
+    _baseline(seed, target, denominator=100)
+    assert seed.signal_projector is not None
+    seed.signal_projector.project(
+        replace(
+            _current_state(),
+            exchange=exchange,
+            minute="14:00",
+            day_rvol=1.4,
+            rvol15=2,
+            rvol30=2,
+            price5_pct=0.8,
+            price15_pct=1.2,
+            updated_at="2026-09-25T07:00:00+00:00",
+        ),
+        _at("14:00"),
+    )
+    seed.close()
+
+    restarted = CanonicalLiveEngine(
+        market_store=market,
+        engine_path=engine_path,
+        active_at=_at(observed),
+        signal_enabled=True,
+    )
+    assert restarted.advance(_at(observed)) == 1
+    signal = restarted.engine_store.signal_row("AAA")
+    assert signal is not None
+    assert signal["signal_state"] == "FLOW_PRICE_CONFIRMED"
+    assert restarted.engine_store.connection.execute(
+        "SELECT COUNT(*) FROM signal_events"
+    ).fetchone()[0] == 1
+
+
 def test_signal_projection_failure_does_not_rollback_current_state(
     tmp_path: Path,
 ) -> None:
@@ -1047,7 +1201,13 @@ def test_signal_projection_failure_does_not_rollback_current_state(
     _baseline(engine, "09:14")
 
     class BrokenSignalProjector:
-        def project(self, _state: CurrentState, _observed_at: datetime):
+        def project(
+            self,
+            _state: CurrentState,
+            _observed_at: datetime,
+            *,
+            fresh_continuous_minute: bool = False,
+        ):
             raise sqlite3.OperationalError("signal write failed")
 
     engine.signal_projector = BrokenSignalProjector()  # type: ignore[assignment]
