@@ -715,7 +715,11 @@ Both canonical wrappers stop only the collector before writes and always try to
 restart it through an exit trap. They do not stop or start chart API or live
 WebSocket services. They operate only on the collector `/app/data` volume and
 have no dependency on `ssi_history_2026.db`, `ccc_market_v2.db`, or
-`ccc_v2_baseline.db`.
+`ccc_v2_baseline.db`. Their configuration is also independent of the legacy
+`SSI_HISTORY_PATH`, `MARKET_V2_DATABASE_PATH`, and `VOLUME_BASELINE_PATH`
+environment variables. Canonical metadata loading requires only the Supabase
+metadata credentials; canonical EOD REST execution additionally requires only
+the SSI REST credentials and endpoint configuration.
 
 The EOD timer is deterministic and non-persistent. It runs only at the normal
 16:15 weekday activation; systemd must not automatically replay a missed EOD at

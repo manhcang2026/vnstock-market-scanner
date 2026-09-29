@@ -8,8 +8,8 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Mapping
 
+from .canonical_config import CanonicalMetadataConfig
 from .market_session import VN_TZ, market_day_feed_start
-from .settings import Settings
 from .universe import load_exchange_map
 
 
@@ -111,8 +111,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    settings = Settings.from_env()
-    exchange_map = load_exchange_map(settings)
+    metadata_config = CanonicalMetadataConfig.from_env()
+    exchange_map = load_exchange_map(metadata_config)
     if not exchange_map:
         raise SystemExit("No symbols selected")
     if args.command == "check":

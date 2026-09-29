@@ -10,6 +10,7 @@ from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Callable, Mapping
 
+from .canonical_config import CanonicalMetadataConfig, CanonicalRestConfig
 from .canonical_market_store import CanonicalMarketStore
 from .clean_rest_bootstrap import AMBIGUOUS_EMPTY_RESPONSE, RestFetcher, run_bootstrap
 from .market_session import (
@@ -18,7 +19,6 @@ from .market_session import (
     classify_market_session,
     market_day_feed_start,
 )
-from .settings import Settings
 from .ssi_historical import SSIHistoricalClient
 from .universe import load_exchange_map
 
@@ -345,8 +345,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        settings = Settings.from_env()
-        exchange_map = load_exchange_map(settings)
+        metadata_config = CanonicalMetadataConfig.from_env()
+        exchange_map = load_exchange_map(metadata_config)
         if not exchange_map:
             raise RuntimeError("No symbols selected")
         if args.resolve_target:
@@ -357,11 +357,12 @@ def main(argv: list[str] | None = None) -> int:
             )
             print_resolution(resolution)
             return 0
+        rest_config = CanonicalRestConfig.from_env()
         client = SSIHistoricalClient(
-            base_url=settings.ssi_url,
-            consumer_id=settings.ssi_consumer_id,
-            consumer_secret=settings.ssi_consumer_secret,
-            auth_type=settings.ssi_auth_type,
+            base_url=rest_config.ssi_url,
+            consumer_id=rest_config.ssi_consumer_id,
+            consumer_secret=rest_config.ssi_consumer_secret,
+            auth_type=rest_config.ssi_auth_type,
             request_interval=args.request_interval,
         )
         with CanonicalMarketStore(args.db_dir) as store:
