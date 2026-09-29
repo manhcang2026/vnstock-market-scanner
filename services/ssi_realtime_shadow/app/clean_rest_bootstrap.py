@@ -26,6 +26,11 @@ from .value_parsing import (
 )
 
 
+AMBIGUOUS_EMPTY_RESPONSE = (
+    "ValueError: EMPTY_RESPONSE: provider did not explicitly report NO_DATA"
+)
+
+
 class RestFetcher(Protocol):
     def fetch_intraday_ohlc(
         self, symbol: str, from_date: date, to_date: date, resolution: int = 1
@@ -251,7 +256,7 @@ def run_bootstrap(
                     )
                     is not None
                     and row.symbol == symbol
-                    and date.fromisoformat(row.trading_date).year == year
+                    and start <= date.fromisoformat(row.trading_date) <= end
                 ]
                 unique = {
                     (row.symbol, row.trading_date, row.minute): row for row in normalized
@@ -283,7 +288,7 @@ def run_bootstrap(
                     )
                     is not None
                     and row.symbol == symbol
-                    and date.fromisoformat(row.trading_date).year == year
+                    and start <= date.fromisoformat(row.trading_date) <= end
                 ]
                 unique = {(row.symbol, row.trading_date): row for row in normalized}
                 canonical_rows = list(unique.values())
@@ -292,9 +297,7 @@ def run_bootstrap(
             received = len(raw_rows)
             partial = sum(row.quality_status != "TRUSTED" for row in canonical_rows)
             if not raw_rows:
-                raise ValueError(
-                    "EMPTY_RESPONSE: provider did not explicitly report NO_DATA"
-                )
+                raise ValueError(AMBIGUOUS_EMPTY_RESPONSE.removeprefix("ValueError: "))
             if not canonical_rows:
                 raise ValueError("provider rows lacked canonical identity")
             store.mark_fetch_status(

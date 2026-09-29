@@ -1,0 +1,11 @@
+[Unit]
+Description=Run CCC canonical SSI reconciliation after market close
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 16:15:00 Asia/Ho_Chi_Minh
+Persistent=false
+AccuracySec=1min
+Unit=ccc-canonical-eod.service
+
+[Install]
+WantedBy=timers.target

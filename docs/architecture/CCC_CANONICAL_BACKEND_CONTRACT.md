@@ -1,9 +1,9 @@
 # CCC Canonical Backend Contract
 
-> **Status:** Production checkpoint as of 2026-09-27  
+> **Status:** Production checkpoint as of 2026-09-28
 > **Repository:** `manhcang2026/vnstock-market-scanner`  
 > **Backend branch:** `fix/ssi-ato-realtime-boundary`  
-> **Production source commit:** `b513b891720003d0ed2162794d0b926c86cc0b71`  
+> **Production source commit:** `d6c299cdb79e7e625079cc8c7bfa4a2987b15c91`
 > **Purpose:** This is the single handoff document for frontend/backend integration. Frontend work should use this contract instead of inferring behavior from legacy databases or old V2 code.
 
 ---
@@ -675,32 +675,90 @@ Do not delete legacy code/data before its canonical replacement is proven.
 
 ---
 
-## 16. EOD status
+## 16. Canonical EOD and premarket ownership
 
-The installed legacy timer:
+Canonical automation is split into two independent jobs:
 
 ```text
+16:15 Mon..Fri Asia/Ho_Chi_Minh
+  ccc-canonical-eod.timer (Persistent=false)
+  -> IntradayOhlc reconciliation
+  -> official SSI DailyOhlc persistence
+  -> per-symbol canonical checkpoint-pair validation
+
+08:20 Mon..Fri Asia/Ho_Chi_Minh
+  ccc-canonical-premarket.timer (Persistent=true)
+  -> rebuild technical_baseline for TODAY
+  -> rebuild volume_baseline_curve for TODAY
+  -> rebuild current_state for TODAY
+```
+
+The canonical EOD pair matrix is:
+
+| Minute checkpoint | Daily checkpoint | Result |
+|---|---|---|
+| `COMPLETED` with canonical day rows | `COMPLETED` with exact symbol/date/exchange row | `PASS` |
+| REST `NO_DATA` | explicit daily `NO_DATA` with no daily row | accepted `DEGRADED`; preserve any stream minute rows |
+| REST `NO_DATA` | `FAILED` with exactly the canonical ambiguous `EMPTY_RESPONSE` error and no daily row | accepted `DEGRADED`; preserve `FAILED` and any stream minute rows |
+| Any other pair or identity failure | Any other state | critical `FAIL` |
+
+Intraday REST `NO_DATA` describes only the REST response. It does not invalidate
+or delete canonical `SSI_STREAM` minute evidence and is not proof that no trade
+occurred. Accepted degraded evidence never fabricates a daily bar and never
+converts an ambiguous provider response into explicit `NO_DATA`. A daily row
+that already exists while its daily checkpoint is `NO_DATA` or ambiguous
+`FAILED` is an inconsistency and fails validation. If the selected day has no
+canonical live minute evidence at all, EOD logs `SKIP_NO_LIVE_EVIDENCE` and
+exits successfully without creating EOD checkpoints.
+
+Both canonical wrappers stop only the collector before writes and always try to
+restart it through an exit trap. They do not stop or start chart API or live
+WebSocket services. They operate only on the collector `/app/data` volume and
+have no dependency on `ssi_history_2026.db`, `ccc_market_v2.db`, or
+`ccc_v2_baseline.db`.
+
+The EOD timer is deterministic and non-persistent. It runs only at the normal
+16:15 weekday activation; systemd must not automatically replay a missed EOD at
+an arbitrary later time. A missed activation is an operational exception and
+requires an explicit/manual recovery task. The wrapper retains its read-only
+target resolver for the normal run and controlled manual recovery. During open
+auction, continuous trading, lunch, close auction, or post-trading, recovery is
+refused with `REFUSED_ACTIVE_MARKET`. Even after the market has closed, TODAY
+cannot be selected before 16:15; such an attempt returns
+`REFUSED_EOD_NOT_READY`. These refusals happen before the restart trap or any
+collector stop. No evidence or an already completed latest evidence date
+produces `SKIP_NO_EOD_TARGET`.
+
+Premarket intentionally builds for the actual local `TODAY`; it does not guess
+the next trading date at EOD. Its persistent timer supports a short reboot
+recovery, but requires more than ten minutes of lead time before the earliest
+market feed start derived from canonical session helpers. At the ten-minute
+boundary or later it returns `INSUFFICIENT_PREMARKET_LEAD`; at or after market
+start it returns `MARKET_DAY_ALREADY_STARTED`. Today's canonical minute
+evidence also refuses the rebuild regardless of clock time. Every refusal
+happens before the restart trap or collector stop. Weekend invocations are
+refused. On an exchange holiday, the weekday timer may build disposable TODAY
+state before the safety boundary; the next session's timer replaces it, and no
+historical signal event is created by rebuild.
+
+No automated maintenance job may stop the collector close to or during a live
+market session.
+
+The installed legacy units:
+
+```text
+ccc-ssi-daily-finalize.service
 ccc-ssi-daily-finalize.timer
+ccc-ssi-daily-finalize-wrapper.sh
 ```
 
-is currently:
+remain **LEGACY / DISABLED / DO NOT ENABLE**. Their old wrapper references
+legacy V2/history/baseline databases. The canonical units do not invoke,
+enable, or reuse them; deletion is deferred to `LEGACY-RETIRE-01`.
 
-```text
-disabled
-inactive
-```
-
-Its old wrapper still references legacy V2/history/baseline databases, so it must not be re-enabled as-is.
-
-A canonical EOD task is still required to provide a single post-close path for:
-
-1. REST IntradayOhlc reconciliation;
-2. SSI DailyOhlc canonical daily finalization;
-3. explicit missing/gap evidence;
-4. next-session baseline rebuild in `ccc_engine.db`;
-5. preparation of next-session `current_state`.
-
-Until `CANONICAL-EOD-01` is complete, do not assume EOD automation is finished.
+This repository change does not alter the production checkpoint above. The new
+units remain pending installation and real-runtime verification until deployed
+by the Product Owner.
 
 ---
 
@@ -719,7 +777,7 @@ As of this document version:
 - [x] SIGNAL-PROD-PREP-01
 - [x] SIGNAL-PROD-ENABLE-01
 - [ ] SIGNAL-LIVE-AUDIT-01 — first full live session, 2026-09-28
-- [ ] CANONICAL-EOD-01
+- [x] CANONICAL-EOD-01 — code complete; production deployment/verification pending
 - [ ] LEGACY-RETIRE-01
 - [ ] CHART-API-CANONICAL-01
 - [ ] DB-ARCHIVE-01 / DB-CLEANUP-01
