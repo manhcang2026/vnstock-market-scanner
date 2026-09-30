@@ -48,6 +48,22 @@ jobs:
           cp .env.example .env.production
           npm run build
 
+          # Explicitly publish static CCC assets.
+          # Do not rely only on Vite public-directory copying.
+          rm -rf dist/stock-logos
+          mkdir -p dist/stock-logos
+          cp -a public/stock-logos/. dist/stock-logos/
+
+          mkdir -p dist/brand
+          cp -a public/brand/. dist/brand/
+
+          test -f dist/stock-logos/HPG.webp
+          test -f dist/stock-logos/FPT.webp
+          test -f dist/brand/ccc-logo-primary.png
+
+          echo "Stock logos in dist:"
+          find dist/stock-logos -maxdepth 1 -type f -name '*.webp' | wc -l
+
       - name: Connect to Tailscale
         uses: tailscale/github-action@v4
         with:
@@ -110,3 +126,11 @@ jobs:
           curl --fail --silent --show-error --max-time 20 \
             https://beta.chuyenchochung.com/api/v2/quote/HPG \
             | grep -q '"symbol":"HPG"'
+
+          curl --fail --silent --show-error --max-time 20 \
+            -o /dev/null \
+            https://beta.chuyenchochung.com/stock-logos/HPG.webp
+
+          curl --fail --silent --show-error --max-time 20 \
+            -o /dev/null \
+            https://beta.chuyenchochung.com/brand/ccc-logo-primary.png
