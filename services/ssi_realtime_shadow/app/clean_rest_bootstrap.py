@@ -199,6 +199,7 @@ def run_bootstrap(
     from_date: date,
     to_date: date,
     retry_failed: bool = False,
+    refresh_completed: bool = False,
     verbose: bool = False,
     output: Callable[[str], None] = print,
     monotonic: Callable[[], float] = time.monotonic,
@@ -227,13 +228,19 @@ def run_bootstrap(
             resolution=resolution,
             year=year,
         )
-        if checkpoint is not None and checkpoint["status"] in {"COMPLETED", "NO_DATA"}:
-            if checkpoint["status"] == "COMPLETED":
-                completed += 1
-            else:
-                no_data += 1
+        if checkpoint is not None and checkpoint["status"] == "NO_DATA":
+            no_data += 1
             if verbose:
-                output(f"[{index}/{len(tasks)}] {symbol} {year} skipped={checkpoint['status']}")
+                output(f"[{index}/{len(tasks)}] {symbol} {year} skipped=NO_DATA")
+            continue
+        if (
+            checkpoint is not None
+            and checkpoint["status"] == "COMPLETED"
+            and not refresh_completed
+        ):
+            completed += 1
+            if verbose:
+                output(f"[{index}/{len(tasks)}] {symbol} {year} skipped=COMPLETED")
             continue
         if checkpoint is not None and checkpoint["status"] == "FAILED" and not retry_failed:
             failed += 1
@@ -244,6 +251,10 @@ def run_bootstrap(
         try:
             if canonical_mode == "minute":
                 raw_rows = client.fetch_intraday_ohlc(symbol, start, end, resolution=1)
+                if not raw_rows:
+                    raise ValueError(
+                        AMBIGUOUS_EMPTY_RESPONSE.removeprefix("ValueError: ")
+                    )
                 normalized = [
                     row
                     for raw in raw_rows
@@ -262,7 +273,9 @@ def run_bootstrap(
                     (row.symbol, row.trading_date, row.minute): row for row in normalized
                 }
                 canonical_rows = list(unique.values())
-                written = store.upsert_minute_bars(canonical_rows)
+                if not canonical_rows:
+                    raise ValueError("provider rows lacked canonical identity")
+                written = store.replace_rest_minute_sessions(canonical_rows)
                 observed_dates: dict[str, int] = {}
                 for row in canonical_rows:
                     observed_dates[row.trading_date] = (
@@ -399,6 +412,11 @@ def build_parser() -> argparse.ArgumentParser:
     group.add_argument("--universe-file", type=Path)
     parser.add_argument("--db-dir", type=Path, default=Path("data"))
     parser.add_argument("--retry-failed", action="store_true")
+    parser.add_argument(
+        "--refresh-completed",
+        action="store_true",
+        help="Re-fetch tasks already checkpointed COMPLETED",
+    )
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--request-interval", type=float, default=1.0)
     return parser
@@ -433,6 +451,7 @@ def main(argv: list[str] | None = None) -> int:
             from_date=args.from_date,
             to_date=args.to_date,
             retry_failed=args.retry_failed,
+            refresh_completed=args.refresh_completed,
             verbose=args.verbose,
         )
     print(

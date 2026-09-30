@@ -1040,6 +1040,51 @@ class CanonicalMarketStore:
             written += len(values)
         return written
 
+    def replace_rest_minute_sessions(self, rows: Iterable[MinuteBar]) -> int:
+        """Atomically replace each observed symbol/day with its SSI REST rows."""
+        grouped: dict[tuple[int, str, str], list[tuple[object, ...]]] = {}
+        fields = tuple(MinuteBar.__dataclass_fields__)
+        for row in rows:
+            values = asdict(row)
+            symbol, trading_date, year = self._identity(row.symbol, row.trading_date)
+            minute = str(row.minute or "").strip()
+            datetime.strptime(minute, "%H:%M")
+            source = str(row.source or "").strip().upper()
+            if source != "SSI_REST":
+                raise ValueError("REST session replacement requires SSI_REST rows")
+            values.update(
+                symbol=symbol,
+                trading_date=trading_date,
+                minute=minute,
+                source=source,
+                updated_at=row.updated_at or utc_now(),
+            )
+            grouped.setdefault((year, symbol, trading_date), []).append(
+                tuple(values[field] for field in fields)
+            )
+
+        placeholders = ",".join("?" for _ in fields)
+        insert_sql = (
+            f"INSERT INTO minute_bars({','.join(fields)}) VALUES({placeholders})"
+        )
+        written = 0
+        for (year, symbol, trading_date), values in grouped.items():
+            with self._lock:
+                connection = self.connection(year)
+                connection.execute("BEGIN IMMEDIATE")
+                try:
+                    connection.execute(
+                        "DELETE FROM minute_bars WHERE symbol=? AND trading_date=?",
+                        (symbol, trading_date),
+                    )
+                    connection.executemany(insert_sql, values)
+                    connection.commit()
+                except BaseException:
+                    connection.rollback()
+                    raise
+            written += len(values)
+        return written
+
     def upsert_daily_bars(self, rows: Iterable[DailyBar]) -> int:
         written = 0
         grouped: dict[int, list[tuple[object, ...]]] = {}

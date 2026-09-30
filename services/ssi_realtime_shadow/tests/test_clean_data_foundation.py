@@ -178,6 +178,177 @@ def test_completed_skips_and_failed_retries_only_when_requested(tmp_path: Path) 
         assert fetcher.calls == 2
 
 
+def test_rest_minute_session_replaces_stream_rows_and_is_idempotent(
+    tmp_path: Path,
+) -> None:
+    stream_rows = [
+        MinuteBar(
+            "CTX", "2026-09-30", "14:03", volume=1200, source="SSI_STREAM"
+        ),
+        MinuteBar(
+            "CTX", "2026-09-30", "14:05", volume=3200, source="SSI_STREAM"
+        ),
+    ]
+    rest_rows = [
+        MinuteBar("CTX", "2026-09-30", "14:03", volume=1200),
+        MinuteBar("CTX", "2026-09-30", "14:04", volume=3200),
+    ]
+    with CanonicalMarketStore(tmp_path) as store:
+        store.upsert_minute_bars(stream_rows)
+        assert store.replace_rest_minute_sessions(rest_rows) == 2
+        assert store.replace_rest_minute_sessions(rest_rows) == 2
+        saved = store.connection(2026).execute(
+            """SELECT minute,volume,source FROM minute_bars
+               WHERE symbol='CTX' AND trading_date='2026-09-30'
+               ORDER BY minute"""
+        ).fetchall()
+    assert [tuple(row) for row in saved] == [
+        ("14:03", 1200, "SSI_REST"),
+        ("14:04", 3200, "SSI_REST"),
+    ]
+
+
+def test_rest_minute_session_replacement_rolls_back_on_insert_failure(
+    tmp_path: Path,
+) -> None:
+    previous = [
+        MinuteBar(
+            "CTX", "2026-09-30", "14:05", volume=3200, source="SSI_STREAM"
+        )
+    ]
+    replacement = [
+        MinuteBar("CTX", "2026-09-30", "14:04", volume=3200),
+        MinuteBar("CTX", "2026-09-30", "14:06", volume=100),
+    ]
+    with CanonicalMarketStore(tmp_path) as store:
+        store.upsert_minute_bars(previous)
+        store.connection(2026).execute(
+            """CREATE TRIGGER fail_rest_insert BEFORE INSERT ON minute_bars
+               WHEN NEW.minute='14:06'
+               BEGIN SELECT RAISE(ABORT, 'injected failure'); END"""
+        )
+        store.connection(2026).commit()
+        with pytest.raises(sqlite3.IntegrityError, match="injected failure"):
+            store.replace_rest_minute_sessions(replacement)
+        saved = store.connection(2026).execute(
+            """SELECT minute,volume,source FROM minute_bars
+               WHERE symbol='CTX' AND trading_date='2026-09-30'"""
+        ).fetchall()
+    assert [tuple(row) for row in saved] == [("14:05", 3200, "SSI_STREAM")]
+
+
+def test_refresh_completed_refetches_and_replaces_existing_session(
+    tmp_path: Path,
+) -> None:
+    class Fetcher:
+        calls = 0
+
+        def fetch_intraday_ohlc(self, symbol, from_date, to_date, resolution=1):
+            self.calls += 1
+            return [
+                _minute_raw(
+                    Symbol=symbol,
+                    TradingDate="30/09/2026",
+                    Time="14:04:00",
+                    Volume=3200,
+                ),
+                _minute_raw(
+                    Symbol=symbol,
+                    TradingDate="30/09/2026",
+                    Time="14:06:00",
+                    Volume=100,
+                ),
+            ]
+
+        def fetch_daily_ohlc(self, symbol, from_date, to_date):
+            raise NotImplementedError
+
+    fetcher = Fetcher()
+    kwargs = dict(
+        mode="minute",
+        client=fetcher,
+        symbols=["CTX"],
+        exchange_map={"CTX": "HOSE"},
+        from_date=date(2026, 9, 30),
+        to_date=date(2026, 9, 30),
+    )
+    with CanonicalMarketStore(tmp_path) as store:
+        store.upsert_minute_bars(
+            [
+                MinuteBar(
+                    "CTX",
+                    "2026-09-30",
+                    "14:05",
+                    volume=3200,
+                    source="SSI_STREAM",
+                )
+            ]
+        )
+        store.mark_fetch_status(
+            mode="minute",
+            symbol="CTX",
+            from_date="2026-09-30",
+            to_date="2026-09-30",
+            resolution=1,
+            year=2026,
+            status="COMPLETED",
+            rows_received=1,
+            rows_written=1,
+        )
+        assert run_bootstrap(store=store, **kwargs).completed == 1
+        assert fetcher.calls == 0
+        assert run_bootstrap(
+            store=store, refresh_completed=True, **kwargs
+        ).completed == 1
+        saved = store.connection(2026).execute(
+            """SELECT minute,volume,source FROM minute_bars
+               WHERE symbol='CTX' AND trading_date='2026-09-30'
+               ORDER BY minute"""
+        ).fetchall()
+    assert fetcher.calls == 1
+    assert [tuple(row) for row in saved] == [
+        ("14:04", 3200, "SSI_REST"),
+        ("14:06", 100, "SSI_REST"),
+    ]
+
+
+def test_rest_no_data_never_wipes_existing_minute_rows(tmp_path: Path) -> None:
+    class Fetcher:
+        def fetch_intraday_ohlc(self, symbol, from_date, to_date, resolution=1):
+            raise SSINoDataFound("NoDataFound")
+
+        def fetch_daily_ohlc(self, symbol, from_date, to_date):
+            raise NotImplementedError
+
+    with CanonicalMarketStore(tmp_path) as store:
+        store.upsert_minute_bars(
+            [
+                MinuteBar(
+                    "CTX",
+                    "2026-09-30",
+                    "14:05",
+                    volume=3200,
+                    source="SSI_STREAM",
+                )
+            ]
+        )
+        summary = run_bootstrap(
+            mode="minute",
+            store=store,
+            client=Fetcher(),
+            symbols=["CTX"],
+            exchange_map={"CTX": "HOSE"},
+            from_date=date(2026, 9, 30),
+            to_date=date(2026, 9, 30),
+        )
+        saved = store.connection(2026).execute(
+            """SELECT minute,volume,source FROM minute_bars
+               WHERE symbol='CTX' AND trading_date='2026-09-30'"""
+        ).fetchall()
+    assert summary.no_data == 1
+    assert [tuple(row) for row in saved] == [("14:05", 3200, "SSI_STREAM")]
+
+
 @pytest.mark.parametrize(
     "row",
     [
