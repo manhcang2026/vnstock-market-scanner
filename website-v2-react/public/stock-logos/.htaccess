@@ -1,0 +1,6 @@
+<IfModule mod_headers.c>
+  <FilesMatch "\.webp$">
+    Header set Cache-Control "public, max-age=2592000, immutable"
+    Header set Access-Control-Allow-Origin "*"
+  </FilesMatch>
+</IfModule>

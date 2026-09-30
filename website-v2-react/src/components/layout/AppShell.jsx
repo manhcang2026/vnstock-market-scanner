@@ -82,7 +82,7 @@ export default function AppShell() {
     <div className="app-shell">
       <header className="topbar">
         <NavLink to="/" className="brand" aria-label="Chuyện Chợ Chứng">
-          <span className="brand-mark">CCC</span>
+          <span className="brand-mark"><img src="/brand/ccc-logo-primary.png" alt="" aria-hidden="true" /></span>
           <span className="brand-copy">
             <strong>CHUYỆN CHỢ CHỨNG</strong>
             <small>Stock Intelligence</small>

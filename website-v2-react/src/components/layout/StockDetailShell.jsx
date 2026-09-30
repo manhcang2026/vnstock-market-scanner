@@ -179,7 +179,9 @@ export default function StockDetailShell({
         </button>
 
         <NavLink to="/" className="stock-v3-brand" aria-label="Chuyện Chợ Chứng — Tổng quan">
-          <span className="stock-v3-brand-mark">CCC</span>
+          <span className="stock-v3-brand-mark">
+            <img src="/brand/ccc-logo-primary.png" alt="" aria-hidden="true" />
+          </span>
           <span className="stock-v3-brand-copy">Chuyện Chợ Chứng</span>
         </NavLink>
 

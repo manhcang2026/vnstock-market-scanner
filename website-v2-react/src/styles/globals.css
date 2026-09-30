@@ -173,3 +173,15 @@ button { cursor: pointer; }
   .kpi-grid article { min-height: 96px; padding: 12px; }
   .kpi-grid strong { font-size: 26px; }
 }
+
+.brand-mark {
+  overflow: hidden;
+  background: transparent;
+}
+
+.brand-mark img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
+}
