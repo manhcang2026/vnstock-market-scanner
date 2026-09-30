@@ -1,0 +1,112 @@
+name: Deploy CCC Beta
+
+on:
+  push:
+    branches:
+      - feat/ccc-v3-beta
+    paths:
+      - "website-v2-react/**"
+      - ".github/workflows/deploy-beta.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: ccc-beta-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Build and deploy beta
+    runs-on: ubuntu-latest
+    environment: beta
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: website-v2-react/package-lock.json
+
+      - name: Install dependencies
+        working-directory: website-v2-react
+        run: npm ci
+
+      - name: Run account tests
+        working-directory: website-v2-react
+        run: npm run test:account
+
+      - name: Build frontend
+        working-directory: website-v2-react
+        run: |
+          cp .env.example .env.production
+          npm run build
+
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          audience: ${{ secrets.TS_AUDIENCE }}
+          tags: tag:ccc-deploy
+
+      - name: Configure SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.BETA_SSH_PRIVATE_KEY }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/ccc_beta_deploy
+          chmod 600 ~/.ssh/ccc_beta_deploy
+          ssh-keyscan -T 10 -H 100.76.186.98 >> ~/.ssh/known_hosts
+
+      - name: Package frontend
+        run: |
+          tar -C website-v2-react/dist -czf /tmp/ccc-beta-dist.tgz .
+
+      - name: Upload frontend
+        run: |
+          scp -o BatchMode=yes \
+            -i ~/.ssh/ccc_beta_deploy \
+            /tmp/ccc-beta-dist.tgz \
+            ccc-beta@100.76.186.98:/home/ccc-beta/tmp/ccc-beta-dist.tgz
+
+      - name: Publish frontend
+        run: |
+          ssh -o BatchMode=yes \
+            -i ~/.ssh/ccc_beta_deploy \
+            ccc-beta@100.76.186.98 'bash -se' <<'REMOTE'
+          set -euo pipefail
+
+          TARGET="/home/ccc-beta/htdocs/beta.chuyenchochung.com"
+          ARCHIVE="/home/ccc-beta/tmp/ccc-beta-dist.tgz"
+          RELEASE="$(mktemp -d /home/ccc-beta/tmp/ccc-beta-release.XXXXXX)"
+
+          tar -xzf "$ARCHIVE" -C "$RELEASE"
+          test -f "$RELEASE/index.html"
+
+          mkdir -p "$TARGET"
+
+          # Giữ nguyên Let's Encrypt challenge directory.
+          find "$TARGET" -mindepth 1 -maxdepth 1 \
+            ! -name '.well-known' \
+            -exec rm -rf -- {} +
+
+          cp -a "$RELEASE"/. "$TARGET"/
+
+          rm -rf "$RELEASE"
+          rm -f "$ARCHIVE"
+          REMOTE
+
+      - name: Verify beta deployment
+        run: |
+          curl --fail --silent --show-error --max-time 20 \
+            https://beta.chuyenchochung.com/ >/dev/null
+
+          curl --fail --silent --show-error --max-time 20 \
+            https://beta.chuyenchochung.com/api/v2/quote/HPG \
+            | grep -q '"symbol":"HPG"'
