@@ -3,7 +3,6 @@ import { useSearchParams } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
 import ScannerResults from '../components/scanner/ScannerResults'
 import ScannerShell from '../components/scanner/ScannerShell'
-import ScannerTabs from '../components/scanner/ScannerTabs'
 import { publicSupabase } from '../lib/publicSupabase'
 import { fetchScanner } from '../lib/cccApi'
 import { activeConditions, applyScannerFilters, categoryOptions, describeCondition, fieldAvailability } from '../lib/scannerFilters'
@@ -19,18 +18,18 @@ const SCANNER_REFRESH_MS = 60_000
 // Browser-memory capability check; a reload permits a fresh probe of a newer VPS.
 let scannerCapabilityUnavailable = false
 
-export default function ScannerPage() {
+export default function ScannerPage({ initialMode = 'watchlist' }) {
   const auth = useAuth()
+  const mode = initialMode === 'market' ? 'market' : 'watchlist'
   const authScope = !auth.ready ? 'pending' : auth.user?.id ? `user:${auth.user.id}` : 'signed-out'
-  return <ScannerPageContent key={authScope} auth={auth} />
+  return <ScannerPageContent key={`${authScope}:${mode}`} auth={auth} initialMode={mode} />
 }
 
-function ScannerPageContent({ auth }) {
+function ScannerPageContent({ auth, initialMode }) {
   const [params] = useSearchParams()
   const q = (params.get('q') || '').trim()
   const lookupUnavailable = params.get('lookup') === 'unavailable'
-  const [tabState, setTabState] = useState(() => ({ query: q, value: q ? 'market' : 'watchlist' }))
-  const activeTab = tabState.query === q ? tabState.value : q ? 'market' : 'watchlist'
+  const activeTab = initialMode
   const [pageState, setPageState] = useState(() => ({ query: q, value: 1 }))
   const page = pageState.query === q ? pageState.value : 1
   const [metadata, setMetadata] = useState(() => ({ status: publicSupabase ? 'loading' : 'error', rows: [] }))
@@ -160,11 +159,6 @@ function ScannerPageContent({ auth }) {
 
   function resetPage() { setPageState({ query: q, value: 1 }) }
 
-  function changeTab(tab) {
-    setTabState({ query: q, value: tab })
-    resetPage()
-  }
-
   function addCondition() {
     nextRuleId.current += 1
     setConditions((items) => [...items, { id: nextRuleId.current, field: 'exchange', values: [], operator: 'lte', value: '', valueTo: '' }])
@@ -221,12 +215,11 @@ function ScannerPageContent({ auth }) {
             : 'Không có mã theo dõi phù hợp với các điều kiện đang áp dụng.'
 
   return (
-    <ScannerShell mode={activeTab} filterBuilder={filterBuilder} sortBuilder={sortBuilder} utility={utility}>
+    <ScannerShell utility={utility}>
       <div className="scanner-heading">
-        <span className="scanner-kicker">SCANNER / DANH SÁCH</span>
-        <h1>Danh sách cổ phiếu</h1>
+        <span className="scanner-kicker">{activeTab === 'market' ? 'THỊ TRƯỜNG' : 'DANH SÁCH CỦA TÔI'}</span>
+        <h1>{activeTab === 'market' ? 'Thị trường' : 'Đã theo dõi'}</h1>
       </div>
-      <ScannerTabs activeTab={activeTab} onChange={changeTab} />
 
       <ScannerResults
         mode={activeTab} rows={pageRows} total={matchingRows.length} summary={summary} sortSummary={sortSummary}

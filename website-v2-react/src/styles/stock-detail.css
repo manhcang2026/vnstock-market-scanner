@@ -1394,3 +1394,47 @@
   .stock-v3-fundamental-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .stock-v3-bctc-link a { width: 100%; }
 }
+
+/* V4 unified workspace shell: stock content plus one contextual column. */
+.stock-v3-page {
+  grid-template-areas: 'workspace right-context';
+  grid-template-columns: minmax(0, 1fr) clamp(288px, 19vw, 320px);
+  gap: 12px;
+  padding: 0;
+}
+
+.stock-v3-workspace { grid-area: workspace; min-width: 0; }
+.stock-v3-right-context {
+  grid-area: right-context;
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  position: sticky;
+  top: calc(var(--header-height) + 10px);
+}
+.stock-v3-right-context .stock-v3-context-panel,
+.stock-v3-right-context .stock-v3-radar {
+  grid-area: auto;
+  order: initial;
+  position: static;
+  max-height: none;
+}
+.stock-v3-right-context .stock-v3-context-body,
+.stock-v3-right-context .stock-v3-context-body dl { display: block; }
+
+@media (max-width: 1279px) {
+  .stock-v3-page {
+    grid-template-areas: 'workspace' 'right-context';
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .stock-v3-right-context {
+    position: static;
+    grid-template-columns: minmax(260px, .75fr) minmax(0, 1.25fr);
+  }
+}
+
+@media (max-width: 900px) {
+  .stock-v3-right-context { grid-template-columns: minmax(0, 1fr); }
+  .stock-v3-page { gap: 8px; }
+}

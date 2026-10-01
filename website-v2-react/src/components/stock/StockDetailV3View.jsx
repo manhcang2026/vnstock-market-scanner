@@ -83,7 +83,7 @@ export default function StockDetailV3View({
             </div>
           </div>
 
-          <Link className="stock-v3-back-link" to="/danh-sach">Về Scanner</Link>
+          <Link className="stock-v3-back-link" to="/thi-truong">Về Thị trường</Link>
         </section>
 
         {quoteError ? (
@@ -125,21 +125,22 @@ export default function StockDetailV3View({
         />
       </div>
 
-      <StockDetailSignalRail
-        radar={radar}
-        radarError={radarError}
-        radarUnavailable={radarUnavailable}
-        radarBlockedStatus={radarBlockedStatus}
-      />
-
-      <StockDetailContextPanel
-        quote={quote}
-        publicContext={publicContext}
-        publicContextError={publicContextError}
-        liveConnected={liveConnected}
-        marketSession={marketSession}
-        now={now}
-      />
+      <div className="stock-v3-right-context" role="complementary" aria-label="Ngữ cảnh cổ phiếu">
+        <StockDetailContextPanel
+          quote={quote}
+          publicContext={publicContext}
+          publicContextError={publicContextError}
+          liveConnected={liveConnected}
+          marketSession={marketSession}
+          now={now}
+        />
+        <StockDetailSignalRail
+          radar={radar}
+          radarError={radarError}
+          radarUnavailable={radarUnavailable}
+          radarBlockedStatus={radarBlockedStatus}
+        />
+      </div>
     </div>
   )
 }
