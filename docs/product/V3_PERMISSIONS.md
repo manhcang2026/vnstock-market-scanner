@@ -1,55 +1,138 @@
-# CCC Stock Detail V3 Permission Amendment v1.0
+# CCC V4 Permissions — Beta 10/10
 
-**Status:** PRODUCT OWNER APPROVED
-**Date:** 2026-09-19
-**Scope:** Stock Detail V3 and the minimum API boundary required by it
+**Status:** Product Owner approved direction, 2026-10-01  
+**Scope:** Market/Watchlist/Stock Detail/Filter/AI entitlement presentation and API boundary.
 
-This versioned amendment supersedes older Stock Detail permission text where it
-conflicts with the boundary below. It does not change plan inheritance,
-Watchlist quota/capacity, upgrade or downgrade rules.
+This document supersedes older V3 permission wording where it conflicts with the rules below.
 
-## Public / free
+## 1. Public market layer
 
-- Market Quote and company identity.
-- Chart history and live candle updates.
-- 5m, 15m, 30m, 1H and 1D chart resolutions.
-- Zoom, pan, fullscreen and candle inspection.
-- MA10, MA25, MA99, MA200, Bollinger Bands, RSI and MACD.
-- MA10/MA200 values and distance.
-- Fundamental Research from `financial_latest` and `stock_metadata`.
-- Quarterly financial history from `financial_quarterly` and the real external
-  BCTC link.
+A symbol does not need to be in the user's Watchlist for the following data to be public when the backend has valid data:
 
-Public API serializers are allowlists. They must not reuse the full current CCC
-state serializer.
+- symbol / company identity / exchange;
+- current price;
+- change value / change percent;
+- basic volume;
+- MA10 / MA200;
+- distance to MA10 / MA200.
 
-## CCC entitlement protected
+Stock Detail public access keeps the previously approved public features when available:
 
-- DayRVOL, RVOL15 and RVOL30.
-- CCC Price5 / Price15 engine values.
-- ATO/ATC intelligence and ATC price impact.
-- `signal_state`, `signal_level`, `signal_direction`, summaries and reason-code
-  explanations.
-- Historical signal journey when canonical `signal_events` exists.
-- Market-wide Radar identities outside the authenticated user's entitled scope.
-- CCC alerts and automation.
+- market quote;
+- chart history and live candles;
+- chart resolutions already supported by the API;
+- zoom/pan/fullscreen/candle inspection;
+- public chart indicators such as MA/Bollinger/RSI/MACD;
+- Fundamental Research;
+- quarterly financial/BCTC public research.
 
-Raw engine/config thresholds are never public. Signal logic is never rebuilt in
-browser JavaScript.
+## 2. CCC Intelligence protected layer
 
-## Entitlement semantics
+Outside effective technical entitlement, the backend must not return protected CCC fields.
 
-Server authorization uses `technical_allowed`,
-`effective_full_market_access`, active VIP Day and the authenticated active
-Watchlist scope. No new `VIP_MONTH` code is introduced. A full-market plan is
-identified by the backend `full_market_access` semantic.
+Protected fields include:
 
-Radar aggregate counts may be public. Unauthorized identities must be omitted
-from the network response, not merely hidden in the UI.
+- Day RVOL;
+- RVOL15;
+- RVOL30;
+- CCC Price5 / Price15;
+- CCC State;
+- signal state/level/direction;
+- reason codes and explanations;
+- ATO/ATC Intelligence and ATC price impact;
+- historical CCC signal journey;
+- CCC alerts/automation.
 
-## Explicitly unchanged
+Raw engine/config thresholds remain server-side.
 
-- Watchlist quota and replacement math.
-- Plan capacity and inheritance.
-- Scanner universe membership and collection.
-- Signal thresholds, RVOL definitions, auction algorithms and baseline math.
+Signal logic must never be rebuilt in browser JavaScript.
+
+## 3. Access semantics
+
+Frontend components should consume one simple semantic access state:
+
+```text
+DISCOVERY
+TRACKED
+FULL_MARKET
+```
+
+### DISCOVERY
+Public market layer only.
+
+### TRACKED
+Public layer + CCC Intelligence for symbols inside the user's effective Watchlist/technical entitlement.
+
+### FULL_MARKET
+Public layer + CCC Intelligence for the full entitled market universe.
+
+The backend remains the authority for plan inheritance, VIP/full-market semantics and active Watchlist scope.
+
+Do not scatter package/watchlist/VIP logic across individual UI components.
+
+## 4. Server-side enforcement
+
+Protected data must be removed by backend authorization/serializer logic.
+
+Do not send premium values to the browser and only hide them with CSS.
+
+Unauthorized identities or protected values must not be inferable from network responses.
+
+## 5. Market / Scanner behavior
+
+Outside Watchlist, users may still browse public rows.
+
+Do not blur or hide the entire row.
+
+A Discovery row may show a compact locked state for CCC Intelligence and an action such as adding the symbol to Watchlist.
+
+## 6. Filter entitlement and anti-leak rule
+
+Public filters may run across the full public market universe for public fields such as:
+
+- exchange;
+- metadata/industry when available;
+- price;
+- change percent;
+- volume;
+- above/below MA10/MA200;
+- distance MA10/MA200.
+
+If any condition uses a CCC-protected field such as RVOL, Price5/15, Signal or ATO/ATC:
+
+- non-full-market users may only search their effective entitled scope;
+- full-market users may search the full entitled universe.
+
+Filter results must not leak protected intelligence for unauthorized symbols.
+
+## 7. AI Search entitlement
+
+AI is not a market-data source.
+
+AI may translate Vietnamese natural language into a validated CCC intent/filter/action. The CCC backend then queries real CCC data.
+
+Rules:
+
+- queries using only public fields may search the public market universe;
+- queries using protected fields must be scoped to the user's effective entitlement;
+- full-market users may use protected-field search across the full entitled universe;
+- deep analysis/explanation must respect the same data entitlement;
+- AI must not bypass the serializer/API permission boundary.
+
+AI quota policy is defined separately by the AI Core Plan.
+
+## 8. Unchanged business rules
+
+This amendment does not by itself change:
+
+- Watchlist capacity/quota math;
+- package inheritance;
+- upgrade/downgrade rules;
+- scanner collection universe;
+- RVOL definitions;
+- baseline math;
+- MA logic;
+- ATO/ATC algorithms;
+- signal thresholds.
+
+Missing data remains missing/NULL and must not be converted to zero.

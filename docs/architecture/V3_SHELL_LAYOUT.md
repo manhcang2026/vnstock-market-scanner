@@ -1,32 +1,166 @@
-﻿# CCC V3 desktop shell layout
+# CCC V4 Shell Layout — Beta 10/10
 
-## Fixed geometry
+**Status:** Product direction approved 2026-10-01  
+**Supersedes:** the fixed V3 shell geometry where it conflicts with this document.
 
-At desktop widths of 1200px and above, Stock Detail V3 is the reference for the reusable V3 shell:
+## 1. One shared application shell
+
+All primary V4 routes use one shared App Shell.
+
+Do not maintain separate page-level shells for Scanner, Stock Detail, Account, or other primary routes.
+
+The shell owns:
+
+- top bar;
+- global left sidebar;
+- center workspace;
+- contextual right rail;
+- desktop/mobile responsive transitions;
+- global search;
+- account entry;
+- mobile hamburger navigation.
+
+Stock Detail is a route inside this shell, not a separate shell.
+
+## 2. Desktop geometry
+
+V4 uses a true three-column workspace.
+
+Recommended desktop geometry:
 
 ```text
-48px compact navigation | 240px left rail | minmax(0, 1fr) workspace | 240px right rail
+TOP BAR: 52–56px
+
+LEFT SIDEBAR | CENTER WORKSPACE | RIGHT CONTEXT
+~224px       | minmax(0, 1fr)   | ~288–320px
 ```
 
-- The compact navigation is fixed to the viewport edge below the 52px header. Page content starts immediately to its right.
-- Both content rails use the same `--ccc-side-rail-width: 240px` token defined on `.stock-v3-shell`. A route must not silently assign its own left/right desktop widths.
-- The center track consumes all remaining width with `minmax(0, 1fr)`; neither a max-width container nor an auto margin should create empty gutters or route-to-route jitter.
-- The 48px navigation, 240px left rail, flexible center, and 240px right rail keep the same horizontal positions across V3 routes. Future Overview, Scanner, Signal Achievements, and Account layouts must follow this desktop track contract.
-- The desktop content grid is at least the viewport height below the header. Side rails are top-aligned and may size to their own content; they do not stretch to match taller center content. Routes must not create large empty rail background slabs merely to equalize heights.
-- Opening the navigation drawer overlays the content and replaces the visible compact rail. It must not push or resize the three content tracks.
-- Below 1200px, a route may stack or adapt its slots to preserve usable workspace width. Mobile bottom navigation and safe-area padding remain separate from desktop geometry.
+Recommended CSS direction:
 
-The current implementation applies these slots to Stock Detail only. Other routes are not migrated by this document. A future route should reuse the shell token and track contract when its three-column desktop layout is implemented.
+```css
+grid-template-columns:
+  224px
+  minmax(0, 1fr)
+  clamp(288px, 19vw, 320px);
+gap: 10px 12px;
+```
 
-## Slot examples for future routes
+Responsive targets:
 
-| Route | Left rail | Center workspace | Right rail |
-| --- | --- | --- | --- |
-| Stock Detail | Radar | Chart and tabs | Public quote/data context |
-| Scanner | Filters | Results | AI search/context, only when implemented |
-| Overview | Market pulse | Dashboard | Alerts, only when implemented |
-| Signal Achievements | Filters | Cases | Stats, only when implemented |
-| Account | Navigation | Profile and Watchlist | Package/account context, only when implemented |
+- >= 1440px: full 3-column workspace;
+- 1280–1439px: compact 3-column, left about 200–208px, right about 260–280px;
+- 1024–1279px: left + center, right context becomes panel/drawer/tab;
+- <= 900px: center is 100%; left and right are not permanently visible.
 
-These are layout slots, not authorization to create routes, fabricate data, or change entitlement. Stock Detail data ownership and permission boundaries remain defined by `V3_DATA_SOURCE_OWNERSHIP.md`.
+Do not introduce a route-specific max-width container that creates large gutters or route-to-route horizontal jitter.
 
+## 3. Left sidebar
+
+The left column is global navigation/workspace, not a route-specific filter rail.
+
+Beta routes may temporarily retain the current product IA:
+
+- Tổng quan;
+- Bộ quét / Danh sách;
+- Nghiên cứu / So sánh ngành;
+- Sàng lọc cơ bản;
+- Tài khoản.
+
+Reserve a personal area for:
+
+- Danh sách theo dõi;
+- additional watchlists later.
+
+The structure must allow future items such as Market, CCC Scanner, AI Search, Articles, Community, Tools, and Academy without a shell rewrite.
+
+## 4. Center workspace
+
+The center is the primary working area.
+
+Examples:
+
+- Market / Watchlist: dense desktop table;
+- Stock Detail: quote, chart, CCC Intelligence, signals, Fundamental, BCTC;
+- Account: profile/package/watchlist management.
+
+Scanner filters and sorting do not permanently consume the global left sidebar. They belong to a center toolbar and open a panel/popover/sheet.
+
+## 5. Right contextual rail
+
+The right rail is contextual, not primary navigation.
+
+Examples:
+
+### Market / Watchlist
+- market indices/context;
+- AI Search;
+- later: featured articles / news;
+- later: quick tools.
+
+### Stock Detail
+- session/quote context;
+- related CCC context;
+- AI “ask about this symbol” when implemented;
+- compact data-trust/signal context when useful.
+
+Do not render dead controls as if they work.
+
+## 6. Mobile
+
+Mobile is intentionally redesigned, not a scaled desktop table.
+
+Top bar:
+
+```text
+☰   CCC / logo      Search      Account
+```
+
+The hamburger must work and contain the complete primary navigation.
+
+A bottom navigation may remain as a shortcut set, but it does not replace the hamburger.
+
+Rules:
+
+- no permanent left sidebar;
+- no permanent right rail;
+- Market/Watchlist uses cards;
+- filters/sort use bottom sheet or full-height sheet;
+- market context may use a horizontal strip;
+- touch targets should be at least 44px where practical.
+
+## 7. Theme
+
+Beta 10/10 uses one canonical dark theme.
+
+Remove Light/Dark toggle presentation from the Beta shell.
+
+The visual direction keeps CCC’s existing identity:
+
+- near-black/navy page background;
+- dark navy surfaces;
+- thin blue-gray borders;
+- off-white primary text;
+- blue-gray secondary text;
+- green positive;
+- coral/red negative;
+- blue/cyan public technical/action accents;
+- violet/purple CCC/RVOL intelligence accents.
+
+## 8. Migration rule
+
+Reuse working V3 pieces where practical:
+
+- React/Vite application;
+- routing;
+- auth;
+- global stock search;
+- chart engine;
+- live WebSocket;
+- StockLogo;
+- scanner data utilities;
+- mobile-card direction;
+- Fundamental/BCTC clients.
+
+Do not rewrite the frontend from zero.
+
+The V4 implementation priority is to unify shell ownership and navigation first, then migrate route content into that shell.

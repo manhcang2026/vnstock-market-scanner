@@ -1,127 +1,124 @@
-﻿# CCC V3 Data Source Ownership
+# CCC V4 Data Source Ownership
 
-## 1. Market-data authority
+**Status:** Current architecture reference for Beta 10/10  
+**Supersedes:** older V3 persistence wording where it conflicts with `AGENTS.md`.
 
-SSI FastConnect is the sole canonical source for V3 market data.
+## 1. Canonical market-data authority
 
-This includes:
+SSI FastConnect is the canonical external market-data provider for V4.
 
-- realtime quote
-- OHLCV
-- intraday minute bars
-- daily bars
-- bid/ask where available
-- chart market history
-- volume calculations
-- RVOL metrics
-- price momentum
-- MA and technical metrics
-- ATO/ATC intelligence
-- stock state
-- signals/reasons
-- Radar / market scanner market state
+The VPS CCC Engine is the canonical V4 runtime/storage owner.
 
-No other provider may silently fill missing SSI market data.
+Current production direction:
 
-Missing SSI data must remain missing / NULL.
+```text
+SSI
+  -> VPS CCC Engine
+  -> canonical VPS storage (currently SQLite)
+  -> /api/v2/* and /api/v2/live
+  -> React frontend
+```
 
-## 2. Runtime boundary
+Long-term storage may migrate to PostgreSQL on the VPS without requiring a frontend API-contract rewrite.
 
-Frontend market traffic follows:
+## 2. Frontend boundary
 
-Frontend
-→ VPS `/api/v2/*` REST
-→ VPS `/api/v2/live` WebSocket
-→ SSI runtime / CCC engine
+Browser market traffic must use:
 
-The browser does not choose or know the backend market database.
+- HTTP `/api/v2/*`;
+- WebSocket `/api/v2/live`.
 
-## 3. Temporary V3 market persistence
+The browser must not select or depend on physical market database tables.
 
-During V3 stabilization, market persistence uses the NEW Supabase PostgreSQL project:
+The frontend must not know whether the backend currently uses SQLite or later PostgreSQL.
 
-`ccc-ssi-v2`
+## 3. OLD Supabase ownership
 
-Its purpose is:
+The existing OLD Supabase remains owner for:
 
-- inspectability;
-- SQL auditing;
-- schema stabilization;
-- baseline verification;
-- RVOL verification;
-- EOD verification;
-- signal/state verification;
-- easier diagnosis during development.
+- authentication/session;
+- profiles;
+- Watchlists;
+- plans/packages;
+- subscriptions;
+- VIP/full-market entitlement;
+- company/symbol metadata;
+- exchange/industry metadata;
+- Fundamental Research;
+- BCTC/quarterly financial data;
+- legacy market/scanner tables still required by legacy deployed websites until retirement.
 
-It is not intended to be the permanent market database.
+OLD Supabase market tables are not a V4 market-data fallback.
 
-The implementation must prefer portable PostgreSQL constructs and avoid unnecessary Supabase-specific coupling.
+Missing canonical SSI/CCC market data remains missing/NULL.
 
-When V3 is stable:
+## 4. NEW Supabase `ccc-ssi-v2`
 
-`ccc-ssi-v2 PostgreSQL`
-→ PostgreSQL migration
-→ VPS PostgreSQL
+`ccc-ssi-v2` is a remote audit/mirror system only when used.
 
-Frontend/API/WS contracts remain unchanged.
+Mirror writes must be:
 
-## 4. OLD Supabase ownership
+- asynchronous;
+- fail-open;
+- best effort;
+- retryable;
+- unable to roll back or block canonical VPS writes.
 
-The existing OLD Supabase project continues to own:
+It must not be a production browser dependency.
 
-- authentication and sessions
-- profiles
-- Watchlist
-- plans/packages
-- subscriptions
-- VIP access
-- entitlement
-- company/symbol metadata
-- exchange/industry metadata
-- financial/fundamental research
-- `financial_latest`
-- `financial_quarterly`
-- BCTC-related public research data
+Do not expose privileged NEW Supabase credentials to frontend code.
 
-Frontend may use OLD Supabase for these approved responsibilities.
+## 5. Runtime preservation
 
-OLD Supabase must never become a fallback market-data provider for V3.
+Do not remove current working canonical dependencies until the replacement is proven.
 
-## 5. Browser security boundary
+Data cleanup must preserve canonical/recoverable data and realtime-only ATO/ATC evidence where required.
 
-The browser must not receive NEW Supabase privileged credentials.
+The legacy Supabase scanner path described by `AGENTS.md` must remain intact until the Product Owner explicitly retires it.
 
-NEW market persistence is accessed by backend/server-side services only.
+## 6. Product data ownership matrix
 
-Frontend market data continues to use VPS REST/WebSocket endpoints.
+| Data | Owner/source |
+|---|---|
+| Realtime quote / OHLCV / bid-ask | SSI -> VPS CCC backend |
+| Intraday minute bars / chart market history | VPS canonical market runtime |
+| Daily bars / current market state | VPS CCC Engine |
+| RVOL / Price5 / Price15 / MA technical metrics | CCC Engine |
+| ATO/ATC Intelligence | CCC Engine |
+| Signals / reasons | CCC Engine |
+| Auth / user profile | OLD Supabase |
+| Watchlist | OLD Supabase |
+| Package / subscription / VIP entitlement | OLD Supabase |
+| Symbol/company/exchange/industry metadata | OLD Supabase |
+| Fundamental / BCTC | OLD Supabase |
+| `ccc-ssi-v2` | audit mirror only |
 
-## 6. Current runtime migration rule
+## 7. Data quality
 
-Current VPS chart/API/WebSocket runtime remains operational while NEW persistence is developed.
+Missing data is not zero.
 
-Do not remove current storage/runtime dependencies before the replacement has been proven.
+Frontend/API states must distinguish at least:
 
-Migration order:
+- live/current;
+- outside market hours;
+- stale;
+- degraded;
+- missing/unavailable;
+- locked by entitlement;
+- error.
 
-1. preserve current working runtime;
-2. build NEW PostgreSQL schema;
-3. validate incoming SSI data;
-4. validate baseline and calculated metrics;
-5. validate API/chart/WS output;
-6. switch persistence;
-7. observe in production;
-8. retire obsolete storage.
+The UI must not present stale trading-date data as healthy live data.
 
-## 7. Repository ownership
+## 8. P0 Beta cutover check
 
-`infra/supabase-user-system/`
-= OLD Supabase user/account entitlement material.
+Before 10/10, verify that current-session endpoints use the current CCC Engine state rather than a legacy stale market-state layer.
 
-`supabase/`
-= NEW `ccc-ssi-v2` market database migrations only.
+At minimum verify:
 
-`services/ssi_realtime_shadow/`
-= current SSI/backend runtime.
+- `/api/v2/quote/{symbol}`;
+- `/api/v2/stock-detail/{symbol}`;
+- `/api/v2/ccc/{symbol}`;
+- `/api/v2/scanner`;
+- `/api/v2/live`.
 
-`website-v2-react/`
-= current V3 frontend.
+The frontend must consume the API contract only; fixing a stale backend source must not require browser-side table knowledge.
