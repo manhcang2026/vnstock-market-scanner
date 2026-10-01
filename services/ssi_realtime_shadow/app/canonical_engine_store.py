@@ -378,6 +378,20 @@ class CanonicalEngineStore:
                 "SELECT * FROM signal_state_current WHERE symbol=?", (symbol,)
             ).fetchone()
 
+    def latest_snapshot_date(self) -> str | None:
+        """Return the newest date represented by either current snapshot table."""
+        with self._lock:
+            row = self.connection.execute(
+                """SELECT MAX(trading_date) FROM (
+                       SELECT trading_date FROM current_state
+                       WHERE trading_date IS NOT NULL
+                       UNION ALL
+                       SELECT trading_date FROM signal_state_current
+                       WHERE trading_date IS NOT NULL
+                   )"""
+            ).fetchone()
+        return str(row[0]) if row is not None and row[0] is not None else None
+
     def upsert_signal(self, row: SignalState) -> bool:
         """Commit current signal state and append history only on same-day change."""
         values = asdict(row)

@@ -94,6 +94,40 @@ class CanonicalLiveMarketReader:
                 )
             )
 
+    def has_projectable_evidence(
+        self, trading_date: str, observed_at: datetime
+    ) -> bool:
+        """Check safe rollover evidence with one bounded, set-based query."""
+        connection = self._for_date(trading_date)
+        if connection is None:
+            return False
+        with self._lock:
+            evidence = tuple(
+                connection.execute(
+                    """SELECT DISTINCT UPPER(TRIM(exchange)), minute
+                       FROM minute_bars
+                       WHERE trading_date=? AND is_finalized=1
+                         AND UPPER(TRIM(exchange)) IN
+                             ('HOSE','HSX','HNX','UPCOM','UPCO')""",
+                    (trading_date,),
+                )
+            )
+        eligible_by_exchange: dict[str, frozenset[str]] = {}
+        for raw_exchange, raw_minute in evidence:
+            exchange = normalize_exchange(str(raw_exchange))
+            eligible = eligible_by_exchange.get(exchange)
+            if eligible is None:
+                target = _target_point(exchange, observed_at)
+                eligible = frozenset(
+                    point.minute
+                    for point in (target[0][: target[1] + 1] if target else ())
+                    if point.is_continuous
+                )
+                eligible_by_exchange[exchange] = eligible
+            if str(raw_minute) in eligible:
+                return True
+        return False
+
     def read_live_day(
         self, symbol: str, trading_date: str
     ) -> tuple[
@@ -221,13 +255,27 @@ class CanonicalLiveEngine:
                     "Canonical signal projector initialization failed; "
                     "canonical metrics continue"
                 )
-        self._trading_date = _local(active_at).date().isoformat()
-        self._prepare_market_schema(self._trading_date)
+        candidate_date = _local(active_at).date().isoformat()
+        self._prepare_market_schema(candidate_date)
         self.market_reader = CanonicalLiveMarketReader(market_store)
-        self.engine_store.expire_current_state(self._trading_date)
-        if self.signal_projector is not None:
-            self.engine_store.expire_signal_state(self._trading_date)
-        self._active = set(self.market_reader.live_symbols(self._trading_date))
+        self._has_active_market_evidence = (
+            self.market_reader.has_projectable_evidence(
+                candidate_date, self._active_at
+            )
+        )
+        self._trading_date = (
+            candidate_date
+            if self._has_active_market_evidence
+            else self.engine_store.latest_snapshot_date() or candidate_date
+        )
+        if self._has_active_market_evidence:
+            self.engine_store.expire_current_state(self._trading_date)
+            if self.signal_projector is not None:
+                self.engine_store.expire_signal_state(self._trading_date)
+            self._active = set(self.market_reader.live_symbols(self._trading_date))
+        else:
+            self._prepare_market_schema(self._trading_date)
+            self._active = set(self.market_reader.live_symbols(self._trading_date))
         self._dirty = {symbol: "" for symbol in self._active}
         self._dirty_generation = {symbol: 0 for symbol in self._active}
         self._exchanges: dict[str, str] = {}
@@ -261,19 +309,55 @@ class CanonicalLiveEngine:
 
     def advance(self, observed_at: datetime) -> int:
         local = _local(observed_at)
-        trading_date = local.date().isoformat()
+        candidate_date = local.date().isoformat()
         with self._lock:
-            if trading_date != self._trading_date:
-                self._prepare_market_schema(trading_date)
-                self.engine_store.expire_current_state(trading_date)
-                if self.signal_projector is not None:
-                    self.engine_store.expire_signal_state(trading_date)
-                self._trading_date = trading_date
-                self._active = set(self.market_reader.live_symbols(trading_date))
-                self._dirty = {symbol: "" for symbol in self._active}
-                self._dirty_generation = {symbol: 0 for symbol in self._active}
-                self._exchanges.clear()
-                self._last_projected.clear()
+            should_check_candidate = (
+                candidate_date > self._trading_date
+                or (
+                    candidate_date == self._trading_date
+                    and not self._has_active_market_evidence
+                )
+            )
+            if should_check_candidate:
+                self._prepare_market_schema(candidate_date)
+                try:
+                    has_candidate_evidence = (
+                        self.market_reader.has_projectable_evidence(
+                            candidate_date, local
+                        )
+                    )
+                    candidate_symbols = (
+                        set(self.market_reader.live_symbols(candidate_date))
+                        if has_candidate_evidence
+                        else set()
+                    )
+                except Exception:
+                    self._calculation_errors += 1
+                    LOG.exception(
+                        "Canonical live-engine rollover probe failed; will retry: "
+                        "trading_date=%s",
+                        candidate_date,
+                    )
+                    return 0
+                if has_candidate_evidence:
+                    self.engine_store.expire_current_state(candidate_date)
+                    if self.signal_projector is not None:
+                        self.engine_store.expire_signal_state(candidate_date)
+                    self._trading_date = candidate_date
+                    self._has_active_market_evidence = True
+                    self._active = candidate_symbols
+                    self._dirty = {symbol: "" for symbol in self._active}
+                    self._dirty_generation = {
+                        symbol: 0 for symbol in self._active
+                    }
+                    self._exchanges.clear()
+                    self._last_projected.clear()
+            if (
+                candidate_date != self._trading_date
+                or not self._has_active_market_evidence
+            ):
+                return 0
+            trading_date = self._trading_date
             symbols = tuple(sorted(self._active))
 
         written = 0
