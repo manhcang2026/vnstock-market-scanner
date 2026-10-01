@@ -1,299 +1,1116 @@
-# CCC Beta 10/10 — Frontend Master V4
+# CCC Beta 10/10 — Frontend & Product Master V4
 
-**Ngày chốt nền:** 2026-10-01  
+**Ngày cập nhật:** 2026-10-02  
 **Mốc public dự kiến:** 2026-10-10  
-**Repo audit:** `manhcang2026/vnstock-market-scanner`  
-**Frontend branch đối chiếu:** `feat/ccc-v3-beta` @ `80cd98b7146f3e2428b483ed5dbca31bda19a9e3`  
-**Frontend hiện hành:** `website-v2-react/`  
-**Trạng thái tài liệu:** MASTER DRAFT để khóa nền trước khi đi chi tiết Figma/code.
+**Repo:** `manhcang2026/vnstock-market-scanner`  
+**Frontend:** `website-v2-react/`  
+**Backend / SSI runtime:** `services/ssi_realtime_shadow/`  
+**Branch triển khai V4:** `feat/ccc-v4-beta-1010`  
+**Trạng thái:** PRODUCT + UX SOURCE OF TRUTH cho Beta 10/10.
 
 ---
 
-## 1. Mục tiêu sản phẩm Beta 10/10
+# 0. Quy tắc nguồn chuẩn
 
-CCC Beta phải thể hiện rõ vòng lặp chính:
+Tài liệu này khóa kiến trúc sản phẩm/frontend V4.
 
-**Quan sát thị trường → tìm mã đáng chú ý → hiểu dữ liệu/tín hiệu CCC → theo dõi mã → đi sâu Stock Detail.**
+Khi có xung đột:
 
-Không cố biến Beta thành website chứng khoán có mọi chức năng. Ưu tiên:
+1. `AGENTS.md` vẫn là authority về repository safety, market-data ownership và invariant backend.
+2. Signal Engine V2 config hiện hành trong:
+   `services/ssi_realtime_shadow/config/ccc_signal_v2_beta_config.yaml`
+   là source of truth cho canonical signal/state thresholds và contract.
+3. Tài liệu này là source of truth cho:
+   - IA/navigation;
+   - UX;
+   - presentation;
+   - Community;
+   - News/Articles;
+   - Notification;
+   - Account/Settings;
+   - VIP personalization UX;
+   - responsive behavior;
+   - release scope.
+4. Frontend không được tự dựng lại signal bằng threshold.
+5. Missing data != zero.
 
-1. Market / danh sách cổ phiếu.
-2. Watchlist.
-3. Bộ lọc.
-4. Stock Detail.
-5. CCC Intelligence.
-6. AI Search.
-7. Auth / package / VIP / entitlement.
-8. Data freshness / missing / stale states.
-9. Responsive desktop-mobile hoàn chỉnh.
-
-Các phần Community, News/Articles, Academy, Tools, Admin CMS có thể chuẩn bị chỗ trong kiến trúc nhưng không được làm trễ core Beta.
+Các wording V3/V4 cũ trái với tài liệu này được xem là superseded.
 
 ---
 
-## 2. Nguyên tắc kiến trúc UI mới
+# 1. Product loop của CCC Beta
 
-### 2.1. Một App Shell duy nhất
+CCC không cố trở thành một website chứng khoán “có mọi thứ”.
 
-Beta V4 phải dùng **một shell thống nhất cho tất cả route chính**, không tiếp tục tình trạng generic `AppShell` cho một số route và `StockDetailShell` cho Scanner/Stock Detail/Account.
+Vòng lặp sản phẩm chính:
 
-Shell gồm:
+**Quan sát thị trường  
+→ phát hiện mã đáng chú ý  
+→ hiểu trạng thái CCC và lý do  
+→ theo dõi mã  
+→ đi sâu Stock Detail  
+→ thảo luận / hỏi AI  
+→ nhận alert khi có thay đổi có ý nghĩa.**
 
-- Top bar.
-- Left global sidebar.
-- Center workspace.
-- Right contextual rail.
+Các trụ cột Beta:
+
+1. Tổng quan.
+2. Thị trường.
+3. Đã theo dõi.
+4. Khám phá:
+   - AI Search;
+   - Bộ lọc;
+   - Sàng lọc CCC.
+5. Stock Detail.
+6. CCC State Engine V2 presentation.
+7. Cộng đồng.
+8. Tin tức / Bài viết.
+9. Notification.
+10. Account & Settings.
+11. Mod Dashboard.
+12. Admin Dashboard.
+13. Auth / package / VIP / entitlement.
+14. Responsive desktop/mobile.
+15. Data freshness / missing / stale / degraded.
+
+---
+
+# 2. App Shell V4
+
+## 2.1 Một shell duy nhất
+
+Tất cả route chính dùng cùng một `AppShell`.
+
+Shell sở hữu:
+
+- top header;
+- global left sidebar;
+- center workspace;
+- contextual right rail;
+- mobile drawer;
+- mobile bottom navigation;
+- global search;
+- notification entry;
+- settings/account entry.
 
 Stock Detail là một route/context bên trong shell, không có shell riêng.
 
-### 2.2. Desktop là workspace 3 cột thật
-
-Hướng thiết kế lấy cấu trúc từ mockup mới, nhưng giữ visual DNA/màu CCC cũ.
-
-**Khuyến nghị geometry:**
+## 2.2 Desktop geometry
 
 ```text
 TOP BAR: 52–56px
 
-LEFT SIDEBAR | CENTER WORKSPACE            | RIGHT CONTEXT
-220–232px    | minmax(0, 1fr)             | 288–320px
+LEFT SIDEBAR | CENTER WORKSPACE        | RIGHT CONTEXT
+~224px       | minmax(0, 1fr)         | ~288–320px
 ```
 
-CSS direction:
+Target:
 
-```css
-grid-template-columns: 224px minmax(0, 1fr) clamp(288px, 19vw, 320px);
-gap: 10px/12px;
-```
+- >= 1440px: full 3-column.
+- 1280–1439px: compact 3-column.
+- 1024–1279px: left + center; right context chuyển inline/panel/drawer.
+- <= 900px: không có permanent left/right rail; center 100%.
 
-Mục tiêu gần mockup:
+Center luôn là vùng chính.
 
-- 1680px: left ~224, right ~310, center ~1100.
-- 1440px: left ~208–220, right ~280–300, center ~880–920.
-- Center luôn nhận phần lớn không gian.
-- Right rail rộng hơn rail V3 cũ 240px vì AI/Search/Market Index/News cần đọc được thật.
-- Không dùng max-width container tạo gutter lớn và route jitter.
-
-### 2.3. Breakpoint
-
-**>= 1440px:** full 3 cột.  
-**1280–1439px:** compact 3 cột, left ~200–208, right ~260–280.  
-**1024–1279px:** left + center; right rail chuyển thành drawer/panel/context tab.  
-**<= 900px:** center 100%; left và right không tồn tại thường trực.
-
-Mobile không được co table desktop xuống màn hình nhỏ.
+Không dùng route-level max-width gây gutter lớn hoặc route jitter.
 
 ---
 
-## 3. Left sidebar / menu
+# 3. Visual identity
 
-### 3.1. Beta 10/10
+## 3.1 Một dark theme duy nhất
 
-Tạm giữ route/menu hiện tại để tránh lan scope:
+Beta 10/10 không làm Light/Dark toggle.
 
-- Tổng quan.
-- Bộ quét / Danh sách.
-- Nghiên cứu / So sánh ngành.
-- Sàng lọc cơ bản.
-- Tài khoản.
+## 3.2 DNA màu CCC cũ
 
-Stock Detail không phải primary menu item.
+Giữ cảm giác quen thuộc với user cũ:
 
-### 3.2. Workspace cá nhân
+- page background: navy-black rất tối;
+- surface/panel: dark navy/near-black;
+- elevated surface: sáng hơn nhẹ;
+- border: mảnh, trung tính;
+- primary text: off-white;
+- secondary text: gray/blue-gray;
+- positive price: green;
+- negative price: red/coral;
+- public technical/action/link: blue/cyan;
+- CCC intelligence / AI: violet/purple;
+- warning/weakening: amber/yellow.
 
-Left sidebar có vùng **Danh sách của tôi** khi dữ liệu/watchlist hỗ trợ:
+Không dùng:
 
-- Danh sách theo dõi.
-- Các danh sách riêng khác trong tương lai.
+- neon dashboard;
+- glassmorphism;
+- gradient lòe loẹt;
+- màu user chat ngẫu nhiên;
+- green/red cho UI không mang semantic thị trường.
 
-Không bắt buộc phải hoàn thiện multi-watchlist trước 10/10 nếu backend chưa có contract.
+## 3.3 Palette direction
 
-### 3.3. Menu tương lai
-
-Kiến trúc phải chừa chỗ cho:
-
-- Thị trường.
-- Đã theo dõi.
-- Sàng lọc CCC.
-- AI Search.
-- Tin tức / Bài viết.
-- Cộng đồng.
-- Công cụ.
-- Học viện.
-
-Không cần public tất cả ở Beta.
-
----
-
-## 4. Right contextual rail
-
-Right rail không phải navigation chính. Nó đổi nội dung theo route.
-
-### Scanner / Watchlist
-
-Ưu tiên:
-
-- Market indices / market context.
-- AI Search.
-- Sau này: Tin nổi bật / bài viết.
-- Sau này: quick tools / community.
-
-### Stock Detail
-
-Ưu tiên:
-
-- Context giá/phiên.
-- CCC context / Radar liên quan.
-- AI "Hỏi về mã này" khi AI được triển khai.
-- Signal / data trust compact context nếu phù hợp.
-
-### Quy tắc
-
-- Không nhồi mọi widget vào right rail.
-- Không có dead button giả chức năng.
-- Module chưa có backend thì bỏ hoặc ghi rõ coming soon ở nơi không gây hiểu lầm.
-
----
-
-## 5. Filter / Sort / Column controls
-
-V4 không dùng left contextual rail thường trực chỉ để chứa filter như Scanner hiện tại.
-
-Trên desktop, thao tác danh sách đặt trong toolbar phía trên bảng:
-
-- Bộ lọc.
-- Sắp xếp.
-- Tùy chỉnh cột.
-- Thêm mã (khi ở Watchlist).
-
-Filter mở popover/panel/drawer phù hợp.
-
-Trên mobile:
-
-- Bộ lọc → bottom sheet/full-height sheet.
-- Sắp xếp → bottom sheet.
-- Tùy chỉnh cột không cần ưu tiên nếu mobile dùng card.
-
----
-
-## 6. Mobile UX
-
-### 6.1. Top bar
-
-Mobile phải có hamburger hoạt động:
+Reference direction:
 
 ```text
-☰   CCC / Logo        Search      Account
+background   #0A0D16
+surface      #0B0F18
+surface-2    #11141E
+elevated     #171A24
+border       #25272F
+text         #F7F7F7
+muted        #9F9F9F
+blue         #61A3E6
+purple       #B180FC
+green        #43A84C
+red          #E7454A
+yellow       #E4B84F
 ```
 
-Bấm hamburger mở drawer chứa toàn bộ primary navigation.
-
-### 6.2. Bottom navigation
-
-Có thể giữ 4–5 tác vụ/route quan trọng nếu hữu ích, nhưng hamburger là nơi chứa navigation đầy đủ.
-
-Bottom nav không thay thế hamburger.
-
-### 6.3. Right rail
-
-Không có right rail thường trực trên mobile.
-
-Chuyển thành:
-
-- tabs;
-- section trong content;
-- bottom sheet;
-- action button;
-- horizontal market strip.
-
-### 6.4. Danh sách
-
-Desktop dùng table, mobile dùng card.
-
-Card tối thiểu:
-
-- Symbol/company.
-- Giá và % thay đổi.
-- Volume.
-- MA/distance public.
-- CCC protected state nếu user được entitlement.
+Đây là visual direction, không phải bắt buộc hard-code y hệt ở mọi component.
 
 ---
 
-## 7. Theme và visual identity
+# 4. Global navigation
 
-### 7.1. Chỉ một theme cho Beta
+## 4.1 Primary navigation Beta
 
-**Beta 10/10 chỉ dùng một dark theme chuẩn.**
+Desktop sidebar:
 
-Không làm Light/Dark toggle trong scope này.
+1. **Tổng quan**
+2. **Thị trường**
+3. **Đã theo dõi**
+4. **Khám phá**
+5. **Tin tức / Bài viết**
+6. **Cộng đồng**
+7. **Học viện** — chỉ public nếu có nội dung thật; không để dead route.
 
-Phải xóa/hủy presentation của theme toggle khỏi:
+Stock Detail không phải menu item.
 
-- top bar;
-- settings nếu chỉ phục vụ đổi theme;
-- mobile sheet.
+## 4.2 Workspace cá nhân
 
-Không cần QA 2 theme trong tuần release.
+Section:
 
-### 7.2. Giữ DNA màu CCC cũ
+**DANH SÁCH CỦA TÔI**
 
-Không copy nguyên màu mockup tham khảo.
+Có thể hiển thị:
 
-Giữ phong cách:
+- Danh sách theo dõi;
+- Bluechip;
+- Ngân hàng;
+- Thép;
+- các list custom trong tương lai.
 
-- background navy/black;
-- panel navy đậm;
-- border blue-gray mảnh;
-- primary text off-white;
-- secondary text blue-gray;
-- positive green;
-- negative red/coral;
-- MA/link/action blue/cyan;
-- RVOL / CCC Intelligence purple-violet;
-- màu semantic chỉ dùng khi có ý nghĩa.
+Nếu backend multi-watchlist chưa có, UI không được giả vờ có chức năng thật.
 
-Tránh dashboard neon hoặc generic Tailwind admin style.
+## 4.3 Role navigation
+
+Chỉ render khi user có quyền:
+
+- **Mod Dashboard**
+- **Admin Dashboard**
+
+User thường không thấy hai mục này.
+
+## 4.4 Không có menu “Công cụ”
+
+Các công cụ thị trường được tích hợp trong **Thị trường**.
 
 ---
 
-## 8. Data access / entitlement chính thức
+# 5. Header
 
-### 8.1. Public market layer
+Desktop header:
 
-Được xem với mã ngoài Watchlist:
+```text
+CCC Logo / Brand
+→ Global Search
+→ AI shortcut
+→ Market status / VN time
+→ Notification
+→ Help
+→ Settings
+→ Account
+```
 
-- Mã / tên / sàn.
-- Giá hiện tại.
-- % thay đổi.
-- Khối lượng cơ bản.
-- MA10 / MA200.
-- Khoảng cách MA10 / MA200.
+Rules:
 
-Stock Detail public hiện giữ các quyền đã được duyệt trước đó nếu backend hỗ trợ:
+- Notification có chức năng thật.
+- Settings không dùng cho theme toggle.
+- Settings + Account dẫn vào cùng một hub.
+- Không render dead icon.
+- Global Search tìm ticker/company; có thể mở Stock Detail trực tiếp.
+- AI shortcut mở `Khám phá / AI Search`.
 
-- chart giá/lịch sử/live;
-- các indicator chart public như MA/Bollinger/RSI/MACD;
-- Fundamental Research;
-- BCTC public research.
+Mobile:
 
-### 8.2. CCC Intelligence protected
+```text
+☰  CCC        Search   Notification   Account
+```
 
-Ngoài entitled scope không trả/không hiển thị:
+---
 
-- Day RVOL.
-- RVOL15.
-- RVOL30.
-- CCC Price5 / Price15.
-- CCC State.
-- Signal / level / direction / reason / explanation.
-- ATO / ATC Intelligence / ATC impact.
-- Historical CCC signal journey.
-- Alerts/automation thuộc CCC.
+# 6. Mobile navigation
 
-### 8.3. Access modes
+Bottom navigation chính:
 
-Frontend nên nhận một semantic đơn giản từ backend:
+1. Tổng quan
+2. Thị trường
+3. Theo dõi
+4. Khám phá
+5. Thêm
+
+`Thêm` mở:
+
+- Tin tức / Bài viết;
+- Cộng đồng;
+- Học viện;
+- Tài khoản & Cài đặt;
+- Mod Dashboard nếu có quyền;
+- Admin Dashboard nếu có quyền.
+
+Hamburger vẫn là navigation đầy đủ.
+
+Không co desktop table xuống mobile.
+
+---
+
+# 7. Tổng quan — Dashboard
+
+Tổng quan là dashboard thật, không phải Watchlist page.
+
+Center priority:
+
+## 7.1 AI Search Hero
+
+Đặt cao, dễ thấy:
+
+**Hỏi CCC AI**
+
+Ví dụ prompt:
+
+- “RVOL30 tăng nhưng giá chưa chạy”
+- “Mã gần MA200”
+- “Ngân hàng có dòng tiền xuất hiện”
+
+AI không phải nguồn dữ liệu.
+AI dịch câu hỏi thành intent/filter/action; backend CCC query dữ liệu thật.
+
+## 7.2 Trạng thái CCC hôm nay
+
+Hiển thị phân bố canonical state:
+
+- WATCHING
+- FLOW_APPEARING
+- FLOW_PRICE_CONFIRMED
+- MOMENTUM_MAINTAINED
+- MOMENTUM_WEAKENING
+- SELLING_PRESSURE
+
+NORMAL có thể không cần chiếm nhiều diện tích nếu không hữu ích.
+
+Không hiển thị “đạt 2/4 / 3/4 / 4/4 tín hiệu”.
+
+## 7.3 Chuyển trạng thái mới
+
+Hiển thị event/state transition có ý nghĩa:
+
+```text
+$FPT
+WATCHING → FLOW_APPEARING
+Reason: RVOL30_STRONG · PRICE15_UP
+```
+
+## 7.4 Watchlist snapshot
+
+5–8 mã quan trọng.
+
+## 7.5 Chợ chung
+
+Module chat chung đủ lớn để có giá trị:
+
+- user chưa login được đọc;
+- login mới gửi;
+- realtime;
+- `$FPT` click mở Stock Detail;
+- `@username` tạo mention.
+
+## 7.6 Right rail
+
+Có thể gồm:
+
+- chỉ số / toàn cảnh thị trường;
+- mã đang được nhắc nhiều;
+- tin nổi bật;
+- notification nhỏ.
+
+Không nhồi tất cả widget cùng lúc.
+
+---
+
+# 8. Thị trường
+
+Thị trường là workspace chung của toàn market.
+
+Sub-navigation:
+
+```text
+Danh sách | Ngành | So sánh | Biểu đồ
+```
+
+Đây là nơi tích hợp “Công cụ” cũ.
+
+Center:
+
+- market breadth;
+- filter;
+- sort;
+- column settings;
+- dense table desktop;
+- card mobile.
+
+Row ưu tiên:
+
+- identity;
+- current price;
+- change;
+- basic volume;
+- MA10/MA200 / distance;
+- CCC state nếu entitled;
+- row action.
+
+Mã ngoài entitlement:
+
+- vẫn thấy public layer;
+- protected CCC data phải khóa thật ở backend;
+- không blur cả dòng;
+- có CTA thêm Watchlist nếu phù hợp.
+
+---
+
+# 9. Đã theo dõi
+
+Watchlist là nơi user thấy đầy đủ CCC Intelligence theo entitlement.
+
+Center:
+
+- summary;
+- alert summary;
+- filter/sort;
+- table/card;
+- state meter;
+- state name;
+- public market metrics;
+- protected metrics.
+
+Right rail:
+
+- recent state transitions;
+- personal lists;
+- watchlist alerts.
+
+---
+
+# 10. Khám phá
+
+Một top-level route duy nhất:
+
+```text
+AI Search | Bộ lọc | Sàng lọc CCC
+```
+
+## 10.1 AI Search
+
+Ví dụ:
+
+> “Khối lượng 30 phút tăng nhưng giá chưa tăng, cách MA200 dưới 5%.”
+
+UI phải cho user thấy AI đã hiểu thành điều kiện gì.
+
+Kết quả phải hiển thị:
+
+- symbol;
+- dữ liệu khớp;
+- lý do khớp;
+- phạm vi quyền.
+
+## 10.2 Bộ lọc
+
+Public filter toàn market:
+
+- exchange;
+- industry;
+- price;
+- change;
+- basic volume;
+- above/below MA10/MA200;
+- distance MA10/MA200.
+
+Protected filter:
+
+- Day RVOL;
+- RVOL15;
+- RVOL30;
+- Price5 / Price15;
+- canonical CCC State;
+- ATO/ATC intelligence.
+
+Protected field chỉ query trong effective entitlement.
+
+## 10.3 Sàng lọc CCC
+
+Preset/state-based discovery:
+
+- Theo dõi;
+- Dòng tiền xuất hiện;
+- Dòng tiền + giá xác nhận;
+- Động lượng duy trì;
+- Động lượng suy yếu;
+- Áp lực bán;
+- ATO/ATC conditions khi backend hỗ trợ/trust.
+
+“Gần MA200” là filter theo distance MA, không phải canonical CCC state.
+
+---
+
+# 11. CCC State Engine V2 — frontend contract
+
+## 11.1 Engine mới là state machine
+
+Không còn frontend concept:
+
+- 4 tín hiệu độc lập;
+- đạt 2/4;
+- đạt 3/4;
+- đạt 4/4.
+
+Canonical states:
+
+| State | Level | Direction | UX label |
+|---|---:|---|---|
+| `NORMAL` | 0 | NEUTRAL | Bình thường |
+| `WATCHING` | 1 | NEUTRAL | Theo dõi |
+| `FLOW_APPEARING` | 2 | BULLISH | Dòng tiền xuất hiện |
+| `FLOW_PRICE_CONFIRMED` | 3 | BULLISH | Dòng tiền + giá xác nhận |
+| `MOMENTUM_MAINTAINED` | 4 | BULLISH | Động lượng duy trì |
+| `MOMENTUM_WEAKENING` | 2 | NEUTRAL | Động lượng suy yếu |
+| `SELLING_PRESSURE` | 3 | BEARISH | Áp lực bán |
+
+Frontend phải dùng backend output:
+
+- `signal_state`;
+- `signal_level`;
+- `signal_direction`;
+- `reason_codes`;
+- `signal_summary_vi`;
+- `quality`;
+- `config_version`;
+- `engine_version`.
+
+Frontend không apply canonical thresholds.
+
+## 11.2 “4 cục màu” được giữ nhưng đổi semantic
+
+CCC giữ visual 4 block quen thuộc.
+
+Ý nghĩa mới:
+
+**4 block = `signal_level` 0–4.**
+
+Không phải “4 điều kiện”.
+
+Direction/color:
+
+- NORMAL: gray;
+- WATCHING: blue;
+- bullish states: green;
+- MOMENTUM_WEAKENING: amber;
+- SELLING_PRESSURE: red.
+
+Ví dụ:
+
+```text
+□□□□  Bình thường
+■□□□  Theo dõi
+■■□□  Dòng tiền xuất hiện
+■■■□  Dòng tiền + giá xác nhận
+■■■■  Động lượng duy trì
+■■□□  Động lượng suy yếu
+■■■□  Áp lực bán
+```
+
+Table/list:
+- meter + compact state label.
+
+Stock Detail:
+- meter;
+- state label;
+- level;
+- direction;
+- summary;
+- reason codes;
+- data quality/trust.
+
+## 11.3 Reason codes
+
+Reason codes là giải thích deterministic của backend.
+
+Frontend có thể map code → Vietnamese label/tooltip, nhưng không dùng code để tự reconstruct state.
+
+## 11.4 MA context
+
+MA10/MA200 là public technical context.
+
+`ABOVE_MA10`, `BELOW_MA10`, `ABOVE_MA200`, `BELOW_MA200` có thể xuất hiện trong reason/context.
+
+Không tự tạo `NEAR_MA10/NEAR_MA200` canonical reason nếu backend chưa bật.
+
+---
+
+# 12. ATO / ATC Intelligence
+
+ATO/ATC không phải một hệ signal riêng ở frontend.
+
+ATO/ATC là:
+
+- auction metrics;
+- reason/evidence;
+- context có thể dẫn tới canonical state.
+
+UX có thể hiển thị:
+
+- opening/closing RVOL;
+- gap / price impact;
+- volume share;
+- baseline quality;
+- reason codes;
+- resulting state.
+
+Không infer khi evidence thiếu.
+
+---
+
+# 13. VIP — CCC cá nhân / ngưỡng cá nhân
+
+Đây là feature quan trọng trong **Tài khoản & Cài đặt**.
+
+Route/tab:
+
+**CCC cá nhân (VIP)**
+
+## 13.1 Hai lớp state
+
+### Canonical CCC State
+
+- dùng shared server-side config;
+- giống nhau cho toàn hệ thống;
+- dùng cho Market state / public state contract;
+- không bị user chỉnh.
+
+### VIP personalization overlay
+
+- chỉ áp dụng cho user;
+- phục vụ personal scanner/filter/alert;
+- không mutate canonical state;
+- không thay đổi shared market state.
+
+## 13.2 UX mode
+
+```text
+[ Theo chuẩn CCC ]   [ Tùy chỉnh VIP ]
+```
+
+Nếu dùng chuẩn CCC:
+- không show raw canonical threshold;
+- chỉ ghi “Đang sử dụng ngưỡng chuẩn CCC”.
+
+Nếu dùng VIP:
+user có thể lưu override riêng.
+
+## 13.3 Nhóm ngưỡng cá nhân
+
+- Day RVOL;
+- RVOL15;
+- RVOL30;
+- Price5;
+- Price15;
+- ATO:
+  - RVOL;
+  - gap;
+- ATC:
+  - RVOL;
+  - volume share;
+  - price impact;
+- state/alert preferences.
+
+Exact fields/validation phải bám backend implementation khi làm case riêng.
+
+## 13.4 Security
+
+Canonical thresholds không expose raw ra browser.
+
+User chỉ thấy:
+- override của chính họ;
+- preset/mode;
+- validation range được backend cho phép.
+
+VIP thresholds phải lưu server-side.
+
+---
+
+# 14. Alert / Notification
+
+Beta notification chỉ ưu tiên:
+
+1. mention trong chat;
+2. meaningful Signal/Watchlist state transition;
+3. System/Admin announcement.
+
+## 14.1 Anti-noise là requirement
+
+Không spam.
+
+Signal/watchlist alert cần:
+
+- event/state-change based;
+- dedupe;
+- cooldown;
+- grouping theo symbol/event;
+- không lặp nếu state chưa thay đổi có ý nghĩa.
+
+Ví dụ tốt:
+
+```text
+$FPT
+WATCHING → FLOW_APPEARING
+2 phút trước
+```
+
+Không gửi 5 notification chỉ vì metric refresh nhiều lần trong cùng state.
+
+## 14.2 Notification Center
+
+Tabs có thể gồm:
+
+- Tất cả;
+- Mention;
+- Tín hiệu;
+- Hệ thống.
+
+Unread counter phải tiết chế.
+
+---
+
+# 15. Stock Detail
+
+Center priority:
+
+1. identity;
+2. quote + freshness;
+3. session summary;
+4. chart;
+5. tabs:
+   - Tổng quan;
+   - CCC Intelligence;
+   - Cơ bản;
+   - BCTC.
+
+CCC Intelligence:
+
+- Day RVOL;
+- RVOL15;
+- RVOL30;
+- Price5;
+- Price15;
+- MA10;
+- MA200;
+- distance;
+- ATO/ATC;
+- baseline/quality;
+- current canonical state.
+
+Right context:
+
+- session/data status;
+- canonical CCC state;
+- state summary;
+- reason codes;
+- **Thảo luận `$SYMBOL`**;
+- **Hỏi AI về `$SYMBOL`**.
+
+Discovery mode:
+- quote/chart/public MA/Fundamental/BCTC vẫn xem;
+- protected CCC panel khóa thật theo entitlement;
+- không redirect ra khỏi Stock Detail.
+
+---
+
+# 16. Community / Chat — Beta architecture
+
+## 16.1 Không cần mua thêm chat SaaS cho Beta
+
+Dùng hạ tầng hiện có:
+
+**OLD Supabase** cho:
+- Auth;
+- Postgres community tables;
+- Realtime;
+- RLS;
+- Storage nếu có attachment/avatar sau này.
+
+Không đặt chat vào CCC market engine.
+Community failure không được ảnh hưởng SSI/market runtime.
+
+## 16.2 Beta chat model
+
+Hai context chính:
+
+### Chợ chung
+Room global.
+
+### Phòng theo mã
+Mỗi symbol có room:
+
+```text
+symbol:FPT
+symbol:HPG
+...
+```
+
+User chưa login:
+- đọc được.
+
+User login:
+- gửi message;
+- reply;
+- mention;
+- reaction;
+- report.
+
+## 16.3 Stock tag
+
+Ticker syntax:
+
+```text
+$FPT
+$HPG
+$MBB
+```
+
+Parser:
+- nhận known symbol;
+- render blue/cyan;
+- click mở Stock Detail;
+- không auto-link text không phải ticker hợp lệ.
+
+## 16.4 Mention
+
+Syntax:
+
+```text
+@username
+```
+
+Mention:
+- màu purple;
+- tạo notification;
+- server validates target user.
+
+## 16.5 Chat color rules
+
+Không dùng bubble rainbow/random user color.
+
+Semantic:
+
+- message text: off-white;
+- metadata/time: muted gray;
+- `$TICKER`: blue/cyan;
+- `@mention`: purple;
+- link: blue;
+- Mod badge: amber;
+- Admin badge: purple;
+- report/warning action: red only when relevant.
+
+Green/red được ưu tiên giữ semantic cho market direction/state; không dùng làm màu trang trí chat.
+
+## 16.6 Layout
+
+Desktop:
+- feed row, không bắt buộc speech bubble;
+- avatar nhỏ;
+- username + timestamp;
+- body;
+- reply/reaction/report actions.
+
+Mobile:
+- full-width message feed;
+- sticky/comfortable composer;
+- `$TICKER` vẫn tap được.
+
+## 16.7 Moderation
+
+Mod:
+
+- report queue;
+- hide/delete message;
+- mute user;
+- ban user;
+- review moderation history;
+- duyệt bài viết.
+
+Admin:
+- có toàn quyền Mod;
+- role management;
+- user management;
+- system broadcast.
+
+Mọi moderation action cần audit log.
+
+## 16.8 Anti-spam
+
+Beta cần tối thiểu:
+
+- authenticated write;
+- RLS;
+- message rate limit;
+- duplicate spam guard;
+- report;
+- mute/ban;
+- length limits;
+- sanitized content;
+- server-side permission checks.
+
+---
+
+# 17. News / Articles / CMS — Beta architecture
+
+## 17.1 Có trong Beta
+
+Không để sau 10/10.
+
+Public:
+
+- article feed;
+- category;
+- article detail;
+- featured article;
+- related articles;
+- optional article discussion link.
+
+Admin/Mod:
+
+- draft;
+- review;
+- approve;
+- publish;
+- edit;
+- unpublish;
+- category/tag;
+- audit.
+
+## 17.2 CMS approach
+
+Không cần cài WordPress/Strapi/Sanity/Contentful cho Beta.
+
+Dùng:
+
+- existing React frontend;
+- Supabase Postgres;
+- Supabase Storage;
+- internal Admin Dashboard.
+
+Rich-text editor khuyến nghị:
+
+**TipTap**
+
+Lý do:
+- React-friendly;
+- extensible;
+- có heading/list/quote/link/image;
+- dễ thêm custom `$TICKER` node/link sau này;
+- tránh phải dựng editor từ zero.
+
+Có thể thay TipTap bằng editor khác nếu repo đã có dependency phù hợp, nhưng không cần thêm external CMS SaaS.
+
+## 17.3 Article image support
+
+Bài viết **có hình ảnh**.
+
+Tối thiểu:
+
+### Cover image
+- optional nhưng khuyến khích cho featured article;
+- target ratio 16:9;
+- khoảng 1200×675 hoặc tương đương;
+- responsive;
+- alt text.
+
+### Inline image
+- cho phép trong body;
+- charts / screenshots / company visuals;
+- max-width theo article body;
+- caption optional;
+- alt text.
+
+### Thumbnail
+- dùng cover image hoặc thumbnail riêng;
+- feed card không bắt buộc mọi bài phải có ảnh.
+
+## 17.4 Storage
+
+Ảnh bài viết lưu ở Supabase Storage.
+
+Không base64 vào DB.
+
+DB chỉ lưu:
+
+- storage path/public URL;
+- alt;
+- caption;
+- dimensions nếu hữu ích.
+
+Khuyến nghị resize/compress:
+- WebP/JPEG;
+- tránh upload file ảnh nhiều MB;
+- max article width khoảng 1200–1600px.
+
+Không cần Cloudflare Images trong Beta trừ khi sau này có nhu cầu CDN/image transforms lớn.
+
+## 17.5 External source links
+
+Beta hỗ trợ:
+
+- source title;
+- source name;
+- URL;
+- optional note/thumbnail;
+- nhập thủ công bởi Admin/Mod.
+
+Không auto-crawl/re-publish full article bên ngoài.
+
+---
+
+# 18. Account & Settings Hub
+
+Một hub chung:
+
+```text
+Hồ sơ
+Gói & quyền
+Thông báo
+Trải nghiệm
+Bảo mật
+CCC cá nhân (VIP)
+```
+
+## Hồ sơ
+- display name;
+- avatar;
+- basic profile.
+
+## Gói & quyền
+- current package;
+- Watchlist quota;
+- VIP/full-market;
+- expiration;
+- upgrade/manage plan.
+
+## Thông báo
+- mention;
+- signal/watchlist;
+- system/admin;
+- channel preferences sau này.
+
+## Trải nghiệm
+- table density;
+- default list;
+- other non-theme UX settings.
+
+Không có Light/Dark.
+
+## Bảo mật
+- auth/session security settings phù hợp Supabase Auth.
+
+## CCC cá nhân (VIP)
+- personal thresholds/presets/alert rules.
+
+---
+
+# 19. Mod Dashboard
+
+Role-gated.
+
+Beta scope:
+
+- report queue;
+- message hide/delete;
+- mute;
+- ban;
+- article review;
+- article approve/reject;
+- moderation audit.
+
+Không expose cho user thường.
+
+---
+
+# 20. Admin Dashboard
+
+Role-gated.
+
+Beta scope:
+
+- users;
+- roles;
+- packages;
+- VIP/full-market entitlement;
+- article CMS;
+- categories;
+- draft/published;
+- community moderation;
+- system/admin broadcast;
+- notification management;
+- audit.
+
+Admin action có ảnh hưởng entitlement/role phải có confirmation + audit trail.
+
+---
+
+# 21. Permissions / Entitlement
+
+## 21.1 Public layer
+
+Ngoài Watchlist vẫn xem:
+
+- symbol/name/exchange;
+- current price;
+- change;
+- basic volume;
+- MA10;
+- MA200;
+- distance MA10/MA200;
+- public chart;
+- public indicators;
+- Fundamental;
+- BCTC.
+
+## 21.2 Protected CCC layer
+
+Ngoài effective entitlement không trả:
+
+- Day RVOL;
+- RVOL15;
+- RVOL30;
+- Price5;
+- Price15;
+- canonical CCC state;
+- state level/direction/reasons/summary;
+- ATO/ATC Intelligence;
+- historical signal journey;
+- CCC alerts/personalization.
+
+## 21.3 Semantic access
+
+Frontend nên nhận:
 
 ```text
 DISCOVERY
@@ -301,409 +1118,373 @@ TRACKED
 FULL_MARKET
 ```
 
-- `DISCOVERY`: chỉ public layer.
-- `TRACKED`: public + CCC Intelligence cho mã thuộc watchlist/effective entitlement.
-- `FULL_MARKET`: public + CCC Intelligence trên toàn market (VIP/full-market semantic).
+Không rải package/watchlist/VIP logic ở từng component.
 
-Không rải logic package/watchlist/VIP khắp component.
+## 21.4 Server-side lock
 
-### 8.4. Security
-
-Khóa dữ liệu phải thực hiện ở backend serializer/authorization.
-
-Không được trả premium field xuống browser rồi chỉ hide bằng CSS.
+Không gửi premium data xuống browser rồi hide CSS.
 
 ---
 
-## 9. Filter entitlement
+# 22. AI entitlement
 
-### Public filter — toàn market
+AI không bypass permission.
 
-Cho phép ít nhất:
+Public-field query:
+- có thể scan public universe.
 
-- exchange;
-- industry/metadata khi có;
-- price;
-- change %;
-- volume;
-- above/below MA10/MA200;
-- distance MA10/MA200.
+Protected-field query:
+- non-full-market chỉ scan effective entitled scope;
+- full-market/VIP scan full entitled universe.
 
-### CCC filter
-
-Bất kỳ điều kiện có CCC-protected field (RVOL, Price5/15, Signal, ATO/ATC...) phải giới hạn universe theo entitlement:
-
-- non-full-market → watchlist/effective technical scope;
-- VIP/full-market → toàn thị trường.
-
-Không được dùng kết quả filter để leak premium intelligence của mã ngoài scope.
+Deep explanation theo symbol cũng phải respect entitlement.
 
 ---
 
-## 10. AI Search entitlement
+# 23. Data source ownership
 
-AI không phải nguồn số liệu. AI chỉ chuyển ngôn ngữ tự nhiên thành intent/filter/action hợp lệ, backend CCC query dữ liệu thật.
+Canonical market data:
 
-### Non-VIP
+```text
+SSI
+→ VPS CCC Engine
+→ canonical VPS storage
+→ /api/v2/*
+→ /api/v2/live
+→ Frontend
+```
 
-- Query chỉ dùng public fields có thể scan toàn market.
-- Nếu query chứa CCC protected fields, search universe phải giới hạn vào entitled/watchlist scope.
-- Deep analysis từng mã chỉ trong scope được quyền.
+OLD Supabase giữ:
 
-### VIP / full-market
+- Auth;
+- profiles;
+- watchlists;
+- plans;
+- subscriptions;
+- VIP/entitlement;
+- metadata;
+- Fundamental;
+- BCTC;
+- Community;
+- Article CMS;
+- Storage.
 
-- Có thể scan CCC Intelligence trên toàn market.
-- Các intent nâng cao theo AI product plan/quota.
-
-Quota chi tiết tiếp tục theo AI Core Plan; master frontend này chỉ khóa **scope data**, không khóa số lượt.
-
----
-
-## 11. Market / Watchlist screen
-
-### Desktop
-
-Center table là trọng tâm.
-
-Header/action area:
-
-- title + count;
-- filter;
-- sort;
-- column settings;
-- add symbol (watchlist).
-
-Row có thể gồm:
-
-- identity;
-- price/change;
-- volume;
-- MA/distance;
-- quick CCC metrics nếu entitled;
-- signal/state if entitled;
-- row actions.
-
-Outside watchlist:
-
-- vẫn nhìn được public market data;
-- protected data dùng lock state gọn, không blur cả dòng;
-- CTA thêm vào watchlist khi phù hợp.
-
-### Mobile
-
-Card layout; không horizontal-scroll table làm UX chính.
+NEW Supabase `ccc-ssi-v2`:
+- audit mirror only nếu còn sử dụng;
+- không phải browser dependency.
 
 ---
 
-## 12. Stock Detail
+# 24. Data states
 
-Thứ tự thông tin ưu tiên:
+UI phải phân biệt:
 
-1. Identity + quote + freshness.
-2. Session summary.
-3. Chart.
-4. CCC Intelligence.
-5. Signal/reasons.
-6. Fundamental.
-7. BCTC.
-
-Nếu mã ở Discovery mode:
-
-- quote/chart/public technical/fundamental/BCTC vẫn xem theo public permission;
-- CCC Intelligence hiện lock panel + CTA theo dõi/nâng scope.
-
-Không redirect user ra khỏi Stock Detail chỉ vì mã chưa thuộc watchlist.
-
----
-
-## 13. Data trust / stale / missing
-
-Frontend tài chính phải có state rõ:
-
-- Loading.
-- Live.
-- Outside market hours.
-- Stale.
-- Missing/unavailable.
-- Degraded/data warning.
-- Locked/entitlement.
+- Loading;
+- Live/current;
+- Outside market hours;
+- Stale;
+- Missing;
+- Degraded;
+- Locked;
 - Error.
 
-`NULL`/missing không biến thành zero.
+Không biến NULL thành zero.
 
-Nếu trading date cũ hơn expected current session, không được trình bày như dữ liệu live bình thường.
+Không trình bày trading date cũ như live.
 
 ---
 
-## 14. Data ownership / API boundary
+# 25. P0 data cutover
 
-### Canonical market data
+Trước public phải verify:
 
-SSI + CCC Engine trên VPS là canonical market-data owner.
+- `/api/v2/quote/{symbol}`;
+- `/api/v2/stock-detail/{symbol}`;
+- `/api/v2/ccc/{symbol}`;
+- `/api/v2/scanner`;
+- `/api/v2/live`.
 
-Browser market traffic:
+Frontend không biết DB table vật lý.
+
+Legacy stale state không được trở thành source của Beta V4.
+
+---
+
+# 26. Beta route map
+
+Direction:
 
 ```text
-Frontend
-  -> /api/v2/*
-  -> /api/v2/live
-  -> CCC backend/engine
-  -> canonical VPS storage
+/                         Tổng quan
+/thi-truong               Thị trường
+/danh-sach                Đã theo dõi
+/kham-pha                 Khám phá
+/tin-tuc                  Tin tức / Bài viết
+/tin-tuc/:slug            Article Detail
+/cong-dong                Cộng đồng
+/co-phieu/:symbol         Stock Detail
+/tai-khoan                Account & Settings
+/mod                      Mod Dashboard
+/admin                    Admin Dashboard
 ```
 
-Frontend không biết database table nào đứng phía sau API.
-
-### OLD Supabase
-
-Giữ:
-
-- Auth/session/profile.
-- Watchlist.
-- Plans/subscriptions/VIP/entitlement.
-- company/symbol/exchange/industry metadata.
-- Fundamental/BCTC.
-
-Không dùng OLD Supabase market tables làm fallback cho V3 market data.
-
-### NEW Supabase `ccc-ssi-v2`
-
-Chỉ là remote audit mirror/best-effort mirror nếu còn sử dụng.
-
-Không là production dependency của frontend.
+Exact route migration có thể reuse route cũ trong từng implementation case để tránh phá deploy.
+Không cần đổi toàn bộ URL trong một lần nếu có compatibility risk.
 
 ---
 
-## 15. P0 data issue đã xác nhận 2026-10-01
+# 27. Component hierarchy
 
-Production DB audit cho thấy:
+Shared:
 
-- legacy `market.stock_state_current` dừng ở trading date `2026-09-24`;
-- `shadow.minute_bars` đã có `2026-10-01`;
-- `ccc_engine.current_state` đã có `2026-10-01`, khoảng 800 rows và các metric RVOL/MA/Price5/15 đang cập nhật.
+- `AppShell`
+- `GlobalHeader`
+- `GlobalSidebar`
+- `MobileNav`
+- `RightContext`
+- `CCCStateMeter`
+- `CCCStateBadge`
+- `DataFreshness`
+- `LockedField`
+- `StockTag`
+- `MentionTag`
+- `NotificationBell`
+- `NotificationCenter`
 
-Do đó trước public phải kiểm tra toàn bộ `/api/v2/quote`, `/api/v2/stock-detail`, `/api/v2/ccc`, `/api/v2/scanner` để đảm bảo đọc state/current contract đúng của engine mới, không dựa vào lớp legacy stale.
+Feature:
 
-Đây là P0 riêng với redesign UI.
-
----
-
-## 16. Admin / Articles future architecture
-
-Không đưa vào P0 Beta 10/10, nhưng shell/menu/data model phải không chặn mở rộng.
-
-### Public future
-
-- News / Bài viết.
-- Bài phân tích/giải thích CCC.
-- Tin nổi bật ở right rail.
-
-### Admin future
-
-Route riêng ví dụ `/admin`, chỉ hiển thị cho admin role.
-
-Dashboard admin dự kiến quản lý:
-
-- users;
-- package/subscription/VIP state theo policy;
-- article/post content;
-- draft/published status;
-- category/tag;
-- cover image/excerpt/body;
-- publish schedule;
-- audit trail cơ bản.
-
-Admin không trộn vào public user navigation nếu user không có admin role.
+- Overview;
+- Market;
+- Watchlist;
+- Discover;
+- StockDetail;
+- Community;
+- Articles;
+- AccountSettings;
+- Mod;
+- Admin.
 
 ---
 
-## 17. Repo audit — mâu thuẫn và tài liệu cần supersede/rewrite
+# 28. Release scope priority
 
-### 17.1. `docs/architecture/V3_SHELL_LAYOUT.md` — **MÂU THUẪN TRỰC TIẾP**
+## P0 — phải hoạt động
 
-Hiện lock:
+- unified shell;
+- navigation;
+- dark theme;
+- Market;
+- Watchlist;
+- Stock Detail;
+- current CCC state presentation;
+- State Meter;
+- filter;
+- AI Search;
+- public/protected entitlement;
+- Community basic realtime chat;
+- `$TICKER`;
+- per-stock chat;
+- Articles feed/detail;
+- basic internal CMS;
+- Notification Center;
+- mention notification;
+- state/watchlist alert anti-noise;
+- Account & Settings;
+- Mod basic moderation;
+- Admin users/roles/CMS/community;
+- mobile nav;
+- data freshness states.
+
+## P1 — có thể giảm sâu nếu release risk
+
+- advanced article scheduling;
+- advanced reactions;
+- media attachments trong chat;
+- rich community profiles;
+- complex Academy content;
+- highly advanced multi-watchlist management;
+- personalized VIP threshold engine nếu backend chưa kịp — nhưng UI/contract phải khóa đúng và không fake chức năng.
+
+Nếu VIP personal thresholds chưa backend-ready:
+- giữ UI gated/coming-soon rõ ràng;
+- không present như working feature.
+
+---
+
+# 29. Technical recommendation — Community
+
+Beta implementation recommendation:
 
 ```text
-48px compact navigation | 240px left rail | center | 240px right rail
+Supabase Auth
++ Supabase Postgres
++ Supabase Realtime
++ RLS
++ optional Supabase Storage
 ```
 
-V4 chuyển sang true 3-column workspace:
+Không thêm Firebase/Pusher/Ably/Stream Chat trong Beta.
+
+Lý do:
+- auth đã ở Supabase;
+- 200-user target chưa cần thêm realtime vendor;
+- dễ role/moderation;
+- giảm số hệ thống phải vận hành.
+
+Community không được phụ thuộc market engine.
+
+---
+
+# 30. Technical recommendation — Articles
+
+Beta implementation recommendation:
 
 ```text
-~224px global sidebar | center | ~288–320px contextual rail
+React
++ TipTap editor
++ Supabase Postgres
++ Supabase Storage
++ Admin/Mod role
 ```
 
-Filter/Radar không còn mặc định chiếm permanent left rail theo từng route.
+Không thêm external CMS SaaS nếu không có lý do rõ.
 
-**Action:** rewrite file theo Master V4.
-
-### 17.2. `docs/product/V3_PERMISSIONS.md` — **PHẦN LỚN PHÙ HỢP, CẦN BỔ SUNG**
-
-Đã đúng với quyết định mới ở các điểm:
-
-- quote/company public;
-- MA10/MA200 + distance public;
-- RVOL/Price5/15/ATO/ATC/signal protected;
-- entitlement enforce server-side;
-- no raw signal thresholds in browser.
-
-Cần bổ sung:
-
-- Discovery / Tracked / Full-market semantic;
-- public Market/Scanner basic rows;
-- filter scope anti-leak;
-- AI Search scope theo public/protected field.
-
-**Action:** amend/rewrite version mới, không đảo ngược các quyền public đã duyệt.
-
-### 17.3. `docs/architecture/V3_DATA_SOURCE_OWNERSHIP.md` — **ĐÃ LỖI THỜI**
-
-File cũ còn mô tả NEW Supabase `ccc-ssi-v2` là temporary V3 market persistence rồi migrate sang VPS PostgreSQL.
-
-Repo `AGENTS.md` hiện hành đã khóa lại:
-
-- VPS CCC Engine + SQLite là canonical hiện tại;
-- PostgreSQL VPS là target dài hạn;
-- NEW Supabase chỉ remote audit mirror, async/fail-open/best-effort.
-
-**Action:** rewrite `V3_DATA_SOURCE_OWNERSHIP.md` để khớp AGENTS/current runtime.
-
-### 17.4. Theme — **CODE HIỆN TẠI MÂU THUẪN VỚI QUYẾT ĐỊNH MỚI**
-
-`website-v2-react/src/styles/globals.css` vẫn có `html[data-theme="light"]`.
-
-`AppShell.jsx` và `StockDetailShell.jsx` vẫn có:
-
-- `theme` state;
-- localStorage `ccc-theme`;
-- light/dark toggle;
-- mobile theme action.
-
-**Action khi code V4:** bỏ dual-theme behavior, giữ one canonical dark theme.
-
-Các tài liệu/phase report cũ yêu cầu Light/Dark được coi là historical và bị Master V4 supersede cho Beta 10/10.
-
-### 17.5. Shell implementation — **CẦN HỢP NHẤT**
-
-`AppShell.jsx` hiện dùng generic shell cho một số route nhưng lại chuyển `Stock Detail`, `Scanner`, `Account` sang `StockDetailShell`.
-
-Điều này tạo hai shell/hệ nav cùng tồn tại.
-
-**Action:** V4 dùng một App Shell chung.
-
-### 17.6. Mobile hamburger — **CODE HIỆN TẠI CHƯA KHỚP**
-
-Trong `stock-detail-shell.css`, mobile hiện hide `.stock-menu-button`.
-
-Trong khi V4 yêu cầu hamburger mobile là navigation đầy đủ.
-
-**Action:** mobile header giữ hamburger; bottom nav chỉ là shortcut.
-
-### 17.7. Scanner left rail — **CẦN CHUYỂN VAI TRÒ**
-
-`ScannerShell.jsx` hiện dùng:
-
-- left rail = filter/sort;
-- center = results;
-- right rail = AI/community.
-
-V4 yêu cầu:
-
-- left = global navigation/workspace;
-- filter/sort = center toolbar + panel/sheet;
-- right = contextual utilities.
-
-`Scanner` mobile card implementation hiện tại có thể tái sử dụng và polish, không cần viết lại từ zero.
+Article content ưu tiên lưu structured editor JSON + metadata.
+Renderer phải sanitize/whitelist node types.
 
 ---
 
-## 18. Những thứ nên giữ từ code hiện tại
+# 31. Figma source
 
-- React/Vite codebase `website-v2-react/`.
-- `/api/v2/*` and `/api/v2/live` boundary.
-- Auth context.
-- stock search logic.
-- chart engine/lazy history/live WS.
-- stock logo.
-- scanner data normalize/merge/filter/sort utilities sau khi entitlement contract được chuẩn hóa.
-- mobile card direction.
-- fundamental/BCTC clients.
-- loading/error/unavailable patterns có thể tái sử dụng.
+File UX master:
 
-Không rewrite frontend từ đầu.
+`CCC Beta V4 — IA & UX Master`
 
----
+Figma file key:
 
-## 19. Những thứ cần refactor cho V4
+`WBRUSKjrRarAqmRf5nE3lx`
 
-1. One unified App Shell.
-2. True 3-column desktop geometry.
-3. Full left sidebar + current menu.
-4. Wider contextual right rail.
-5. Filter/sort moves out of permanent left rail.
-6. Working hamburger mobile.
-7. One dark theme, remove theme toggle.
-8. Button/tag/status hierarchy.
-9. Entitlement semantic centralized.
-10. Data freshness state.
-11. Connect P0 market/API state to current CCC Engine.
-12. AI Search route/panel wiring according to entitlement.
+Figma là visual/interaction reference.
+Tài liệu này là product/architecture reference.
+
+Nếu Figma và Master xung đột:
+- product/data/security/state contract theo Master + backend config;
+- visual spacing/composition theo Figma sau khi Product Owner duyệt.
 
 ---
 
-## 20. Beta 10/10 Definition of Done
+# 32. Implementation order mới
 
-- Current-session data visible; no stale 24/09 presentation as live.
-- Market/Watchlist/Stock Detail share consistent API contracts.
-- Public vs CCC-protected fields enforce server-side.
-- MA10/MA200 + distance public.
-- RVOL/Price5/15/Signal/ATO-ATC protected outside entitlement.
-- VIP/full-market sees full CCC intelligence across universe.
-- Filter scope cannot leak premium fields.
-- AI scope cannot leak premium fields.
-- Desktop shell stable at 1440/1680.
-- Mobile 375/390 usable without desktop-table shrink.
-- Hamburger works.
-- No theme toggle/light-theme QA in Beta.
-- No dead buttons presented as working controls.
-- Stock Detail cards/tabs are wired or explicitly unavailable.
-- Loading/error/stale/missing/locked states are intentional.
-- Cache/deploy smoke check complete.
-- 09/10 is release-candidate/regression day, not feature-development day.
+## Foundation
+1. Update Master V4 này.
+2. Lock State Engine V2 presentation + State Meter.
+3. Lock IA/routes/header/mobile.
+4. Update Figma.
+
+## Frontend shell
+5. Reconcile current uncommitted `V4-SHELL-01` với IA mới.
+6. Implement final global sidebar/header.
+7. Implement mobile bottom nav + More menu.
+
+## Core market
+8. Market.
+9. Watchlist.
+10. Stock Detail.
+11. CCC State Meter/state presentation.
+12. Entitlement.
+13. Data freshness/cutover.
+
+## Discovery
+14. AI Search.
+15. Filter.
+16. CCC state screening.
+
+## Community/content
+17. Community schema + Realtime + moderation.
+18. `$TICKER` / `@mention`.
+19. per-stock room.
+20. Notification integration.
+21. Articles schema + Storage + TipTap.
+22. Article feed/detail.
+23. Admin CMS.
+
+## Account/roles
+24. Account & Settings.
+25. VIP personalization contract/UI.
+26. Mod Dashboard.
+27. Admin Dashboard.
+
+## Release
+28. responsive QA.
+29. auth/package/VIP QA.
+30. community moderation QA.
+31. CMS image QA.
+32. deploy/cache smoke test.
+33. 09/10 feature freeze/regression.
+34. 10/10 public.
 
 ---
 
-## 21. Recommended implementation order
+# 33. Definition of Done — Beta 10/10
 
-### Foundation
-
-1. Rewrite/lock docs in section 17.
-2. Figma: Desktop Shell + Mobile Shell.
-3. Implement unified shell/theme/navigation.
-4. Lock responsive breakpoints.
-
-### Core product
-
-5. Market/Watchlist table + mobile cards.
-6. Entitlement display/access semantics.
-7. Stock Detail wiring and stale-data handling.
-8. Scanner/filter/sort/column controls.
-9. Right rail context.
-10. AI Search.
-
-### Release hardening
-
-11. Auth/package/VIP QA.
-12. Mobile QA.
-13. Data freshness/degraded QA.
-14. Regression/deploy/cache QA.
+- one shared shell;
+- one dark theme;
+- menu matches approved IA;
+- Header search/AI/notification/settings/account functional;
+- Market/Watchlist/Stock Detail use current data;
+- no stale 24/09 shown as live;
+- State Engine V2 presentation correct;
+- no old “2/4, 3/4, 4/4 signal” wording;
+- four-block meter means `signal_level`;
+- canonical state/reasons come from backend;
+- MA public rules preserved;
+- protected CCC fields server-enforced;
+- AI/filter cannot leak premium fields;
+- Community readable by guest, writable by login;
+- `$TICKER` works;
+- Stock Detail has symbol discussion;
+- mention notification works;
+- state alert dedupe/cooldown/grouping implemented;
+- article feed + detail works;
+- article images work;
+- CMS role permission works;
+- Mod moderation works;
+- Admin users/roles/content works;
+- Account & Settings unified;
+- VIP threshold UX does not mutate canonical state;
+- mobile 375/390 usable;
+- no dead buttons;
+- missing != zero;
+- 09/10 is regression day, not architecture day.
 
 ---
 
-## 22. Source-of-truth rule
+# 34. Explicitly superseded concepts
 
-Sau khi Product Owner duyệt Master V4 này:
+The following are no longer valid V4 product concepts:
 
-- Các yêu cầu trong Master V4 **supersede** layout/theme/permission wording cũ nếu có xung đột.
-- `AGENTS.md` vẫn là repository safety/architecture authority.
-- Backend core logic/RVOL/baseline/signal thresholds không thay đổi chỉ vì redesign frontend.
-- Mọi thay đổi sản phẩm mới sau đây phải cập nhật Master trước hoặc tạo amendment rõ ràng.
+- permanent 48px icon rail;
+- route-specific Scanner left filter rail as global layout;
+- separate StockDetailShell;
+- dual Light/Dark theme;
+- “Nghiên cứu” as primary navigation;
+- “Sàng lọc cơ bản” as separate primary navigation;
+- separate “Công cụ” primary navigation;
+- old `2/4`, `3/4`, `4/4` signal score;
+- “Tích lũy”, “RVOL cao”, “Gần MA200” used as canonical CCC state labels;
+- frontend signal reconstruction;
+- external CMS/chat SaaS as a Beta requirement.
+
+---
+
+# 35. Final product principle
+
+CCC V4 phải cho cảm giác:
+
+**quen màu sắc, mới cách tổ chức, rõ dữ liệu, rõ trạng thái, ít nhiễu, có cộng đồng, có nội dung, và AI thực sự nằm trong workflow.**
+
+Mọi phần mới phải phục vụ một trong ba việc:
+
+1. giúp user phát hiện điều đáng chú ý;
+2. giúp user hiểu tại sao;
+3. giúp user tiếp tục theo dõi/thảo luận mà không bị spam hoặc rối.
