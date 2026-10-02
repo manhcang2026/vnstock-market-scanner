@@ -611,28 +611,45 @@ The current chart API code exposes route families:
 
 Frontend dev proxy currently maps `/api/v2/*` to backend `/v1/*`, while `/api/v2/live` is the WebSocket proxy.
 
-### Critical migration warning
+### Staged API migration after `ENGINE-CUTOVER-01B`
 
-The current chart API implementation still contains legacy storage defaults:
-
-```text
-history  -> ssi_history_2026.db
-realtime -> ssi_shadow.db
-state    -> ccc_market_v2.db
-```
-
-Therefore **new frontend work must not deepen dependency on the legacy response semantics**.
-
-Planned task `CHART-API-CANONICAL-01` must port the API implementation to canonical sources:
+These current-state/intelligence routes now read only canonical stores:
 
 ```text
-ccc_market_2025.db
-ccc_market_2026.db
-ccc_engine.db
-+ ssi_shadow.db only where hot transport evidence is intentionally required
+/v1/stock-detail/{symbol}
+/v1/ccc/{symbol}
+/v1/radar
+/v1/scanner
+
+ccc_engine.db.current_state             -> snapshot date and anchor universe
+ccc_engine.db.signal_state_current      -> canonical signal/trust/version state
+ccc_market_YYYY.db.latest_quotes        -> same-snapshot public quote facts
+ccc_market_YYYY.db.auction_sessions     -> trusted/finalized exact auction volume only
 ```
 
-Frontend may build UI against the canonical field contract now, but final backend binding must be validated after that port.
+The adapter selects `ccc_market_YYYY.db` from the latest trading date represented
+by `current_state`; wall-clock midnight, weekends, holidays, and missing next-day
+evidence do not empty the API. Missing quote or signal rows do not remove an
+anchored `current_state` symbol, and unavailable fields remain `NULL`/untrusted.
+The scanner uses fixed-count bulk reads and merges by symbol; it does not perform
+per-symbol quote or signal queries. Anonymous stock detail and scanner reads use
+explicit public columns and do not read signal or auction tables. Watchlist
+scanner enrichment restricts protected current, signal, and auction reads to the
+authorized symbol set; full-market enrichment remains set-based. These four
+routes have no runtime fallback to `ccc_market_v2.db` or `stock_state_current`.
+Auction volume is exposed only for a matching ATO/ATC provider session whose
+canonical row is finalized, `TRUSTED`, and sourced from `SSI_STREAM`; partial,
+degraded, corrected, regressed, or otherwise unavailable evidence remains `NULL`.
+
+This checkpoint intentionally does **not** cut over:
+
+```text
+/v1/chart/{symbol}
+/v1/quote/{symbol}
+live WebSocket transport
+```
+
+Their existing transport paths remain staged for later canonical API work.
 
 ---
 
@@ -782,8 +799,10 @@ As of this document version:
 - [x] SIGNAL-PROD-ENABLE-01
 - [ ] SIGNAL-LIVE-AUDIT-01 — first full live session, 2026-09-28
 - [x] CANONICAL-EOD-01 — code complete; production deployment/verification pending
+- [x] ENGINE-CUTOVER-01A — canonical current-snapshot midnight lifecycle
+- [x] ENGINE-CUTOVER-01B — stock-detail/CCC/radar/scanner canonical read path
 - [ ] LEGACY-RETIRE-01
-- [ ] CHART-API-CANONICAL-01
+- [ ] CHART-API-CANONICAL-01 — remaining chart/quote/live transport cutover
 - [ ] DB-ARCHIVE-01 / DB-CLEANUP-01
 
 ---

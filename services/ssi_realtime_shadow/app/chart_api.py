@@ -20,12 +20,7 @@ from .access_control import (
     extract_bearer_token,
 )
 from .chart_data import ChartDataStore, SYMBOL_RE
-from .state_contract import (
-    build_radar_projection,
-    build_scanner_projection,
-    get_ccc_intelligence,
-    get_public_stock_detail,
-)
+from .canonical_state_reader import CanonicalStateReader
 
 
 QUOTE_COLUMNS = (
@@ -109,16 +104,8 @@ class ChartAPIHandler(BaseHTTPRequestHandler):
         return self.server.access_client  # type: ignore[attr-defined]
 
     @property
-    def state_path(self) -> Path:
-        return self.server.state_path  # type: ignore[attr-defined]
-
-    def _state_connection(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(
-            f"file:{self.state_path.resolve()}?mode=ro", uri=True, timeout=5
-        )
-        connection.execute("PRAGMA query_only=ON")
-        connection.execute("PRAGMA busy_timeout=5000")
-        return connection
+    def state_reader(self) -> CanonicalStateReader:
+        return self.server.state_reader  # type: ignore[attr-defined]
 
     def log_message(self, format: str, *args) -> None:
         # Standard access log only; Authorization header is never logged here.
@@ -234,8 +221,6 @@ class ChartAPIHandler(BaseHTTPRequestHandler):
         if parsed.path.startswith(public_detail_prefix):
             try:
                 symbol = _normalize_symbol(parsed.path[len(public_detail_prefix) :])
-                with self._state_connection() as connection:
-                    payload = get_public_stock_detail(connection, symbol)
             except ValueError as exc:
                 _response(
                     self,
@@ -243,7 +228,9 @@ class ChartAPIHandler(BaseHTTPRequestHandler):
                     {"error": "INVALID_REQUEST", "message": str(exc)},
                 )
                 return
-            except (sqlite3.Error, OSError) as exc:
+            try:
+                payload = self.state_reader.public_stock_detail(symbol)
+            except (sqlite3.Error, OSError, ValueError) as exc:
                 _response(
                     self,
                     HTTPStatus.SERVICE_UNAVAILABLE,
@@ -287,9 +274,8 @@ class ChartAPIHandler(BaseHTTPRequestHandler):
                 )
                 return
             try:
-                with self._state_connection() as connection:
-                    payload = get_ccc_intelligence(connection, symbol)
-            except (sqlite3.Error, OSError) as exc:
+                payload = self.state_reader.ccc_intelligence(symbol)
+            except (sqlite3.Error, OSError, ValueError) as exc:
                 _response(
                     self,
                     HTTPStatus.SERVICE_UNAVAILABLE,
@@ -323,12 +309,10 @@ class ChartAPIHandler(BaseHTTPRequestHandler):
                 except (AuthenticationRequired, EntitlementServiceUnavailable):
                     identity_scope = "UNAVAILABLE"
             try:
-                with self._state_connection() as connection:
-                    payload = build_radar_projection(
-                        connection,
-                        visible_symbols=visible_symbols,
-                        full_market=full_market,
-                    )
+                payload = self.state_reader.radar_projection(
+                    visible_symbols=visible_symbols,
+                    full_market=full_market,
+                )
             except (sqlite3.Error, OSError) as exc:
                 _response(
                     self,
@@ -340,8 +324,8 @@ class ChartAPIHandler(BaseHTTPRequestHandler):
             _response(self, HTTPStatus.OK, payload)
             return
 
-        # Public scanner fields come from one read-only current-state query.
-        # Resolve optional technical scope once; failed authorization enriches nothing.
+        # Public scanner fields use public-only set-based reads. Resolve optional
+        # technical scope once; failed authorization reads no protected state.
         if parsed.path == "/v1/scanner":
             visible_symbols: set[str] = set()
             full_market = False
@@ -360,15 +344,10 @@ class ChartAPIHandler(BaseHTTPRequestHandler):
                     except (AuthenticationRequired, EntitlementServiceUnavailable):
                         technical_scope = "UNAVAILABLE"
             try:
-                connection = self._state_connection()
-                try:
-                    payload = build_scanner_projection(
-                        connection,
-                        visible_symbols=visible_symbols,
-                        full_market=full_market,
-                    )
-                finally:
-                    connection.close()
+                payload = self.state_reader.scanner_projection(
+                    visible_symbols=visible_symbols,
+                    full_market=full_market,
+                )
             except (sqlite3.Error, OSError, ValueError) as exc:
                 _response(
                     self,
@@ -448,12 +427,17 @@ class ChartHTTPServer(ThreadingHTTPServer):
         handler,
         store: ChartDataStore,
         access_client: SupabaseEntitlementClient | None = None,
-        state_path: Path | None = None,
+        canonical_market_dir: Path | None = None,
+        canonical_engine_path: Path | None = None,
+        state_reader: CanonicalStateReader | None = None,
     ):
         self.store = store
         self.access_client = access_client or SupabaseEntitlementClient()
-        self.state_path = Path(
-            state_path or os.getenv("MARKET_V2_DATABASE_PATH", "/app/data/ccc_market_v2.db")
+        self.state_reader = state_reader or CanonicalStateReader(
+            market_dir=canonical_market_dir
+            or Path(os.getenv("CANONICAL_MARKET_DIR", "/app/data")),
+            engine_path=canonical_engine_path
+            or Path(os.getenv("CANONICAL_ENGINE_PATH", "/app/data/ccc_engine.db")),
         )
         super().__init__(address, handler)
 
@@ -480,11 +464,14 @@ def build_parser() -> argparse.ArgumentParser:
         default=int(os.getenv("CHART_API_PORT", "8787")),
     )
     parser.add_argument(
-        "--state",
+        "--canonical-market-dir",
         type=Path,
-        default=Path(
-            os.getenv("MARKET_V2_DATABASE_PATH", "/app/data/ccc_market_v2.db")
-        ),
+        default=Path(os.getenv("CANONICAL_MARKET_DIR", "/app/data")),
+    )
+    parser.add_argument(
+        "--canonical-engine",
+        type=Path,
+        default=Path(os.getenv("CANONICAL_ENGINE_PATH", "/app/data/ccc_engine.db")),
     )
     return parser
 
@@ -497,7 +484,8 @@ def main(argv: list[str] | None = None) -> int:
         ChartAPIHandler,
         store,
         SupabaseEntitlementClient(),
-        args.state,
+        args.canonical_market_dir,
+        args.canonical_engine,
     )
     print(
         f"CCC Chart API listening on {args.host}:{args.port} "
