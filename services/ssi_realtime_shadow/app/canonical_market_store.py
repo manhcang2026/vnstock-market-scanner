@@ -1148,6 +1148,201 @@ class CanonicalMarketStore:
             written += len(values)
         return written
 
+    def finalize_eod_latest_quote(
+        self,
+        *,
+        symbol: str,
+        trading_date: str,
+        expected_exchange: str,
+    ) -> bool:
+        """Project positively proven DailyOhlc truth into one latest quote."""
+        canonical_symbol, canonical_trading_date, year = self._identity(
+            symbol, trading_date
+        )
+        canonical_exchange = str(expected_exchange or "").strip().upper()
+        if not canonical_exchange:
+            raise ValueError("expected_exchange is required")
+
+        with self._lock:
+            connection = self.connection(year)
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                daily = connection.execute(
+                    """SELECT * FROM daily_bars
+                       WHERE symbol=? AND trading_date=? AND exchange=?
+                         AND EXISTS (
+                             SELECT 1 FROM rest_fetch_status
+                             WHERE mode='minute' AND symbol=?
+                               AND from_date=? AND to_date=?
+                               AND resolution=1 AND year=?
+                               AND status='COMPLETED'
+                         )
+                         AND EXISTS (
+                             SELECT 1 FROM rest_session_status
+                             WHERE mode='minute' AND symbol=?
+                               AND trading_date=? AND resolution=1
+                               AND status='COMPLETED' AND rows_received>0
+                         )
+                         AND EXISTS (
+                             SELECT 1 FROM rest_fetch_status
+                             WHERE mode='daily' AND symbol=?
+                               AND from_date=? AND to_date=?
+                               AND resolution=0 AND year=?
+                               AND status='COMPLETED'
+                         )""",
+                    (
+                        canonical_symbol,
+                        canonical_trading_date,
+                        canonical_exchange,
+                        canonical_symbol,
+                        canonical_trading_date,
+                        canonical_trading_date,
+                        year,
+                        canonical_symbol,
+                        canonical_trading_date,
+                        canonical_symbol,
+                        canonical_trading_date,
+                        canonical_trading_date,
+                        year,
+                    ),
+                ).fetchone()
+                if (
+                    daily is None
+                    or self.daily_quote_authority_error(daily) is not None
+                ):
+                    connection.commit()
+                    return False
+
+                existing = connection.execute(
+                    "SELECT * FROM latest_quotes WHERE symbol=?",
+                    (canonical_symbol,),
+                ).fetchone()
+                if (
+                    existing is not None
+                    and str(existing["trading_date"]) > canonical_trading_date
+                ):
+                    connection.commit()
+                    return False
+
+                same_day = bool(
+                    existing is not None
+                    and existing["trading_date"] == canonical_trading_date
+                )
+                ref_price = existing["ref_price"] if same_day else None
+                close = daily["close"]
+                valid_change_inputs = bool(
+                    ref_price is not None
+                    and float(ref_price) > 0
+                    and close is not None
+                    and float(close) > 0
+                )
+                change = float(close) - float(ref_price) if valid_change_inputs else None
+                ratio_change = (
+                    change / float(ref_price) * 100 if valid_change_inputs else None
+                )
+                provider_fields = (
+                    (
+                        existing["event_time"],
+                        (
+                            existing["last_price_at"]
+                            if existing["last_price"] == close
+                            else None
+                        ),
+                        ref_price,
+                        existing["bid_price1"],
+                        existing["bid_vol1"],
+                        existing["ask_price1"],
+                        existing["ask_vol1"],
+                        existing["provider_session"],
+                        existing["trading_status"],
+                    )
+                    if same_day
+                    else (None,) * 9
+                )
+                connection.execute(
+                    """INSERT INTO latest_quotes(
+                           symbol,trading_date,event_time,last_price,last_price_at,
+                           total_volume,ref_price,open,high,low,close,bid_price1,
+                           bid_vol1,ask_price1,ask_vol1,change,ratio_change,
+                           exchange,provider_session,trading_status,updated_at
+                       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                       ON CONFLICT(symbol) DO UPDATE SET
+                           trading_date=excluded.trading_date,
+                           event_time=excluded.event_time,
+                           last_price=excluded.last_price,
+                           last_price_at=excluded.last_price_at,
+                           total_volume=excluded.total_volume,
+                           ref_price=excluded.ref_price,
+                           open=excluded.open,high=excluded.high,low=excluded.low,
+                           close=excluded.close,bid_price1=excluded.bid_price1,
+                           bid_vol1=excluded.bid_vol1,
+                           ask_price1=excluded.ask_price1,ask_vol1=excluded.ask_vol1,
+                           change=excluded.change,ratio_change=excluded.ratio_change,
+                           exchange=excluded.exchange,
+                           provider_session=excluded.provider_session,
+                           trading_status=excluded.trading_status,
+                           updated_at=excluded.updated_at""",
+                    (
+                        canonical_symbol,
+                        canonical_trading_date,
+                        provider_fields[0],
+                        close,
+                        provider_fields[1],
+                        daily["volume"],
+                        provider_fields[2],
+                        daily["open"],
+                        daily["high"],
+                        daily["low"],
+                        close,
+                        provider_fields[3],
+                        provider_fields[4],
+                        provider_fields[5],
+                        provider_fields[6],
+                        change,
+                        ratio_change,
+                        daily["exchange"],
+                        provider_fields[7],
+                        provider_fields[8],
+                        daily["updated_at"],
+                    ),
+                )
+                connection.commit()
+                return True
+            except BaseException:
+                connection.rollback()
+                raise
+
+    @staticmethod
+    def daily_quote_authority_error(
+        row: sqlite3.Row | Mapping[str, object],
+    ) -> str | None:
+        quality = str(row["quality_status"] or "").strip().upper()
+        if quality != "TRUSTED":
+            return f"QUALITY_{quality or 'MISSING'}"
+        fields = ("open", "high", "low", "close", "volume", "exchange")
+        missing = [field for field in fields if row[field] is None]
+        if missing:
+            return f"MISSING_{','.join(missing)}"
+        try:
+            prices = {
+                field: float(row[field])
+                for field in ("open", "high", "low", "close")
+            }
+            volume = float(row["volume"])
+        except (TypeError, ValueError):
+            return "NONNUMERIC_OHLCV"
+        nonpositive = [field for field, value in prices.items() if value <= 0]
+        if nonpositive:
+            return f"NONPOSITIVE_{','.join(nonpositive)}"
+        if volume < 0:
+            return "NEGATIVE_VOLUME"
+        if not (
+            prices["low"] <= prices["open"] <= prices["high"]
+            and prices["low"] <= prices["close"] <= prices["high"]
+        ):
+            return "INVALID_OHLC_RANGE"
+        return None
+
     def upsert_auction_sessions(self, rows: Iterable[AuctionSession]) -> int:
         written = 0
         grouped: dict[int, list[tuple[object, ...]]] = {}

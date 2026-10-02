@@ -1102,6 +1102,61 @@ def test_latest_quote_after_projected_minute_is_not_used(tmp_path: Path) -> None
     assert _state(engine)["last_price"] == 100
 
 
+def test_eod_corrected_close_without_provenance_is_not_replayed_at_stream_time(
+    tmp_path: Path,
+) -> None:
+    market = CanonicalMarketStore(tmp_path / "market")
+    stream_at = _at("14:29", 30)
+    market.write_realtime_event(
+        RealtimeMarketEvent(
+            symbol="AAA", trading_date=DAY, event_at=stream_at,
+            minute="14:29", exchange="HOSE", price=19600,
+            total_volume=90, provider_session="LO",
+        ),
+        observed_at=stream_at,
+    )
+    market.replace_rest_minute_sessions(
+        [
+            _minute(
+                "14:29", exchange="HOSE", close=19600,
+                volume=100, total=100,
+            )
+        ]
+    )
+    market.upsert_daily_bars(
+        [
+            DailyBar(
+                "AAA", DAY, exchange="HOSE", open=19800, high=20200,
+                low=19700, close=20050, volume=100,
+                quality_status="TRUSTED",
+            )
+        ]
+    )
+    for mode, resolution in (("minute", 1), ("daily", 0)):
+        market.mark_fetch_status(
+            mode=mode, symbol="AAA", from_date=DAY, to_date=DAY,
+            resolution=resolution, year=2026, status="COMPLETED",
+            rows_received=1, rows_written=1,
+        )
+    assert market.finalize_eod_latest_quote(
+        symbol="AAA", trading_date=DAY, expected_exchange="HOSE"
+    ) is True
+    quote = market.connection(2026).execute(
+        "SELECT last_price,last_price_at,event_time FROM latest_quotes WHERE symbol='AAA'"
+    ).fetchone()
+    assert tuple(quote) == (20050, None, "14:29:30")
+
+    observed_at = _at("14:35")
+    engine = CanonicalLiveEngine(
+        market_store=market,
+        engine_path=tmp_path / "engine.db",
+        active_at=observed_at,
+    )
+    _baseline(engine, "14:29")
+    assert engine.advance(observed_at) == 1
+    assert _state(engine)["last_price"] == 19600
+
+
 def test_restart_hydrates_today_and_silent_elapsed_minutes_need_no_fake_rows(
     tmp_path: Path,
 ) -> None:

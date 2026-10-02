@@ -66,6 +66,18 @@ def _fetch_status(
     ).fetchone()
 
 
+def _has_positive_rest_session(
+    connection: sqlite3.Connection, *, symbol: str, day: date
+) -> bool:
+    return connection.execute(
+        """SELECT 1 FROM rest_session_status
+           WHERE mode='minute' AND symbol=? AND trading_date=?
+             AND resolution=1 AND status='COMPLETED' AND rows_received>0
+           LIMIT 1""",
+        (symbol, day.isoformat()),
+    ).fetchone() is not None
+
+
 def live_evidence_count(store: CanonicalMarketStore, day: date) -> int:
     row = store.connection(day.year).execute(
         "SELECT COUNT(*) FROM minute_bars WHERE trading_date=?", (day.isoformat(),)
@@ -129,13 +141,22 @@ def _validate_eod_pairs(
             ).fetchone()[0]
         )
         daily_rows = connection.execute(
-            """SELECT symbol,trading_date,exchange FROM daily_bars
+            """SELECT symbol,trading_date,exchange,open,high,low,close,volume,
+                      quality_status
+               FROM daily_bars
                WHERE symbol=? AND trading_date=?""",
             (symbol, day_text),
         ).fetchall()
 
         pair = (minute_status, daily_status)
         if pair == ("COMPLETED", "COMPLETED"):
+            if not _has_positive_rest_session(
+                connection, symbol=symbol, day=day
+            ):
+                reasons.append(
+                    f"{symbol}:MINUTE_COMPLETED_WITHOUT_REST_SESSION_PROOF"
+                )
+                continue
             if minute_rows <= 0:
                 reasons.append(f"{symbol}:MINUTE_COMPLETED_WITHOUT_DAY_ROWS")
                 continue
@@ -149,6 +170,38 @@ def _validate_eod_pairs(
                 or daily_row["exchange"] != exchange_map[symbol]
             ):
                 reasons.append(f"{symbol}:DAILY_CANONICAL_IDENTITY_MISMATCH")
+                continue
+            authority_error = CanonicalMarketStore.daily_quote_authority_error(
+                daily_row
+            )
+            if authority_error is not None:
+                reasons.append(
+                    f"{symbol}:DAILY_QUOTE_NOT_AUTHORITATIVE:{authority_error}"
+                )
+                continue
+            latest = connection.execute(
+                """SELECT trading_date,last_price,total_volume,open,high,low,close
+                   FROM latest_quotes WHERE symbol=? AND trading_date=?""",
+                (symbol, day_text),
+            ).fetchone()
+            if latest is None:
+                reasons.append(f"{symbol}:LATEST_QUOTE_MISSING_FOR_COMPLETED_PAIR")
+                continue
+            expected = {
+                "last_price": daily_row["close"],
+                "total_volume": daily_row["volume"],
+                "open": daily_row["open"],
+                "high": daily_row["high"],
+                "low": daily_row["low"],
+                "close": daily_row["close"],
+            }
+            mismatches = [
+                field for field, value in expected.items() if latest[field] != value
+            ]
+            if mismatches:
+                reasons.append(
+                    f"{symbol}:LATEST_QUOTE_DAILY_MISMATCH:{','.join(mismatches)}"
+                )
             continue
 
         if pair == ("NO_DATA", "NO_DATA"):
@@ -298,17 +351,54 @@ def run_canonical_eod(
         return None
 
     symbols = set(exchange_map)
+    connection = store.connection(day.year)
+    repair_symbols = {
+        symbol
+        for symbol in symbols
+        if (
+            (status := _fetch_status(
+                connection, mode="minute", symbol=symbol, day=day
+            ))
+            is not None
+            and status["status"] == "COMPLETED"
+            and not _has_positive_rest_session(
+                connection, symbol=symbol, day=day
+            )
+        )
+    }
+    if repair_symbols:
+        run_bootstrap(
+            mode="minute",
+            store=store,
+            client=client,
+            symbols=repair_symbols,
+            exchange_map=exchange_map,
+            from_date=day,
+            to_date=day,
+            retry_failed=True,
+            refresh_completed=True,
+            output=output,
+        )
     for mode in ("minute", "daily"):
+        mode_symbols = symbols - repair_symbols if mode == "minute" else symbols
+        if not mode_symbols:
+            continue
         run_bootstrap(
             mode=mode,
             store=store,
             client=client,
-            symbols=symbols,
+            symbols=mode_symbols,
             exchange_map=exchange_map,
             from_date=day,
             to_date=day,
             retry_failed=True,
             output=output,
+        )
+    for symbol in sorted(symbols):
+        store.finalize_eod_latest_quote(
+            symbol=symbol,
+            trading_date=day.isoformat(),
+            expected_exchange=exchange_map[symbol],
         )
     return validate_eod_pairs(store=store, day=day, exchange_map=exchange_map)
 

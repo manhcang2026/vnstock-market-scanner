@@ -11,8 +11,14 @@ from app.canonical_eod import (
     run_canonical_eod,
     validate_eod_pairs,
 )
-from app.canonical_market_store import CanonicalMarketStore, DailyBar, MinuteBar
+from app.canonical_market_store import (
+    CanonicalMarketStore,
+    DailyBar,
+    MinuteBar,
+    RealtimeMarketEvent,
+)
 from app.canonical_premarket import premarket_refusal_reason, validate_rebuild
+from app.market_session import VN_TZ
 from app.ssi_historical import SSINoDataFound
 
 
@@ -57,6 +63,81 @@ def _seed_live(
     )
 
 
+def _seed_quote(
+    store: CanonicalMarketStore,
+    *,
+    symbol: str = "AAA",
+    day: date = DAY,
+    price: float = 10,
+    total_volume: int = 90,
+    ref_price: float | None = None,
+    change: float | None = None,
+    ratio_change: float | None = None,
+) -> None:
+    event_at = datetime(day.year, day.month, day.day, 14, 30, tzinfo=VN_TZ)
+    store.write_realtime_event(
+        RealtimeMarketEvent(
+            symbol=symbol,
+            trading_date=day.isoformat(),
+            event_at=event_at,
+            minute="14:30",
+            exchange="HOSE",
+            price=price,
+            total_volume=total_volume,
+            provider_session="ATC",
+            ref_price=ref_price,
+            open=price - 1,
+            high=price + 1,
+            low=price - 2,
+            close=price,
+            bid_price1=price - 0.1,
+            bid_vol1=100,
+            ask_price1=price + 0.1,
+            ask_vol1=200,
+            change=change,
+            ratio_change=ratio_change,
+            trading_status="TRADE",
+        ),
+        observed_at=event_at,
+    )
+
+
+def _trusted_daily_bar(
+    *,
+    symbol: str = "AAA",
+    day: date = DAY,
+    exchange: str | None = "HOSE",
+    open_price: float | None = 10,
+    high: float | None = 11,
+    low: float | None = 9,
+    close: float | None = 10.5,
+    volume: int | None = 100,
+    quality_status: str = "TRUSTED",
+) -> DailyBar:
+    return DailyBar(
+        symbol,
+        day.isoformat(),
+        exchange=exchange,
+        open=open_price,
+        high=high,
+        low=low,
+        close=close,
+        volume=volume,
+        quality_status=quality_status,
+    )
+
+
+def _mark_rest_session_proof(
+    store: CanonicalMarketStore, *, symbol: str = "AAA", day: date = DAY
+) -> None:
+    store.mark_rest_sessions_completed(
+        mode="minute",
+        symbol=symbol,
+        resolution=1,
+        rows_by_date={day.isoformat(): 1},
+    )
+
+
 class PairFetcher:
     def __init__(self, minute: object = "COMPLETED", daily: object = "COMPLETED"):
         self.minute = minute
@@ -98,6 +179,151 @@ def test_completed_minute_and_daily_pass_and_rerun_is_idempotent(tmp_path: Path)
         assert store.connection(2026).execute(
             "SELECT COUNT(*) FROM daily_bars WHERE trading_date=?", (DAY.isoformat(),)
         ).fetchone()[0] == 1
+        quote = store.connection(2026).execute(
+            "SELECT * FROM latest_quotes WHERE symbol='AAA'"
+        ).fetchone()
+        assert tuple(
+            quote[field]
+            for field in (
+                "last_price", "total_volume", "open", "high", "low", "close"
+            )
+        ) == (10.5, 100, 10.0, 11.0, 9.0, 10.5)
+        assert tuple(
+            quote[field]
+            for field in (
+                "event_time", "last_price_at", "ref_price", "bid_price1",
+                "bid_vol1", "ask_price1", "ask_vol1", "provider_session",
+                "trading_status",
+            )
+        ) == (None, None, None, None, None, None, None, None, None)
+
+
+def test_hpg_eod_finalizes_stream_quote_preserves_facts_and_rejects_replay(
+    tmp_path: Path,
+) -> None:
+    hpg_day = date(2026, 10, 2)
+    exchanges = {"HPG": "HOSE"}
+
+    class HpgFetcher(PairFetcher):
+        def fetch_intraday_ohlc(self, symbol, from_date, to_date, resolution=1):
+            self.calls += 1
+            return [
+                {
+                    **_minute(symbol, hpg_day),
+                    "Close": 20050,
+                    "Volume": 35378700,
+                }
+            ]
+
+        def fetch_daily_ohlc(self, symbol, from_date, to_date):
+            self.calls += 1
+            return [
+                {
+                    **_daily(symbol, hpg_day),
+                    "Open": 19800,
+                    "High": 20200,
+                    "Low": 19700,
+                    "Close": 20050,
+                    "Volume": 35378700,
+                }
+            ]
+
+    fetcher = HpgFetcher()
+    with CanonicalMarketStore(tmp_path) as store:
+        _seed_quote(
+            store,
+            symbol="HPG",
+            day=hpg_day,
+            price=19600,
+            total_volume=28824200,
+            ref_price=19500,
+            change=100,
+            ratio_change=0.51,
+        )
+        result = run_canonical_eod(
+            day=hpg_day, store=store, client=fetcher, exchange_map=exchanges
+        )
+        assert result is not None and result.status == "PASS"
+        connection = store.connection(2026)
+        first = connection.execute(
+            "SELECT * FROM latest_quotes WHERE symbol='HPG'"
+        ).fetchone()
+        assert tuple(
+            first[field]
+            for field in (
+                "last_price", "total_volume", "open", "high", "low", "close"
+            )
+        ) == (20050, 35378700, 19800, 20200, 19700, 20050)
+        assert tuple(
+            first[field]
+            for field in (
+                "event_time", "last_price_at", "provider_session",
+                "trading_status", "ref_price", "bid_price1", "bid_vol1",
+                "ask_price1", "ask_vol1",
+            )
+        ) == (
+            "14:30:00", None, "ATC", "TRADE", 19500, 19599.9, 100,
+            19600.1, 200,
+        )
+        assert first["change"] == 550
+        assert first["ratio_change"] == pytest.approx(550 / 19500 * 100)
+        first_values = tuple(first)
+
+        repeated = run_canonical_eod(
+            day=hpg_day, store=store, client=fetcher, exchange_map=exchanges
+        )
+        assert repeated is not None and repeated.status == "PASS"
+        assert fetcher.calls == 2
+        assert tuple(
+            connection.execute(
+                "SELECT * FROM latest_quotes WHERE symbol='HPG'"
+            ).fetchone()
+        ) == first_values
+
+        replay_at = datetime(2026, 10, 2, 15, 0, tzinfo=VN_TZ)
+        replay = store.write_realtime_event(
+            RealtimeMarketEvent(
+                symbol="HPG", trading_date=hpg_day.isoformat(),
+                event_at=replay_at, minute="15:00", exchange="HOSE",
+                price=19600, total_volume=28824200, provider_session="ATC",
+            ),
+            observed_at=replay_at,
+        )
+        final = connection.execute(
+            "SELECT last_price,total_volume FROM latest_quotes WHERE symbol='HPG'"
+        ).fetchone()
+        assert replay.rest_session_locked is True
+        assert tuple(final) == (20050, 35378700)
+
+
+def test_eod_quote_without_ref_price_nulls_stale_change_fields(tmp_path: Path) -> None:
+    with CanonicalMarketStore(tmp_path) as store:
+        _seed_quote(
+            store, ref_price=None, change=999, ratio_change=999
+        )
+        result = run_canonical_eod(
+            day=DAY, store=store, client=PairFetcher(), exchange_map=EXCHANGES
+        )
+        assert result is not None and result.status == "PASS"
+        quote = store.connection(2026).execute(
+            "SELECT ref_price,change,ratio_change FROM latest_quotes WHERE symbol='AAA'"
+        ).fetchone()
+    assert tuple(quote) == (None, None, None)
+
+
+def test_eod_preserves_last_price_at_when_stream_price_already_matches_close(
+    tmp_path: Path,
+) -> None:
+    with CanonicalMarketStore(tmp_path) as store:
+        _seed_quote(store, price=10.5, total_volume=90)
+        result = run_canonical_eod(
+            day=DAY, store=store, client=PairFetcher(), exchange_map=EXCHANGES
+        )
+        quote = store.connection(2026).execute(
+            "SELECT last_price,last_price_at FROM latest_quotes WHERE symbol='AAA'"
+        ).fetchone()
+    assert result is not None and result.status == "PASS"
+    assert tuple(quote) == (10.5, "14:30:00")
 
 
 def test_minute_nodata_and_ambiguous_daily_is_accepted_degraded_without_daily(
@@ -229,19 +455,25 @@ def test_wrong_date_daily_cannot_complete_selected_day(tmp_path: Path) -> None:
         ).fetchone()[0] == 0
 
 
-def test_existing_completed_checkpoints_are_respected(tmp_path: Path) -> None:
-    class NeverCalled(PairFetcher):
+def test_completed_checkpoint_without_session_proof_is_repaired_once(
+    tmp_path: Path,
+) -> None:
+    class RepairFetcher(PairFetcher):
+        minute_calls = 0
+        daily_calls = 0
+
         def fetch_intraday_ohlc(self, *args, **kwargs):
-            raise AssertionError("completed minute checkpoint was retried")
+            self.minute_calls += 1
+            return [_minute("AAA")]
 
         def fetch_daily_ohlc(self, *args, **kwargs):
+            self.daily_calls += 1
             raise AssertionError("completed daily checkpoint was retried")
 
+    fetcher = RepairFetcher()
     with CanonicalMarketStore(tmp_path) as store:
-        _seed_live(store)
-        store.upsert_daily_bars(
-            [DailyBar("AAA", DAY.isoformat(), exchange="HOSE", close=10)]
-        )
+        _seed_quote(store, price=9, total_volume=90)
+        store.upsert_daily_bars([_trusted_daily_bar()])
         for mode, resolution in (("minute", 1), ("daily", 0)):
             store.mark_fetch_status(
                 mode=mode,
@@ -255,23 +487,307 @@ def test_existing_completed_checkpoints_are_respected(tmp_path: Path) -> None:
                 rows_written=1,
             )
         result = run_canonical_eod(
-            day=DAY, store=store, client=NeverCalled(), exchange_map=EXCHANGES
+            day=DAY, store=store, client=fetcher, exchange_map=EXCHANGES
+        )
+        quote = store.connection(2026).execute(
+            "SELECT last_price,total_volume FROM latest_quotes WHERE symbol='AAA'"
+        ).fetchone()
+        replay_at = datetime(2026, 9, 28, 15, 0, tzinfo=VN_TZ)
+        replay = store.write_realtime_event(
+            RealtimeMarketEvent(
+                symbol="AAA", trading_date=DAY.isoformat(), event_at=replay_at,
+                minute="15:00", exchange="HOSE", price=9, total_volume=90,
+                provider_session="ATC",
+            ),
+            observed_at=replay_at,
+        )
+        repeated = run_canonical_eod(
+            day=DAY, store=store, client=fetcher, exchange_map=EXCHANGES
         )
     assert result is not None and result.status == "PASS"
+    assert repeated is not None and repeated.status == "PASS"
+    assert tuple(quote) == (10.5, 100)
+    assert replay.rest_session_locked is True
+    assert fetcher.minute_calls == 1 and fetcher.daily_calls == 0
 
 
-def test_daily_identity_mismatch_is_critical(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "failure",
+    [SSINoDataFound("NoDataFound"), RuntimeError("repair failed")],
+)
+def test_completed_checkpoint_session_repair_failure_is_fail_closed(
+    tmp_path: Path,
+    failure: Exception,
+) -> None:
+    class FailingRepair(PairFetcher):
+        minute_calls = 0
+
+        def fetch_intraday_ohlc(self, *args, **kwargs):
+            self.minute_calls += 1
+            raise failure
+
+        def fetch_daily_ohlc(self, *args, **kwargs):
+            raise AssertionError("completed daily checkpoint was retried")
+
+    fetcher = FailingRepair()
     with CanonicalMarketStore(tmp_path) as store:
-        _seed_live(store)
-        store.upsert_daily_bars(
-            [DailyBar("AAA", DAY.isoformat(), exchange="HNX", close=10)]
+        _seed_quote(store, price=9, total_volume=90)
+        store.upsert_daily_bars([_trusted_daily_bar()])
+        for mode, resolution in (("minute", 1), ("daily", 0)):
+            store.mark_fetch_status(
+                mode=mode, symbol="AAA", from_date=DAY.isoformat(),
+                to_date=DAY.isoformat(), resolution=resolution, year=2026,
+                status="COMPLETED", rows_received=1, rows_written=1,
+            )
+        connection = store.connection(2026)
+        before = tuple(
+            connection.execute(
+                "SELECT * FROM latest_quotes WHERE symbol='AAA'"
+            ).fetchone()
         )
+        result = run_canonical_eod(
+            day=DAY, store=store, client=fetcher, exchange_map=EXCHANGES
+        )
+        after = tuple(
+            connection.execute(
+                "SELECT * FROM latest_quotes WHERE symbol='AAA'"
+            ).fetchone()
+        )
+        proof_count = connection.execute(
+            "SELECT COUNT(*) FROM rest_session_status"
+        ).fetchone()[0]
+    assert result is not None and result.status == "FAIL"
+    assert after == before
+    assert proof_count == 0
+    assert fetcher.minute_calls == 1
+
+
+@pytest.mark.parametrize(
+    ("minute_status", "daily_status"),
+    [
+        ("NO_DATA", "COMPLETED"),
+        ("FAILED", "COMPLETED"),
+        ("COMPLETED", "NO_DATA"),
+        ("COMPLETED", "FAILED"),
+        (None, "COMPLETED"),
+        ("COMPLETED", None),
+    ],
+)
+def test_eod_quote_finalization_requires_both_completed_proofs(
+    tmp_path: Path,
+    minute_status: str | None,
+    daily_status: str | None,
+) -> None:
+    with CanonicalMarketStore(tmp_path) as store:
+        _seed_quote(store, price=9, total_volume=90)
+        store.upsert_daily_bars([_trusted_daily_bar()])
+        for mode, resolution, status in (
+            ("minute", 1, minute_status),
+            ("daily", 0, daily_status),
+        ):
+            if status is not None:
+                store.mark_fetch_status(
+                    mode=mode, symbol="AAA", from_date=DAY.isoformat(),
+                    to_date=DAY.isoformat(), resolution=resolution, year=2026,
+                    status=status,
+                )
+        before = tuple(
+            store.connection(2026).execute(
+                "SELECT * FROM latest_quotes WHERE symbol='AAA'"
+            ).fetchone()
+        )
+        finalized = store.finalize_eod_latest_quote(
+            symbol="AAA", trading_date=DAY.isoformat(), expected_exchange="HOSE"
+        )
+        after = tuple(
+            store.connection(2026).execute(
+                "SELECT * FROM latest_quotes WHERE symbol='AAA'"
+            ).fetchone()
+        )
+    assert finalized is False
+    assert after == before
+
+
+def test_completed_pair_without_exact_session_proof_fails_validation(
+    tmp_path: Path,
+) -> None:
+    with CanonicalMarketStore(tmp_path) as store:
+        _seed_quote(store)
+        store.upsert_daily_bars([_trusted_daily_bar()])
+        for mode, resolution in (("minute", 1), ("daily", 0)):
+            store.mark_fetch_status(
+                mode=mode, symbol="AAA", from_date=DAY.isoformat(),
+                to_date=DAY.isoformat(), resolution=resolution, year=2026,
+                status="COMPLETED", rows_received=1, rows_written=1,
+            )
+        result = validate_eod_pairs(
+            store=store, day=DAY, exchange_map=EXCHANGES
+        )
+    assert result.status == "FAIL"
+    assert result.reasons == (
+        "AAA:MINUTE_COMPLETED_WITHOUT_REST_SESSION_PROOF",
+    )
+
+
+@pytest.mark.parametrize(
+    "daily",
+    [
+        _trusted_daily_bar(quality_status="PARTIAL"),
+        _trusted_daily_bar(open_price=None),
+        _trusted_daily_bar(high=None),
+        _trusted_daily_bar(low=None),
+        _trusted_daily_bar(close=None),
+        _trusted_daily_bar(volume=None),
+        _trusted_daily_bar(high=8),
+        _trusted_daily_bar(volume=-1),
+    ],
+)
+def test_partial_or_invalid_daily_bar_cannot_overwrite_stream_quote(
+    tmp_path: Path,
+    daily: DailyBar,
+) -> None:
+    with CanonicalMarketStore(tmp_path) as store:
+        _seed_quote(store, price=9, total_volume=90)
+        store.upsert_daily_bars([daily])
+        _mark_rest_session_proof(store)
         for mode, resolution in (("minute", 1), ("daily", 0)):
             store.mark_fetch_status(
                 mode=mode, symbol="AAA", from_date=DAY.isoformat(),
                 to_date=DAY.isoformat(), resolution=resolution, year=2026,
                 status="COMPLETED",
             )
+        connection = store.connection(2026)
+        before = tuple(
+            connection.execute(
+                "SELECT * FROM latest_quotes WHERE symbol='AAA'"
+            ).fetchone()
+        )
+        assert store.finalize_eod_latest_quote(
+            symbol="AAA", trading_date=DAY.isoformat(), expected_exchange="HOSE"
+        ) is False
+        after = tuple(
+            connection.execute(
+                "SELECT * FROM latest_quotes WHERE symbol='AAA'"
+            ).fetchone()
+        )
+        result = validate_eod_pairs(
+            store=store, day=DAY, exchange_map=EXCHANGES
+        )
+    assert after == before
+    assert result.status == "FAIL"
+    assert result.reasons[0].startswith("AAA:DAILY_QUOTE_NOT_AUTHORITATIVE:")
+
+
+def test_partial_daily_bar_does_not_create_minimal_quote(tmp_path: Path) -> None:
+    with CanonicalMarketStore(tmp_path) as store:
+        _seed_live(store)
+        store.upsert_daily_bars(
+            [_trusted_daily_bar(quality_status="PARTIAL")]
+        )
+        _mark_rest_session_proof(store)
+        for mode, resolution in (("minute", 1), ("daily", 0)):
+            store.mark_fetch_status(
+                mode=mode, symbol="AAA", from_date=DAY.isoformat(),
+                to_date=DAY.isoformat(), resolution=resolution, year=2026,
+                status="COMPLETED",
+            )
+        assert store.finalize_eod_latest_quote(
+            symbol="AAA", trading_date=DAY.isoformat(), expected_exchange="HOSE"
+        ) is False
+        assert store.connection(2026).execute(
+            "SELECT COUNT(*) FROM latest_quotes"
+        ).fetchone()[0] == 0
+        result = validate_eod_pairs(
+            store=store, day=DAY, exchange_map=EXCHANGES
+        )
+    assert result.status == "FAIL"
+    assert result.reasons == (
+        "AAA:DAILY_QUOTE_NOT_AUTHORITATIVE:QUALITY_PARTIAL",
+    )
+
+
+def test_missing_daily_row_prevents_finalization_and_fails_validation(
+    tmp_path: Path,
+) -> None:
+    with CanonicalMarketStore(tmp_path) as store:
+        _seed_quote(store)
+        _mark_rest_session_proof(store)
+        for mode, resolution in (("minute", 1), ("daily", 0)):
+            store.mark_fetch_status(
+                mode=mode, symbol="AAA", from_date=DAY.isoformat(),
+                to_date=DAY.isoformat(), resolution=resolution, year=2026,
+                status="COMPLETED",
+            )
+        assert store.finalize_eod_latest_quote(
+            symbol="AAA", trading_date=DAY.isoformat(), expected_exchange="HOSE"
+        ) is False
+        result = validate_eod_pairs(
+            store=store, day=DAY, exchange_map=EXCHANGES
+        )
+    assert result.status == "FAIL"
+    assert result.reasons == ("AAA:DAILY_COMPLETED_WITHOUT_EXACT_IDENTITY",)
+
+
+def test_completed_pair_with_stale_quote_fails_explicit_quote_validation(
+    tmp_path: Path,
+) -> None:
+    with CanonicalMarketStore(tmp_path) as store:
+        _seed_quote(store, price=9, total_volume=90)
+        store.upsert_daily_bars(
+            [_trusted_daily_bar()]
+        )
+        _mark_rest_session_proof(store)
+        for mode, resolution in (("minute", 1), ("daily", 0)):
+            store.mark_fetch_status(
+                mode=mode, symbol="AAA", from_date=DAY.isoformat(),
+                to_date=DAY.isoformat(), resolution=resolution, year=2026,
+                status="COMPLETED",
+            )
+        result = validate_eod_pairs(
+            store=store, day=DAY, exchange_map=EXCHANGES
+        )
+    assert result.status == "FAIL"
+    assert result.reasons == (
+        "AAA:LATEST_QUOTE_DAILY_MISMATCH:last_price,total_volume,open,high,low,close",
+    )
+
+
+def test_completed_pair_without_quote_fails_explicit_quote_validation(
+    tmp_path: Path,
+) -> None:
+    with CanonicalMarketStore(tmp_path) as store:
+        _seed_live(store)
+        store.upsert_daily_bars([_trusted_daily_bar()])
+        _mark_rest_session_proof(store)
+        for mode, resolution in (("minute", 1), ("daily", 0)):
+            store.mark_fetch_status(
+                mode=mode, symbol="AAA", from_date=DAY.isoformat(),
+                to_date=DAY.isoformat(), resolution=resolution, year=2026,
+                status="COMPLETED",
+            )
+        result = validate_eod_pairs(
+            store=store, day=DAY, exchange_map=EXCHANGES
+        )
+    assert result.status == "FAIL"
+    assert result.reasons == ("AAA:LATEST_QUOTE_MISSING_FOR_COMPLETED_PAIR",)
+
+
+def test_daily_identity_mismatch_is_critical(tmp_path: Path) -> None:
+    with CanonicalMarketStore(tmp_path) as store:
+        _seed_live(store)
+        store.upsert_daily_bars(
+            [_trusted_daily_bar(exchange="HNX")]
+        )
+        _mark_rest_session_proof(store)
+        for mode, resolution in (("minute", 1), ("daily", 0)):
+            store.mark_fetch_status(
+                mode=mode, symbol="AAA", from_date=DAY.isoformat(),
+                to_date=DAY.isoformat(), resolution=resolution, year=2026,
+                status="COMPLETED",
+            )
+        assert store.finalize_eod_latest_quote(
+            symbol="AAA", trading_date=DAY.isoformat(), expected_exchange="HOSE"
+        ) is False
         result = validate_eod_pairs(
             store=store, day=DAY, exchange_map=EXCHANGES
         )
@@ -403,9 +919,8 @@ def test_eod_resolver_skips_safely_when_no_target_exists(tmp_path: Path) -> None
 def test_eod_resolver_skips_latest_evidence_already_completed(tmp_path: Path) -> None:
     with CanonicalMarketStore(tmp_path) as store:
         _seed_live(store)
-        store.upsert_daily_bars(
-            [DailyBar("AAA", DAY.isoformat(), exchange="HOSE", close=10)]
-        )
+        store.upsert_daily_bars([_trusted_daily_bar()])
+        _mark_rest_session_proof(store)
         for mode, resolution in (("minute", 1), ("daily", 0)):
             store.mark_fetch_status(
                 mode=mode,
@@ -416,6 +931,9 @@ def test_eod_resolver_skips_latest_evidence_already_completed(tmp_path: Path) ->
                 year=DAY.year,
                 status="COMPLETED",
             )
+        assert store.finalize_eod_latest_quote(
+            symbol="AAA", trading_date=DAY.isoformat(), expected_exchange="HOSE"
+        ) is True
     resolved = resolve_eod_target(
         db_dir=tmp_path,
         now=datetime(2026, 9, 29, 8, 20),
