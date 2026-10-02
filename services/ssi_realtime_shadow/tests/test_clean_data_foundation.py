@@ -3,8 +3,9 @@ from __future__ import annotations
 import csv
 import inspect
 import sqlite3
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
+from threading import Event, Thread
 
 import pytest
 
@@ -202,10 +203,16 @@ def test_rest_minute_session_replaces_stream_rows_and_is_idempotent(
                WHERE symbol='CTX' AND trading_date='2026-09-30'
                ORDER BY minute"""
         ).fetchall()
+        status = store.connection(2026).execute(
+            """SELECT mode,resolution,status,rows_received
+               FROM rest_session_status
+               WHERE symbol='CTX' AND trading_date='2026-09-30'"""
+        ).fetchone()
     assert [tuple(row) for row in saved] == [
         ("14:03", 1200, "SSI_REST"),
         ("14:04", 3200, "SSI_REST"),
     ]
+    assert tuple(status) == ("minute", 1, "COMPLETED", 2)
 
 
 def test_rest_minute_session_replacement_rolls_back_on_insert_failure(
@@ -234,7 +241,122 @@ def test_rest_minute_session_replacement_rolls_back_on_insert_failure(
             """SELECT minute,volume,source FROM minute_bars
                WHERE symbol='CTX' AND trading_date='2026-09-30'"""
         ).fetchall()
+        locked = store.connection(2026).execute(
+            "SELECT COUNT(*) FROM rest_session_status"
+        ).fetchone()[0]
     assert [tuple(row) for row in saved] == [("14:05", 3200, "SSI_STREAM")]
+    assert locked == 0
+
+
+def test_rest_minute_session_replacement_rolls_back_on_status_failure(
+    tmp_path: Path,
+) -> None:
+    previous = MinuteBar(
+        "CTX", "2026-09-30", "14:05", volume=3200, source="SSI_STREAM"
+    )
+    replacement = MinuteBar("CTX", "2026-09-30", "14:04", volume=3200)
+    with CanonicalMarketStore(tmp_path) as store:
+        store.upsert_minute_bars([previous])
+        connection = store.connection(2026)
+        connection.execute(
+            """CREATE TRIGGER fail_rest_status BEFORE INSERT ON rest_session_status
+               BEGIN SELECT RAISE(ABORT, 'injected status failure'); END"""
+        )
+        connection.commit()
+
+        with pytest.raises(sqlite3.IntegrityError, match="injected status failure"):
+            store.replace_rest_minute_sessions([replacement])
+
+        saved = connection.execute(
+            """SELECT minute,volume,source FROM minute_bars
+               WHERE symbol='CTX' AND trading_date='2026-09-30'"""
+        ).fetchall()
+        locked = connection.execute(
+            "SELECT COUNT(*) FROM rest_session_status"
+        ).fetchone()[0]
+    assert [tuple(row) for row in saved] == [("14:05", 3200, "SSI_STREAM")]
+    assert locked == 0
+
+
+@pytest.mark.parametrize("rest_first", [True, False])
+def test_rest_replacement_and_stream_write_are_serialized_across_store_instances(
+    tmp_path: Path,
+    rest_first: bool,
+) -> None:
+    from app.canonical_market_store import RealtimeMarketEvent
+    from app.market_session import VN_TZ
+
+    rest_store = CanonicalMarketStore(tmp_path)
+    stream_store = CanonicalMarketStore(tmp_path)
+    rest_connection = rest_store.connection(2026)
+    stream_connection = stream_store.connection(2026)
+    started = Event()
+    release = Event()
+    results: dict[str, object] = {}
+    errors: list[BaseException] = []
+
+    blocker = rest_connection if rest_first else stream_connection
+    transaction_started = False
+
+    def trace(statement: str) -> None:
+        nonlocal transaction_started
+        if statement == "BEGIN IMMEDIATE":
+            transaction_started = True
+        elif transaction_started:
+            transaction_started = False
+            started.set()
+            assert release.wait(5)
+
+    blocker.set_trace_callback(trace)
+    rest_rows = [
+        MinuteBar("CTX", "2026-09-30", "14:44", close=10, volume=100)
+    ]
+    event = RealtimeMarketEvent(
+        symbol="CTX",
+        trading_date="2026-09-30",
+        event_at=datetime(2026, 9, 30, 14, 45, tzinfo=VN_TZ),
+        minute="14:45",
+        exchange="HOSE",
+        price=11,
+        total_volume=110,
+        provider_session="LO",
+    )
+
+    def replace() -> None:
+        try:
+            results["rest"] = rest_store.replace_rest_minute_sessions(rest_rows)
+        except BaseException as exc:  # pragma: no cover - surfaced below
+            errors.append(exc)
+
+    def stream() -> None:
+        try:
+            results["stream"] = stream_store.write_realtime_event(event)
+        except BaseException as exc:  # pragma: no cover - surfaced below
+            errors.append(exc)
+
+    first = Thread(target=replace if rest_first else stream)
+    second = Thread(target=stream if rest_first else replace)
+    first.start()
+    assert started.wait(5)
+    second.start()
+    release.set()
+    first.join(5)
+    second.join(5)
+    blocker.set_trace_callback(None)
+
+    assert not first.is_alive() and not second.is_alive()
+    assert errors == []
+    saved = rest_connection.execute(
+        """SELECT minute,close,volume,source FROM minute_bars
+           WHERE symbol='CTX' AND trading_date='2026-09-30' ORDER BY minute"""
+    ).fetchall()
+    assert [tuple(row) for row in saved] == [("14:44", 10.0, 100, "SSI_REST")]
+    if rest_first:
+        assert results["stream"].rest_session_locked is True
+    else:
+        assert results["stream"].rest_session_locked is False
+    rest_store.close()
+    stream_store.close()
 
 
 def test_refresh_completed_refetches_and_replaces_existing_session(

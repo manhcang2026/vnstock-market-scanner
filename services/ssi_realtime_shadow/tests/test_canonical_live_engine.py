@@ -1367,11 +1367,11 @@ def test_normal_to_watching_transition_is_persisted_at_boundary(
     ).fetchone()[0] == 1
 
 
-def test_lunch_restart_preserves_positive_signal_using_observation_clock(
+def test_post_eod_rest_restart_recomputes_current_and_preserves_positive_signal(
     tmp_path: Path,
 ) -> None:
     market = CanonicalMarketStore(tmp_path / "market")
-    market.upsert_minute_bars(
+    market.replace_rest_minute_sessions(
         [
             _minute("11:13", close=100, volume=100, total=100),
             _minute("11:28", close=102, volume=100, total=200),
@@ -1404,6 +1404,9 @@ def test_lunch_restart_preserves_positive_signal_using_observation_clock(
         signal_enabled=True,
     )
     assert restarted.advance(_at("12:00")) == 1
+    current = _state(restarted)
+    assert current["trading_date"] == DAY
+    assert current["minute"] == "11:29"
     preserved = restarted.engine_store.signal_row("AAA")
     assert preserved is not None
     assert preserved["signal_state"] == "FLOW_PRICE_CONFIRMED"
@@ -1412,6 +1415,12 @@ def test_lunch_restart_preserves_positive_signal_using_observation_clock(
     assert restarted.engine_store.connection.execute(
         "SELECT COUNT(*) FROM signal_events"
     ).fetchone()[0] == 1
+    assert [
+        tuple(row)
+        for row in market.connection(2026).execute(
+            "SELECT minute,source FROM minute_bars ORDER BY minute"
+        )
+    ] == [("11:13", "SSI_REST"), ("11:28", "SSI_REST"), ("11:29", "SSI_REST")]
 
 
 @pytest.mark.parametrize(

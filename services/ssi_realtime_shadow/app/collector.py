@@ -186,6 +186,7 @@ class CollectorStats:
     post_commit_projection_errors: int = 0
     malformed_identity_events: int = 0
     canonical_write_errors: int = 0
+    rejected_rest_completed_events: int = 0
     accepted_events: int = 0
     ignored_outside_universe: int = 0
     ignored_without_price: int = 0
@@ -657,6 +658,10 @@ class QuoteCollector:
             )
             return
 
+        if result.rest_session_locked:
+            self.stats.rejected_rest_completed_events += 1
+            return
+
         self.stats.canonical_events_written += 1
         self.stats.accepted_events += 1
         if result.partial_event:
@@ -798,6 +803,9 @@ class QuoteCollector:
             ),
             "malformed_identity_events": self.stats.malformed_identity_events,
             "canonical_write_errors": self.stats.canonical_write_errors,
+            "rejected_rest_completed_events": (
+                self.stats.rejected_rest_completed_events
+            ),
             "accepted_events": self.stats.accepted_events,
             "ignored_outside_universe": self.stats.ignored_outside_universe,
             "ignored_without_price": self.stats.ignored_without_price,

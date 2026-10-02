@@ -11,6 +11,7 @@ from app.canonical_market_store import (
     MARKET_SCHEMA_VERSION,
     SCHEMA_SQL,
     CanonicalMarketStore,
+    MinuteBar,
     RealtimeMarketEvent,
 )
 from app.collector import QuoteCollector
@@ -92,6 +93,153 @@ def test_partial_and_full_events_persist_independent_fields(
     assert collector.stats.partial_events_written == int(
         last_price is None or total_volume is None
     )
+
+
+def test_completed_rest_session_locks_all_realtime_canonical_tables(
+    tmp_path: Path,
+) -> None:
+    store = CanonicalMarketStore(tmp_path)
+    prior = RealtimeMarketEvent(
+        symbol="HPG",
+        trading_date=DAY,
+        event_at=_moment(14, 30),
+        minute="14:30",
+        exchange="HOSE",
+        price=25,
+        total_volume=100,
+        provider_session="ATC",
+    )
+    store.write_realtime_event(prior, observed_at=_moment(14, 30))
+    store.replace_rest_minute_sessions(
+        [
+            MinuteBar(
+                "HPG", DAY, "14:29", exchange="HOSE", close=24,
+                volume=90, provider_total_volume=90,
+            )
+        ]
+    )
+    connection = store.connection(2026)
+    before = {
+        table: [tuple(row) for row in connection.execute(f"SELECT * FROM {table}")]
+        for table in ("minute_bars", "latest_quotes", "auction_sessions")
+    }
+
+    result = store.write_realtime_event(
+        RealtimeMarketEvent(
+            symbol="HPG",
+            trading_date=DAY,
+            event_at=_moment(15, 0),
+            minute="15:00",
+            exchange="HOSE",
+            price=30,
+            total_volume=200,
+            provider_session="ATC",
+        ),
+        observed_at=_moment(15, 0),
+    )
+
+    after = {
+        table: [tuple(row) for row in connection.execute(f"SELECT * FROM {table}")]
+        for table in ("minute_bars", "latest_quotes", "auction_sessions")
+    }
+    assert after == before
+    assert result.rest_session_locked is True
+    assert result.latest_quote_updated is False
+    assert result.late_event is False
+    assert result.volume_regression is False
+    assert result.volume_delta == 0
+    assert result.effective_total_volume is None
+    assert result.minute_was_finalized is False
+
+
+@pytest.mark.parametrize(
+    "proof",
+    [
+        None,
+        ("minute", 1, "NO_DATA", 0),
+        ("minute", 1, "FAILED", 0),
+        ("daily", 1, "COMPLETED", 1),
+        ("minute", 5, "COMPLETED", 1),
+        ("minute", 1, "COMPLETED", 0),
+    ],
+)
+def test_only_positive_completed_minute_resolution_one_proof_locks_stream(
+    tmp_path: Path,
+    proof: tuple[str, int, str, int] | None,
+) -> None:
+    store = CanonicalMarketStore(tmp_path)
+    connection = store.connection(2026)
+    if proof is not None:
+        mode, resolution, status, rows_received = proof
+        connection.execute(
+            """INSERT INTO rest_session_status(
+                   mode,symbol,trading_date,resolution,status,rows_received,updated_at
+               ) VALUES(?,?,?,?,?,?,?)""",
+            (mode, "HPG", DAY, resolution, status, rows_received, "test"),
+        )
+        connection.commit()
+
+    result = store.write_realtime_event(
+        RealtimeMarketEvent(
+            symbol="HPG", trading_date=DAY, event_at=_moment(9, 11),
+            minute="09:11", exchange="HOSE", price=25, total_volume=100,
+            provider_session="LO",
+        )
+    )
+
+    assert result.rest_session_locked is False
+    assert connection.execute("SELECT COUNT(*) FROM minute_bars").fetchone()[0] == 1
+
+
+def test_collector_rejects_post_rest_replay_before_all_projections(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("app.collector._now_vn", lambda: _moment(15, 0))
+    store = CanonicalMarketStore(tmp_path)
+    store.replace_rest_minute_sessions(
+        [
+            MinuteBar(
+                "HPG", DAY, "14:44", exchange="HOSE", close=25,
+                volume=100, provider_total_volume=100,
+            )
+        ]
+    )
+    hooks: list[object] = []
+    volume_events: list[object] = []
+    collector = QuoteCollector(
+        {"HPG"},
+        None,
+        started_at=_moment(8, 30),
+        canonical_store=store,
+        volume_event_handler=volume_events.append,
+        post_commit_hook=lambda *args: hooks.append(args),
+    )
+
+    collector.on_message(_event(Time="14:45:00", LastPrice=26, TotalVol=110))
+    collector.on_message(
+        _event(
+            Time="15:00:00", TradingSession="ATC", LastPrice=27, TotalVol=120
+        )
+    )
+
+    connection = store.connection(2026)
+    assert [
+        tuple(row)
+        for row in connection.execute(
+            "SELECT minute,source,volume FROM minute_bars ORDER BY minute"
+        )
+    ] == [("14:44", "SSI_REST", 100)]
+    assert connection.execute("SELECT COUNT(*) FROM latest_quotes").fetchone()[0] == 0
+    assert connection.execute("SELECT COUNT(*) FROM auction_sessions").fetchone()[0] == 0
+    assert collector.stats.rejected_rest_completed_events == 2
+    assert collector.stats.canonical_events_written == 0
+    assert collector.stats.accepted_events == 0
+    assert collector.stats.canonical_write_errors == 0
+    assert collector.stats.post_commit_projection_errors == 0
+    assert collector.stats.volume_shadow_events == 0
+    assert hooks == [] and volume_events == []
+    assert collector.snapshot_stats()["rejected_rest_completed_events"] == 2
 
 
 def test_latest_quote_day_rollover_clears_previous_day_market_state(

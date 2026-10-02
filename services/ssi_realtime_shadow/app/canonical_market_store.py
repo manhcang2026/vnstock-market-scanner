@@ -267,6 +267,7 @@ class RealtimeWriteResult:
     volume_delta: int
     effective_total_volume: int | None
     minute_was_finalized: bool
+    rest_session_locked: bool = False
 
 
 class CanonicalMarketStore:
@@ -474,6 +475,26 @@ class CanonicalMarketStore:
             connection = self.connection(year)
             connection.execute("BEGIN IMMEDIATE")
             try:
+                rest_session_locked = connection.execute(
+                    """SELECT 1 FROM rest_session_status
+                       WHERE mode='minute' AND symbol=? AND trading_date=?
+                         AND resolution=1 AND status='COMPLETED'
+                         AND rows_received>0
+                       LIMIT 1""",
+                    (symbol, trading_date),
+                ).fetchone()
+                if rest_session_locked is not None:
+                    connection.commit()
+                    return RealtimeWriteResult(
+                        latest_quote_updated=False,
+                        late_event=False,
+                        partial_event=False,
+                        volume_regression=False,
+                        volume_delta=0,
+                        effective_total_volume=None,
+                        minute_was_finalized=False,
+                        rest_session_locked=True,
+                    )
                 latest = connection.execute(
                     "SELECT * FROM latest_quotes WHERE symbol=?", (symbol,)
                 ).fetchone()
@@ -1041,7 +1062,7 @@ class CanonicalMarketStore:
         return written
 
     def replace_rest_minute_sessions(self, rows: Iterable[MinuteBar]) -> int:
-        """Atomically replace each observed symbol/day with its SSI REST rows."""
+        """Atomically replace and lock each positive SSI REST symbol/day."""
         grouped: dict[tuple[int, str, str], list[tuple[object, ...]]] = {}
         fields = tuple(MinuteBar.__dataclass_fields__)
         for row in rows:
@@ -1078,6 +1099,17 @@ class CanonicalMarketStore:
                         (symbol, trading_date),
                     )
                     connection.executemany(insert_sql, values)
+                    connection.execute(
+                        """INSERT INTO rest_session_status(
+                               mode,symbol,trading_date,resolution,status,
+                               rows_received,updated_at
+                           ) VALUES('minute',?,?,1,'COMPLETED',?,?)
+                           ON CONFLICT(mode,symbol,trading_date,resolution)
+                           DO UPDATE SET status=excluded.status,
+                               rows_received=excluded.rows_received,
+                               updated_at=excluded.updated_at""",
+                        (symbol, trading_date, len(values), utc_now()),
+                    )
                     connection.commit()
                 except BaseException:
                     connection.rollback()

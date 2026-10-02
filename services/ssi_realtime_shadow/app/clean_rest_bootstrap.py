@@ -276,17 +276,6 @@ def run_bootstrap(
                 if not canonical_rows:
                     raise ValueError("provider rows lacked canonical identity")
                 written = store.replace_rest_minute_sessions(canonical_rows)
-                observed_dates: dict[str, int] = {}
-                for row in canonical_rows:
-                    observed_dates[row.trading_date] = (
-                        observed_dates.get(row.trading_date, 0) + 1
-                    )
-                store.mark_rest_sessions_completed(
-                    mode="minute",
-                    symbol=symbol,
-                    resolution=1,
-                    rows_by_date=observed_dates,
-                )
             else:
                 raw_rows = client.fetch_daily_ohlc(symbol, start, end)
                 normalized = [
