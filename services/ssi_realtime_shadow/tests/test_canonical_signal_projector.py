@@ -258,6 +258,54 @@ def test_price_confirmed_state_can_become_momentum_maintained(
     ).fetchone()[0] == 2
 
 
+def test_maintained_state_becomes_contextual_weakening_with_one_event(
+    tmp_path: Path,
+) -> None:
+    projector = _projector(tmp_path)
+    _project(projector, _strong_positive(), _observed(10, 0))
+    _project(
+        projector,
+        _state(
+            minute="10:01",
+            rvol30=1.4,
+            price15_pct=-0.2,
+            updated_at="2026-09-25T03:01:00+00:00",
+        ),
+        _observed(10, 1),
+    )
+    before = projector.engine_store.connection.execute(
+        "SELECT COUNT(*) FROM signal_events"
+    ).fetchone()[0]
+
+    result = _project(
+        projector,
+        _state(
+            minute="10:02",
+            day_rvol=1.4,
+            rvol15=1.6,
+            rvol30=1.5,
+            price5_pct=-0.8,
+            price15_pct=-0.5,
+            updated_at="2026-09-25T03:02:00+00:00",
+        ),
+        _observed(10, 2),
+    )
+
+    row = _signal(projector)
+    after = projector.engine_store.connection.execute(
+        "SELECT COUNT(*) FROM signal_events"
+    ).fetchone()[0]
+    event = projector.engine_store.connection.execute(
+        """SELECT previous_signal_state,signal_state
+           FROM signal_events ORDER BY id DESC LIMIT 1"""
+    ).fetchone()
+    assert result.event_appended
+    assert row["signal_state"] == "MOMENTUM_WEAKENING"
+    assert row["previous_signal_state"] == "MOMENTUM_MAINTAINED"
+    assert after == before + 1
+    assert tuple(event) == ("MOMENTUM_MAINTAINED", "MOMENTUM_WEAKENING")
+
+
 def test_same_state_does_not_append_duplicate_event(tmp_path: Path) -> None:
     projector = _projector(tmp_path)
     state = _state(

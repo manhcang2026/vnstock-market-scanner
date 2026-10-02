@@ -10,8 +10,8 @@ from typing import Any, Mapping
 import yaml
 
 
-EXPECTED_CONFIG_VERSION = "cfg-20260922-beta-003"
-EXPECTED_ENGINE_VERSION = "2.0.3-beta"
+EXPECTED_CONFIG_VERSION = "cfg-20261002-context-001"
+EXPECTED_ENGINE_VERSION = "2.0.4-beta"
 EXPECTED_STATES = (
     "NORMAL",
     "WATCHING",

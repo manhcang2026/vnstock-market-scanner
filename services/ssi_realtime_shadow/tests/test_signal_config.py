@@ -17,8 +17,8 @@ from app.signal_config import (
 
 def test_canonical_config_loads_and_locks_versions_states_and_quality() -> None:
     config = load_signal_config()
-    assert config.config_version == "cfg-20260922-beta-003"
-    assert config.engine_version == "2.0.3-beta"
+    assert config.config_version == "cfg-20261002-context-001"
+    assert config.engine_version == "2.0.4-beta"
     assert config.exact_previous_sessions == 10
     assert config.continuous_target_sessions == 10
     assert config.continuous_minimum_sessions == 8

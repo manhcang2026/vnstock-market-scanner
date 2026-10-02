@@ -373,8 +373,8 @@ Current versions:
 
 ```text
 signal contract = ccc-state-v1
-engine_version  = 2.0.3-beta
-config_version  = cfg-20260922-beta-003
+engine_version  = 2.0.4-beta
+config_version  = cfg-20261002-context-001
 timezone        = Asia/Ho_Chi_Minh
 ```
 
@@ -414,7 +414,15 @@ FLOW_APPEARING
 
 `FLOW_APPEARING -> MOMENTUM_MAINTAINED` is not allowed.
 
-`MOMENTUM_WEAKENING` may persist while weakening conditions remain true; it is no longer forced to disappear after one minute.
+The configured deep `MOMENTUM_WEAKENING` rule remains available from its
+existing transition states. A contextual early-weakening path is also available
+only when the previous state is `FLOW_PRICE_CONFIRMED`, `MOMENTUM_MAINTAINED`,
+or `MOMENTUM_WEAKENING`: RVOL30 and Price5 must meet the weakening thresholds,
+and Price15 must be below the maintained floor. This relaxed Price15 path is not
+available from `NORMAL` or `WATCHING`. `MOMENTUM_WEAKENING` may persist while
+either weakening condition remains true; it is not sticky after both clear.
+
+`SELLING_PRESSURE` retains higher evaluation priority than both weakening paths.
 
 Direct `NORMAL/WATCHING -> FLOW_PRICE_CONFIRMED` remains valid if the stronger confirmed thresholds are already satisfied.
 

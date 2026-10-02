@@ -171,6 +171,78 @@ def test_momentum_weakening_enters_and_persists_while_conditions_hold(
     ).signal_state == "MOMENTUM_WEAKENING"
 
 
+@pytest.mark.parametrize(
+    "previous",
+    ("FLOW_PRICE_CONFIRMED", "MOMENTUM_MAINTAINED", "MOMENTUM_WEAKENING"),
+)
+def test_contextual_weakening_enters_and_persists_before_deep_price15_threshold(
+    previous: str,
+) -> None:
+    technical = state(
+        day_rvol=1.4,
+        rvol15=1.6,
+        rvol30=1.5,
+        price5_pct=-0.8,
+        price15_pct=-0.5,
+    )
+    assert classify_signal(
+        technical, previous, CONFIG
+    ).signal_state == "MOMENTUM_WEAKENING"
+
+
+@pytest.mark.parametrize("previous", ("WATCHING", "NORMAL"))
+def test_contextual_weakening_is_not_available_without_positive_context(
+    previous: str,
+) -> None:
+    technical = state(
+        day_rvol=1.4,
+        rvol15=1.6,
+        rvol30=1.5,
+        price5_pct=-0.8,
+        price15_pct=-0.5,
+    )
+    assert classify_signal(
+        technical, previous, CONFIG
+    ).signal_state == "WATCHING"
+
+
+@pytest.mark.parametrize(
+    "quality_changes",
+    (
+        {"metrics_trusted": False},
+        {"baseline_sessions_used": 7},
+    ),
+)
+def test_contextual_weakening_requires_trusted_metrics_and_usable_baseline(
+    quality_changes: dict[str, object],
+) -> None:
+    technical = state(
+        day_rvol=1.4,
+        rvol15=1.6,
+        rvol30=1.5,
+        price5_pct=-0.8,
+        price15_pct=-0.5,
+        **quality_changes,
+    )
+    assert classify_signal(
+        technical, "MOMENTUM_MAINTAINED", CONFIG
+    ).signal_state == "WATCHING"
+
+
+def test_contextual_weakening_accepts_minimum_usable_baseline() -> None:
+    technical = state(
+        baseline_sessions_used=8,
+        day_rvol=1.4,
+        rvol15=1.6,
+        rvol30=1.5,
+        price5_pct=-0.8,
+        price15_pct=-0.5,
+    )
+    assert classify_signal(
+        technical, "MOMENTUM_MAINTAINED", CONFIG
+    ).signal_state == "MOMENTUM_WEAKENING"
+
+
 def test_momentum_weakening_exits_when_conditions_clear() -> None:
     technical = state(rvol30=1.0, price5_pct=0.0, price15_pct=0.0)
     assert classify_signal(
@@ -186,6 +258,23 @@ def test_selling_pressure_is_unchanged_for_weakening_previous_state() -> None:
     assert classify_signal(
         technical, "MOMENTUM_WEAKENING", CONFIG
     ).signal_state == "SELLING_PRESSURE"
+
+
+def test_selling_pressure_wins_over_contextual_weakening() -> None:
+    technical = state(
+        day_rvol=1.2, rvol15=1.8, rvol30=1.8,
+        price5_pct=-0.8, price15_pct=-1.2,
+    )
+    assert classify_signal(
+        technical, "MOMENTUM_MAINTAINED", CONFIG
+    ).signal_state == "SELLING_PRESSURE"
+
+
+def test_maintained_floor_does_not_trigger_contextual_weakening() -> None:
+    technical = state(rvol30=1.4, price5_pct=-0.8, price15_pct=-0.2)
+    assert classify_signal(
+        technical, "MOMENTUM_MAINTAINED", CONFIG
+    ).signal_state == "MOMENTUM_MAINTAINED"
 
 
 def test_direct_normal_or_watching_to_price_confirmed_remains_allowed() -> None:
