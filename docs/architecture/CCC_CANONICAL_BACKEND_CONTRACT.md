@@ -653,7 +653,7 @@ Their existing transport paths remain staged for later canonical API work.
 
 ---
 
-## 15. Legacy retirement plan
+## 15. Production runtime retirement after `ENGINE-CUTOVER-01C`
 
 The backend is not considered fully cleaned until the following sequence completes:
 
@@ -664,7 +664,7 @@ SIGNAL-LIVE-AUDIT-01
 CANONICAL-EOD-01
         |
         v
-LEGACY-RETIRE-01
+ENGINE-CUTOVER-01C
         |
         v
 CHART-API-CANONICAL-01
@@ -676,19 +676,19 @@ DB-ARCHIVE-01
 DB-CLEANUP-01 / DELETE-LATER
 ```
 
-Legacy runtime/config targeted for retirement includes:
+The production collector now starts only with canonical engine and signal flags
+enabled. `app.main` no longer imports or instantiates the V2 volume engine or
+`LiveStateRuntime`, and it does not attach a legacy volume-event handler.
+Explicitly enabling `VOLUME_ENGINE_ENABLED` or `LIVE_STATE_ENABLED` fails closed
+with `LEGACY_V2_RUNTIME_RETIRED` so stale deployment configuration cannot
+silently reactivate the retired path.
 
-- `VOLUME_ENGINE_ENABLED`
-- `LIVE_STATE_ENABLED`
-- `VOLUME_BASELINE_PATH`
-- `MARKET_V2_DATABASE_PATH`
-- `SSI_HISTORY_PATH`
-- old V2 volume engine/baseline runtime;
-- old V2 stock-state build runtime;
-- legacy EOD wrapper/timer once canonical EOD replaces it;
-- tests that exist only for removed production architecture, after replacement coverage exists.
-
-Do not delete legacy code/data before its canonical replacement is proven.
+Active production `Settings` and collector compose configuration no longer
+require `VOLUME_BASELINE_PATH`, `MARKET_V2_DATABASE_PATH`, or
+`SSI_HISTORY_PATH`. Legacy modules and physical databases remain untouched for
+offline/history use pending `LEGACY-CLEANUP-01`; `/v1/chart` still temporarily
+uses `ssi_history_2026.db`. Chart, quote, and live WebSocket transport cutover
+remain separate work.
 
 ---
 
@@ -773,13 +773,14 @@ ccc-ssi-daily-finalize.timer
 ccc-ssi-daily-finalize-wrapper.sh
 ```
 
-remain **LEGACY / DISABLED / DO NOT ENABLE**. Their old wrapper references
-legacy V2/history/baseline databases. The canonical units do not invoke,
-enable, or reuse them; deletion is deferred to `LEGACY-RETIRE-01`.
+remain installed transition names, but their wrapper is now a **RETIRED no-op**.
+It exits successfully without container environment lookup or database access
+and directs operators to `ccc-canonical-eod`. The canonical units do not invoke,
+enable, or reuse the retired units; installed timer disablement remains an
+explicit VPS deployment action.
 
-This repository change does not alter the production checkpoint above. The new
-units remain pending installation and real-runtime verification until deployed
-by the Product Owner.
+This repository change performs no `systemctl` action. Deployment must install
+the retained no-op wrapper and explicitly disable the legacy timer on the VPS.
 
 ---
 
@@ -801,7 +802,8 @@ As of this document version:
 - [x] CANONICAL-EOD-01 — code complete; production deployment/verification pending
 - [x] ENGINE-CUTOVER-01A — canonical current-snapshot midnight lifecycle
 - [x] ENGINE-CUTOVER-01B — stock-detail/CCC/radar/scanner canonical read path
-- [ ] LEGACY-RETIRE-01
+- [x] ENGINE-CUTOVER-01C — production V2 collector/runtime writer retirement
+- [ ] LEGACY-CLEANUP-01 — offline module and physical database cleanup
 - [ ] CHART-API-CANONICAL-01 — remaining chart/quote/live transport cutover
 - [ ] DB-ARCHIVE-01 / DB-CLEANUP-01
 

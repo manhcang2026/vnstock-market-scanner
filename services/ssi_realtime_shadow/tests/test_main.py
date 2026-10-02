@@ -1,211 +1,170 @@
 from __future__ import annotations
 
-import logging
+import inspect
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from app.main import (
-    VolumeShadowQALogger,
-    _advance_volume_shadow,
-    _start_volume_shadow,
-    _volume_event_handler,
+from app import main as main_module
+from app.main import runtime_health, validate_collector_startup
+
+
+SERVICE_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _settings(*, engine: bool = True, signal: bool = True) -> SimpleNamespace:
+    return SimpleNamespace(
+        canonical_engine_enabled=engine,
+        canonical_signal_enabled=signal,
+    )
+
+
+@pytest.mark.parametrize("name", ["VOLUME_ENGINE_ENABLED", "LIVE_STATE_ENABLED"])
+@pytest.mark.parametrize("value", ["1", "true", "YES", "On"])
+def test_retired_legacy_true_flags_fail_closed(name: str, value: str) -> None:
+    with pytest.raises(
+        RuntimeError,
+        match=rf"LEGACY_V2_RUNTIME_RETIRED: {name}=true",
+    ):
+        validate_collector_startup(_settings(), environ={name: value})
+
+
+@pytest.mark.parametrize(
+    "environ",
+    [
+        {},
+        {"VOLUME_ENGINE_ENABLED": "false", "LIVE_STATE_ENABLED": "0"},
+    ],
 )
-from app.realtime_volume import VolumeEvent
-from tests.test_realtime_volume import _at, _event
-
-
-def _settings(tmp_path: Path, *, enabled: bool) -> SimpleNamespace:
-    return SimpleNamespace(
-        volume_engine_enabled=enabled,
-        volume_baseline_path=tmp_path / "baseline.db",
-        volume_shadow_symbols=("HPG", "SHS", "VGI"),
-    )
-
-
-def _snapshot(
-    symbol: str = "HPG",
-    *,
-    as_of: str = "09:30",
-    trusted: bool = True,
-    quality: str = "TRUSTED",
-    reasons: tuple[str, ...] = ("OK",),
-) -> SimpleNamespace:
-    return SimpleNamespace(
-        symbol=symbol,
-        trading_date="2026-09-14",
-        as_of_minute=as_of,
-        cumulative_volume=1_000,
-        day_rvol=1.25,
-        volume_15=150,
-        rvol_15=1.5,
-        volume_30=250,
-        rvol_30=1.1,
-        opening_rvol=None,
-        baseline_sessions_used=10,
-        active_sessions_used=8,
-        metrics_trusted=trusted,
-        quality_status=quality,
-        reasons=reasons,
-    )
-
-
-def test_shadow_disabled_never_loads_baseline(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+def test_retired_legacy_false_or_absent_flags_are_allowed(
+    environ: dict[str, str],
 ) -> None:
-    def unexpected_load(_path: Path) -> object:
-        raise AssertionError("baseline loader must not run")
-
-    monkeypatch.setattr("app.main.RealtimeVolumeEngine", unexpected_load)
-    with caplog.at_level(logging.INFO, logger="ssi_shadow"):
-        engine = _start_volume_shadow(_settings(tmp_path, enabled=False))
-
-    assert engine is None
-    assert caplog.text.count("CCC V2 volume shadow disabled") == 1
+    validate_collector_startup(_settings(), environ=environ)
 
 
-def test_baseline_load_failure_disables_shadow_without_raising(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+@pytest.mark.parametrize(
+    ("engine", "signal", "expected"),
+    [
+        (False, True, "CANONICAL_ENGINE_ENABLED=true"),
+        (True, False, "CANONICAL_SIGNAL_ENABLED=true"),
+    ],
+)
+def test_canonical_collector_flags_are_required(
+    engine: bool, signal: bool, expected: str
 ) -> None:
-    def broken_load(_path: Path) -> object:
-        raise RuntimeError("corrupt baseline")
-
-    monkeypatch.setattr("app.main.RealtimeVolumeEngine", broken_load)
-    with caplog.at_level(logging.ERROR, logger="ssi_shadow"):
-        engine = _start_volume_shadow(_settings(tmp_path, enabled=True))
-
-    assert engine is None
-    assert "continuing V1 collector" in caplog.text
-    assert "corrupt baseline" in caplog.text
+    with pytest.raises(
+        RuntimeError, match=f"CANONICAL_COLLECTOR_CONFIGURATION_REQUIRED: {expected}"
+    ):
+        validate_collector_startup(
+            _settings(engine=engine, signal=signal), environ={}
+        )
 
 
-def test_successful_shadow_start_logs_loaded_baseline_counts(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
-    baseline_path = (tmp_path / "baseline.db").resolve()
-    baseline = SimpleNamespace(
-        source_path=baseline_path,
-        schema_version=2,
-        lookback=10,
-        coverage=range(800),
-        points=range(193_533),
-    )
-    fake_engine = SimpleNamespace(baseline=baseline)
-    monkeypatch.setattr(
-        "app.main.RealtimeVolumeEngine", lambda _path: fake_engine
-    )
-
-    with caplog.at_level(logging.INFO, logger="ssi_shadow"):
-        engine = _start_volume_shadow(_settings(tmp_path, enabled=True))
-
-    assert engine is fake_engine
-    assert "CCC V2 volume shadow enabled:" in caplog.text
-    assert "schema=2" in caplog.text
-    assert "lookback=10" in caplog.text
-    assert "coverage=800" in caplog.text
-    assert "points=193533" in caplog.text
-    assert "qa_symbols=HPG,SHS,VGI" in caplog.text
-
-
-def test_volume_handler_passes_canonical_event_to_engine_and_counts_log() -> None:
-    received: list[VolumeEvent] = []
-    snapshot = _snapshot()
-    engine = SimpleNamespace(
-        on_event=lambda event: received.append(event) or snapshot
-    )
-    qa_logger = SimpleNamespace(log_if_changed=lambda value: value is snapshot)
-    logged: list[bool] = []
-    handler = _volume_event_handler(engine, qa_logger, lambda: logged.append(True))
-    event = _event("HPG", "HOSE", "09:30", 10)
-
-    handler(event)
-
-    assert received == [event]
-    assert logged == [True]
-
-
-def test_advance_time_runs_without_any_ssi_event_and_counts_changed_snapshot() -> None:
-    calls: list[object] = []
-    snapshot = _snapshot()
-    engine = SimpleNamespace(
-        advance_time=lambda now: calls.append(now) or {"HPG": snapshot}
-    )
-    qa_logger = SimpleNamespace(log_if_changed=lambda value: value is snapshot)
+def test_runtime_health_contains_only_canonical_engine_fields() -> None:
     stats = SimpleNamespace(
-        volume_shadow_snapshots=0, volume_shadow_advance_errors=0
+        state_writes=12,
+        calculation_errors=2,
+        canonical_signal_initialized=True,
+        canonical_signal_writes=9,
+        canonical_signal_events=3,
+        canonical_signal_errors=1,
     )
-    collector = SimpleNamespace(stats=stats)
-    now = _at("09:31")
+    engine = SimpleNamespace(stats=lambda: stats)
 
-    _advance_volume_shadow(engine, qa_logger, collector, now)
+    health = runtime_health(_settings(), engine)  # type: ignore[arg-type]
 
-    assert calls == [now]
-    assert stats.volume_shadow_snapshots == 1
-    assert stats.volume_shadow_advance_errors == 0
+    assert health == {
+        "canonical_engine_enabled": True,
+        "canonical_engine_initialized": True,
+        "canonical_engine_writes": 12,
+        "canonical_engine_errors": 2,
+        "canonical_signal_enabled": True,
+        "canonical_signal_initialized": True,
+        "canonical_signal_writes": 9,
+        "canonical_signal_events": 3,
+        "canonical_signal_errors": 1,
+    }
+    assert not any(key.startswith("live_state_") for key in health)
 
 
-def test_advance_time_exception_isolated_and_counted(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    def broken_advance(_now: object) -> object:
-        raise RuntimeError("advance boom")
+def test_runtime_health_reports_nonfatal_engine_initialization_failure() -> None:
+    health = runtime_health(_settings(), None)
 
-    engine = SimpleNamespace(advance_time=broken_advance)
-    qa_logger = SimpleNamespace(log_if_changed=lambda _value: False)
-    stats = SimpleNamespace(
-        volume_shadow_snapshots=0, volume_shadow_advance_errors=0
+    assert health["canonical_engine_initialized"] is False
+    assert health["canonical_engine_errors"] == 1
+    assert health["canonical_signal_initialized"] is False
+    assert health["canonical_signal_errors"] == 1
+
+
+def test_production_main_has_no_v2_runtime_or_volume_handler() -> None:
+    source = inspect.getsource(main_module)
+
+    for forbidden in (
+        "RealtimeVolumeEngine",
+        "LiveStateRuntime",
+        "VolumeShadowQALogger",
+        "_start_volume_shadow",
+        "_volume_event_handler",
+        "_advance_volume_shadow",
+        "volume_event_handler=",
+    ):
+        assert forbidden not in source
+    assert "canonical_store=canonical_store" in source
+    assert "canonical_engine.mark_dirty" in source
+    main_source = inspect.getsource(main_module.main)
+    assert main_source.index("validate_collector_startup(settings)") < main_source.index(
+        "SQLiteStore("
     )
-    collector = SimpleNamespace(stats=stats)
-
-    with caplog.at_level(logging.ERROR, logger="ssi_shadow"):
-        _advance_volume_shadow(engine, qa_logger, collector, _at("09:31"))
-
-    assert stats.volume_shadow_advance_errors == 1
-    assert stats.volume_shadow_snapshots == 0
-    assert "advance_time failed" in caplog.text
-    assert "advance boom" in caplog.text
-
-
-def test_qa_logger_only_logs_configured_symbols_once_per_same_state(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    qa_logger = VolumeShadowQALogger(("HPG",))
-    hpg = _snapshot("HPG")
-    shs = _snapshot("SHS")
-
-    with caplog.at_level(logging.INFO, logger="ssi_shadow"):
-        assert not qa_logger.log_if_changed(shs)
-        assert qa_logger.log_if_changed(hpg)
-        assert not qa_logger.log_if_changed(hpg)
-
-    messages = [record.message for record in caplog.records if "VOLUME_SHADOW" in record.message]
-    assert len(messages) == 1
-    assert "symbol=HPG" in messages[0]
-    assert "as_of=09:30" in messages[0]
-    assert "trusted=true" in messages[0]
-    assert "reasons=OK" in messages[0]
-    assert "symbol=SHS" not in caplog.text
-
-
-def test_qa_logger_logs_trust_change_in_same_as_of_minute(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    qa_logger = VolumeShadowQALogger(("HPG",))
-    trusted = _snapshot()
-    tainted = _snapshot(
-        trusted=False,
-        quality="GAP",
-        reasons=("CURRENT_GAP", "NON_TRUSTED_QUALITY"),
+    assert main_source.index("validate_collector_startup(settings)") < main_source.index(
+        "from ssi_fc_data.fc_md_client import MarketDataClient"
     )
 
-    with caplog.at_level(logging.INFO, logger="ssi_shadow"):
-        assert qa_logger.log_if_changed(trusted)
-        assert qa_logger.log_if_changed(tainted)
-        assert not qa_logger.log_if_changed(tainted)
 
-    messages = [record.message for record in caplog.records if "VOLUME_SHADOW" in record.message]
-    assert len(messages) == 2
-    assert "trusted=false" in messages[-1]
-    assert "quality=GAP" in messages[-1]
-    assert "reasons=CURRENT_GAP,NON_TRUSTED_QUALITY" in messages[-1]
+def test_collector_compose_is_canonical_and_has_no_legacy_paths() -> None:
+    compose = (SERVICE_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    collector = compose.split("  chart-api:", 1)[0]
+    example = (SERVICE_ROOT / ".env.example").read_text(encoding="utf-8")
+
+    assert "CANONICAL_MARKET_DIR: /app/data" in collector
+    assert "CANONICAL_ENGINE_PATH: /app/data/ccc_engine.db" in collector
+    assert 'CANONICAL_ENGINE_ENABLED: "true"' in collector
+    assert 'CANONICAL_SIGNAL_ENABLED: "true"' in collector
+    for forbidden in (
+        "VOLUME_BASELINE_PATH",
+        "MARKET_V2_DATABASE_PATH",
+        "SSI_HISTORY_PATH",
+        "VOLUME_ENGINE_ENABLED",
+        "LIVE_STATE_ENABLED",
+    ):
+        assert forbidden not in collector
+        assert forbidden not in example
+    assert "CANONICAL_ENGINE_ENABLED=true" in example
+    assert "CANONICAL_SIGNAL_ENABLED=true" in example
+
+
+def test_legacy_daily_finalize_wrapper_is_retired_noop() -> None:
+    systemd = SERVICE_ROOT / "ops" / "systemd"
+    wrapper = (systemd / "ccc-ssi-daily-finalize-wrapper.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "RETIRED" in wrapper
+    assert "ccc-canonical-eod" in wrapper
+    assert "exit 0" in wrapper
+    for forbidden in (
+        "MARKET_V2_DATABASE_PATH",
+        "SSI_HISTORY_PATH",
+        "VOLUME_BASELINE_PATH",
+        "app.daily_finalize",
+        "app.volume_baseline_build",
+        "app.historical_bootstrap",
+        "docker exec",
+    ):
+        assert forbidden not in wrapper
+    assert "RETIRED" in (
+        systemd / "ccc-ssi-daily-finalize.service"
+    ).read_text(encoding="utf-8")
+    assert "RETIRED" in (
+        systemd / "ccc-ssi-daily-finalize.timer"
+    ).read_text(encoding="utf-8")

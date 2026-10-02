@@ -122,20 +122,18 @@ def test_premarket_validate_initializes_without_legacy_paths(
     ) == 0
 
 
-@pytest.mark.parametrize("missing", LEGACY_PATH_ENV)
-def test_collector_settings_still_require_legacy_paths(
-    monkeypatch: pytest.MonkeyPatch, missing: str
+def test_collector_settings_need_no_legacy_paths(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("SSI_CONSUMER_ID", "ssi-id")
     monkeypatch.setenv("SSI_CONSUMER_SECRET", "ssi-secret")
     monkeypatch.setenv("DATABASE_PATH", "data/hot.db")
-    monkeypatch.setenv("MARKET_V2_DATABASE_PATH", "data/market.db")
-    monkeypatch.setenv("VOLUME_BASELINE_PATH", "data/baseline.db")
-    monkeypatch.setenv("SSI_HISTORY_PATH", "data/history.db")
-    monkeypatch.delenv(missing)
+    for name in LEGACY_PATH_ENV:
+        monkeypatch.delenv(name, raising=False)
 
-    with pytest.raises(RuntimeError, match=missing):
-        Settings.from_env()
+    settings = Settings.from_env()
+
+    assert settings.database_path == Path("data/hot.db")
 
 
 def test_canonical_modules_and_wrappers_contain_no_legacy_path_dependencies() -> None:

@@ -7,140 +7,89 @@ import pytest
 from app.settings import ROOT, Settings
 
 
+LEGACY_ENV = (
+    "VOLUME_BASELINE_PATH",
+    "MARKET_V2_DATABASE_PATH",
+    "SSI_HISTORY_PATH",
+)
+
+
 def _required_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SSI_CONSUMER_ID", "test-id")
     monkeypatch.setenv("SSI_CONSUMER_SECRET", "test-secret")
     monkeypatch.setenv("DATABASE_PATH", "fixtures/hot.db")
-    monkeypatch.setenv("VOLUME_BASELINE_PATH", "fixtures/baseline.db")
-    monkeypatch.setenv("MARKET_V2_DATABASE_PATH", "fixtures/market.db")
-    monkeypatch.setenv("SSI_HISTORY_PATH", "fixtures/history.db")
+    for name in LEGACY_ENV:
+        monkeypatch.delenv(name, raising=False)
 
 
-def test_volume_shadow_defaults_disabled_with_explicit_baseline(
+def test_settings_construct_without_legacy_database_paths(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _required_env(monkeypatch)
-    monkeypatch.delenv("VOLUME_ENGINE_ENABLED", raising=False)
-    monkeypatch.delenv("VOLUME_SHADOW_SYMBOLS", raising=False)
 
     settings = Settings.from_env()
 
-    assert not settings.volume_engine_enabled
-    assert not settings.canonical_engine_enabled
-    assert not settings.canonical_signal_enabled
+    assert settings.database_path == Path("fixtures/hot.db")
     assert settings.canonical_market_dir == ROOT / "data"
     assert settings.canonical_engine_path == ROOT / "data" / "ccc_engine.db"
-    assert settings.volume_baseline_path == ROOT / "fixtures" / "baseline.db"
-    assert settings.volume_shadow_symbols == ("HPG", "SHS", "VGI")
+    assert not settings.canonical_engine_enabled
+    assert not settings.canonical_signal_enabled
+    for retired in (
+        "volume_engine_enabled",
+        "live_state_enabled",
+        "volume_baseline_path",
+        "market_v2_database_path",
+        "ssi_history_path",
+        "volume_shadow_symbols",
+    ):
+        assert not hasattr(settings, retired)
 
 
-@pytest.mark.parametrize("enabled", ["1", "TRUE", "yes", "On"])
-def test_volume_shadow_boolean_true_values(
-    monkeypatch: pytest.MonkeyPatch, enabled: str
-) -> None:
-    _required_env(monkeypatch)
-    monkeypatch.setenv("VOLUME_ENGINE_ENABLED", enabled)
-
-    assert Settings.from_env().volume_engine_enabled
-
-
-def test_volume_shadow_settings_normalize_relative_path_and_symbols(
+def test_retired_flags_do_not_break_offline_settings_construction(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _required_env(monkeypatch)
-    monkeypatch.setenv("VOLUME_BASELINE_PATH", "fixtures/baseline.db")
-    monkeypatch.setenv("VOLUME_SHADOW_SYMBOLS", " hpg,SHS,hpg, vgi ")
+    monkeypatch.setenv("VOLUME_ENGINE_ENABLED", "true")
+    monkeypatch.setenv("LIVE_STATE_ENABLED", "true")
 
     settings = Settings.from_env()
 
-    assert settings.volume_baseline_path == ROOT / Path("fixtures/baseline.db")
-    assert settings.volume_shadow_symbols == ("HPG", "SHS", "VGI")
+    assert settings.database_path == Path("fixtures/hot.db")
 
 
-def test_invalid_volume_shadow_boolean_fails_deterministically(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_database_path_remains_required(monkeypatch: pytest.MonkeyPatch) -> None:
     _required_env(monkeypatch)
-    monkeypatch.setenv("VOLUME_ENGINE_ENABLED", "sometimes")
+    monkeypatch.delenv("DATABASE_PATH")
 
-    with pytest.raises(RuntimeError, match="VOLUME_ENGINE_ENABLED"):
+    with pytest.raises(RuntimeError, match="DATABASE_PATH"):
         Settings.from_env()
 
 
-def test_live_state_defaults_disabled_and_explicit_paths_resolve_under_service_root(
+def test_canonical_collector_settings_parse_explicit_values(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _required_env(monkeypatch)
-    monkeypatch.delenv("LIVE_STATE_ENABLED", raising=False)
+    monkeypatch.setenv("CANONICAL_MARKET_DIR", "fixtures/market")
+    monkeypatch.setenv("CANONICAL_ENGINE_PATH", "fixtures/canonical-engine.db")
+    monkeypatch.setenv("CANONICAL_ENGINE_ENABLED", "true")
+    monkeypatch.setenv("CANONICAL_SIGNAL_ENABLED", "true")
 
     settings = Settings.from_env()
 
-    assert not settings.live_state_enabled
-    assert settings.market_v2_database_path == ROOT / "fixtures/market.db"
-    assert settings.ssi_history_path == ROOT / "fixtures/history.db"
+    assert settings.canonical_market_dir == ROOT / "fixtures" / "market"
+    assert settings.canonical_engine_path == ROOT / "fixtures" / "canonical-engine.db"
+    assert settings.canonical_engine_enabled
+    assert settings.canonical_signal_enabled
 
 
 @pytest.mark.parametrize(
-    "name",
-    ("DATABASE_PATH", "VOLUME_BASELINE_PATH", "MARKET_V2_DATABASE_PATH", "SSI_HISTORY_PATH"),
+    "name", ("CANONICAL_ENGINE_ENABLED", "CANONICAL_SIGNAL_ENABLED")
 )
-def test_database_paths_are_explicit_and_fail_closed(
+def test_invalid_canonical_boolean_fails_deterministically(
     monkeypatch: pytest.MonkeyPatch, name: str
 ) -> None:
     _required_env(monkeypatch)
-    monkeypatch.delenv(name)
+    monkeypatch.setenv(name, "sometimes")
 
     with pytest.raises(RuntimeError, match=name):
         Settings.from_env()
-
-
-def test_live_state_requires_volume_engine(monkeypatch: pytest.MonkeyPatch) -> None:
-    _required_env(monkeypatch)
-    monkeypatch.setenv("LIVE_STATE_ENABLED", "true")
-    monkeypatch.setenv("VOLUME_ENGINE_ENABLED", "false")
-
-    with pytest.raises(RuntimeError, match="requires VOLUME_ENGINE_ENABLED"):
-        Settings.from_env()
-
-
-def test_canonical_engine_flag_is_independent_of_legacy_engines(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _required_env(monkeypatch)
-    monkeypatch.setenv("CANONICAL_ENGINE_ENABLED", "true")
-    monkeypatch.setenv("CANONICAL_ENGINE_PATH", "fixtures/canonical-engine.db")
-    monkeypatch.setenv("VOLUME_ENGINE_ENABLED", "false")
-    monkeypatch.setenv("LIVE_STATE_ENABLED", "false")
-
-    settings = Settings.from_env()
-
-    assert settings.canonical_engine_enabled
-    assert settings.canonical_engine_path == ROOT / "fixtures" / "canonical-engine.db"
-    assert not settings.volume_engine_enabled
-    assert not settings.live_state_enabled
-
-
-def test_canonical_signal_flag_is_independent_of_legacy_engines(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _required_env(monkeypatch)
-    monkeypatch.setenv("CANONICAL_SIGNAL_ENABLED", "true")
-    monkeypatch.setenv("VOLUME_ENGINE_ENABLED", "false")
-    monkeypatch.setenv("LIVE_STATE_ENABLED", "false")
-
-    settings = Settings.from_env()
-
-    assert settings.canonical_signal_enabled
-    assert not settings.volume_engine_enabled
-    assert not settings.live_state_enabled
-
-
-def test_live_paths_use_service_path_helper(monkeypatch: pytest.MonkeyPatch) -> None:
-    _required_env(monkeypatch)
-    monkeypatch.setenv("MARKET_V2_DATABASE_PATH", "fixtures/market.db")
-    monkeypatch.setenv("SSI_HISTORY_PATH", "fixtures/history.db")
-
-    settings = Settings.from_env()
-
-    assert settings.market_v2_database_path == ROOT / "fixtures/market.db"
-    assert settings.ssi_history_path == ROOT / "fixtures/history.db"
