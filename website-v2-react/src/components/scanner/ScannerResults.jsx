@@ -13,10 +13,10 @@ export default function ScannerResults({ mode, rows, total, summary, sortSummary
   if (metadataStatus === 'ready' && total > 0 && !rows.length) emptyMessage = 'Không có mã phù hợp với các điều kiện đang áp dụng.'
 
   return (
-    <div id={`scanner-panel-${mode}`} role="tabpanel" aria-labelledby={`scanner-tab-${mode}`} className="scanner-result-panel">
+    <div id={`scanner-panel-${mode}`} role="region" aria-labelledby={`scanner-result-title-${mode}`} className="scanner-result-panel">
       <header className="scanner-result-header">
         <span className="scanner-kicker">{watchlist ? 'ĐÃ THEO DÕI' : advanced ? 'TÌM KIẾM NÂNG CAO' : 'TOÀN THỊ TRƯỜNG'}</span>
-        <h2>{watchlist ? 'Danh sách của tôi' : advanced ? 'Kết quả tìm kiếm nâng cao' : 'Kết quả toàn thị trường'}</h2>
+        <h2 id={`scanner-result-title-${mode}`}>{watchlist ? 'Danh sách của tôi' : advanced ? 'Kết quả tìm kiếm nâng cao' : 'Kết quả toàn thị trường'}</h2>
         {advanced ? <p>Bộ lọc nhiều điều kiện và sắp xếp ưu tiên dùng chung kết quả này. Bộ lọc AI sẽ được bổ sung sau.</p> : null}
         <p className="scanner-result-summary">{summary}</p>
         {sortSummary ? <p className="scanner-sort-summary">Sắp xếp: {sortSummary}</p> : null}

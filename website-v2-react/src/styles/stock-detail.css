@@ -807,7 +807,9 @@
   gap: 5px;
   padding: 10px 11px;
   border-bottom: 1px solid var(--border);
+  box-shadow: inset 2px 0 0 var(--ccc-state-color);
 }
+.stock-v3-radar-group.is-muted { box-shadow: inset 2px 0 0 var(--border-strong); }
 
 .stock-v3-radar-group-title,
 .stock-v3-radar-group a {
@@ -851,21 +853,6 @@
 .stock-v3-radar-group small {
   color: var(--muted);
   font-size: 11px;
-}
-
-.stock-v3-radar-group.is-flow_appearing,
-.stock-v3-radar-group.is-flow_price_confirmed,
-.stock-v3-radar-group.is-momentum_maintained {
-  box-shadow: inset 2px 0 0 color-mix(in oklab, var(--positive) 72%, transparent);
-}
-
-.stock-v3-radar-group.is-selling_pressure {
-  box-shadow: inset 2px 0 0 color-mix(in oklab, var(--negative) 72%, transparent);
-}
-
-.stock-v3-radar-group.is-momentum_weakening,
-.stock-v3-radar-group.is-watching {
-  box-shadow: inset 2px 0 0 color-mix(in oklab, var(--warning) 68%, transparent);
 }
 
 .stock-v3-radar-cta {
@@ -961,7 +948,7 @@
   font-size: 13px;
 }
 
-.stock-v3-ccc-state > span,
+.stock-v3-ccc-state > .stock-v3-ccc-kicker,
 .stock-v3-score-card > span {
   color: var(--muted);
   font-size: 11px;
@@ -975,12 +962,14 @@
   font-size: 18px;
 }
 
-.stock-v3-ccc-state > div {
+.stock-v3-ccc-state-main,
+.stock-v3-ccc-state-meta {
   display: flex;
+  align-items: center;
   gap: 8px;
 }
 
-.stock-v3-ccc-state > div > * {
+.stock-v3-ccc-state-meta > * {
   padding: 4px 7px;
   border: 1px solid var(--border);
   border-radius: 999px;
@@ -1294,9 +1283,11 @@
 .stock-v3-ccc-lock strong { font-size: 14px; }
 .stock-v3-ccc-panel > section { padding: 14px; }
 .stock-v3-ccc-panel > .stock-v3-ccc-state {
-  border-left: 3px solid var(--accent);
-  background: color-mix(in oklab, var(--accent) 6%, var(--surface-2));
+  border-left: 3px solid var(--ccc-state-color);
+  background: color-mix(in oklab, var(--ccc-state-color) 6%, var(--surface-2));
 }
+.stock-v3-ccc-state.is-muted { border-left-color: var(--border-strong); }
+.stock-v3-ccc-state.is-muted .stock-v3-ccc-state-main h3 { color: var(--muted); }
 .stock-v3-ccc-state h3 { font-size: 20px; }
 .stock-v3-intel-grid .stock-v3-metric { min-height: 78px; padding: 10px; }
 .stock-v3-intel-grid .stock-v3-metric strong { font-size: 16px; }

@@ -1,7 +1,9 @@
 import { Link } from 'react-router-dom'
 import StockLogo from '../stock/StockLogo'
+import CCCStateMeter from '../ccc/CCCStateMeter'
 import { finiteNumber, signedDistanceForRow } from '../../lib/scannerFilters'
-import { scannerSignalCue, scannerStateCue } from '../../lib/scannerData'
+import { scannerStateCue } from '../../lib/scannerData'
+import { isStatePresentationDegraded } from '../../lib/cccState'
 
 const MISSING = '—'
 
@@ -42,14 +44,23 @@ function QuickMetrics({ stock }) {
     finiteNumber(stock.atcRvol) > 0 ? `ATC ${formatRvol(stock.atcRvol)}` : null,
     finiteNumber(stock.atcPriceImpactPct) ? formatSignedPercent(stock.atcPriceImpactPct, 1) : null,
   ].filter(Boolean).join(' · ')
-  const second = atc || scannerStateCue(stock) || scannerSignalCue(stock)
+  const second = [scannerStateCue(stock), atc].filter(Boolean).join(' · ')
   if (!first && !second) return MISSING
   return <span className="scanner-quick-metrics"><span>{first || second}</span>{first && second ? <small>{second}</small> : null}</span>
 }
 
-function SignalCue({ stock }) {
-  const cue = scannerSignalCue(stock)
-  return cue ? <span className="scanner-signal-cue" title={cue}>{cue}</span> : MISSING
+function StateCue({ stock }) {
+  if (!stock.ccc) {
+    return <span className="ccc-state-locked" aria-label="Trạng thái CCC bị khóa"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1" /><path d="M5 7V5a3 3 0 0 1 6 0v2" /></svg>CCC</span>
+  }
+  return (
+    <CCCStateMeter
+      signalState={stock.signalState}
+      signalLevel={stock.signalLevel}
+      compact
+      muted={isStatePresentationDegraded(stock)}
+    />
+  )
 }
 
 function StockIdentity({ stock }) {
@@ -76,7 +87,7 @@ function StockListCard({ stock, mode }) {
         <span><small>Khối lượng</small><strong>{formatVolume(stock.volume)}</strong></span>
         <span><small>Cách MA200</small><strong>{formatSignedPercent(signedDistanceForRow(stock, 200), 1)}</strong></span>
         <span><small>{watchlist ? 'RVOL30' : 'Cách MA10'}</small><strong>{watchlist && stock.ccc ? formatRvol(stock.rvol30) : watchlist ? MISSING : formatSignedPercent(signedDistanceForRow(stock, 10), 1)}</strong></span>
-        <span><small>Tín hiệu</small><strong><SignalCue stock={stock} /></strong></span>
+        <span className="scanner-card-state"><small>Trạng thái CCC</small><StateCue stock={stock} /></span>
       </span>
     </Link>
   )
@@ -95,7 +106,7 @@ export default function StockList({ rows, mode, emptyMessage }) {
             <th scope="col">KHỐI LƯỢNG</th>
             <th scope="col">CÁCH MA200</th>
             <th scope="col">{watchlist ? 'CCC NHANH' : 'CÁCH MA10'}</th>
-            <th scope="col">TÍN HIỆU</th>
+            <th scope="col">TRẠNG THÁI CCC</th>
           </tr></thead>
           <tbody>
             {rows.length ? rows.map((stock) => (
@@ -103,7 +114,7 @@ export default function StockList({ rows, mode, emptyMessage }) {
                 <td><Link className="scanner-company-link" to={`/co-phieu/${encodeURIComponent(stock.symbol)}`} aria-label={`Xem cổ phiếu ${stock.symbol}`}><StockIdentity stock={stock} /></Link></td>
                 <td>{formatNumber(stock.price)}</td><td>{formatSignedPercent(stock.changePct)}</td><td>{formatVolume(stock.volume)}</td><td>{formatSignedPercent(signedDistanceForRow(stock, 200), 1)}</td>
                 <td>{watchlist ? <QuickMetrics stock={stock} /> : formatSignedPercent(signedDistanceForRow(stock, 10), 1)}</td>
-                <td><SignalCue stock={stock} /></td>
+                <td className="scanner-state-cell"><StateCue stock={stock} /></td>
               </tr>
             )) : <tr><td colSpan={7} className="scanner-table-empty">{emptyMessage}</td></tr>}
           </tbody>

@@ -1,4 +1,5 @@
 import { finiteNumber } from './scannerFilters.js'
+import { cccStatePresentation } from './cccState.js'
 
 const PUBLIC_NUMBERS = {
   price: 'last_price', refPrice: 'ref_price', changePct: 'change_pct',
@@ -15,13 +16,6 @@ const CCC_TEXT = {
   signalState: 'signal_state', signalDirection: 'signal_direction',
   signalSummary: 'signal_summary_vi',
 }
-const SIGNAL_LABELS = {
-  WATCHING: 'Theo dõi', FLOW_APPEARING: 'Dòng tiền xuất hiện',
-  FLOW_PRICE_CONFIRMED: 'Dòng tiền xác nhận giá',
-  MOMENTUM_MAINTAINED: 'Đà tăng duy trì', MOMENTUM_WEAKENING: 'Đà tăng suy yếu',
-  SELLING_PRESSURE: 'Áp lực bán',
-}
-
 export function scannerSymbol(value) {
   return String(value || '').trim().toUpperCase()
 }
@@ -104,15 +98,5 @@ export function mergeScannerRows(directoryRows, scannerRows, { includeScannerOnl
 }
 
 export function scannerStateCue(row) {
-  if (!row?.ccc) return null
-  return row.signalState && !['NONE', 'NORMAL', 'UNAVAILABLE'].includes(row.signalState)
-    ? SIGNAL_LABELS[row.signalState] || row.signalState : null
-}
-
-export function scannerSignalCue(row) {
-  if (!row?.ccc) return null
-  if (['NONE', 'NORMAL', 'UNAVAILABLE'].includes(row.signalState)) return null
-  const state = scannerStateCue(row)
-  if (row.signalSummary) return row.signalSummary.length > 56 && state ? state : row.signalSummary
-  return state
+  return row?.ccc && row.signalState ? cccStatePresentation(row.signalState).label : null
 }

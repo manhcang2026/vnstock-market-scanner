@@ -1,4 +1,6 @@
 import { Link } from 'react-router-dom'
+import CCCStateMeter from '../ccc/CCCStateMeter'
+import { cccDirectionLabel, cccStatePresentation, isStatePresentationDegraded, validSignalLevel } from '../../lib/cccState'
 
 const detailTabs = [
   { id: 'overview', label: 'Tổng quan' },
@@ -6,16 +8,6 @@ const detailTabs = [
   { id: 'fundamental', label: 'Cơ bản' },
   { id: 'reports', label: 'BCTC' },
 ]
-
-const SIGNAL_LABELS = {
-  NORMAL: 'Bình thường',
-  WATCHING: 'Đang theo dõi',
-  FLOW_APPEARING: 'Dòng tiền xuất hiện',
-  FLOW_PRICE_CONFIRMED: 'Dòng tiền & giá xác nhận',
-  MOMENTUM_MAINTAINED: 'Xu hướng duy trì',
-  MOMENTUM_WEAKENING: 'Động lượng suy yếu',
-  SELLING_PRESSURE: 'Áp lực bán',
-}
 
 const REASON_LABELS = {
   DAY_RVOL_ELEVATED: 'Khối lượng ngày cao hơn mức cùng thời điểm',
@@ -50,7 +42,7 @@ const REASON_LABELS = {
   BELOW_MA10: 'Giá đang dưới MA10',
   ABOVE_MA200: 'Giá đang trên MA200',
   BELOW_MA200: 'Giá đang dưới MA200',
-  BASELINE_INCOMPLETE: 'Baseline chưa đủ số phiên mục tiêu',
+  BASELINE_INCOMPLETE: 'Chưa đủ dữ liệu lịch sử',
   METRICS_UNTRUSTED: 'Một phần chỉ số đang ở trạng thái chưa tin cậy',
 }
 
@@ -113,7 +105,13 @@ function CccPanel({ ready, user, accessLoading, accessError, access, ccc, cccErr
   if (cccLoading || (!ccc && !cccUnavailable)) return <div className="stock-v3-tab-message"><strong>Đang tải CCC Intelligence…</strong></div>
 
   const metrics = ccc || {}
-  const reasons = (metrics.reason_codes || []).map(code => REASON_LABELS[code] || code)
+  const state = cccStatePresentation(metrics.signal_state)
+  const signalLevel = validSignalLevel(metrics.signal_level)
+  const stateMuted = Boolean(cccError || cccUnavailable) || isStatePresentationDegraded({ metricsTrusted: metrics.metrics_trusted, qualityStatus: metrics.quality_status })
+  const stateSummary = metrics.signal_summary_vi
+    || (String(metrics.signal_state || '').toUpperCase() === 'NORMAL' ? 'Chưa ghi nhận tín hiệu nổi bật.' : null)
+  const reasons = (Array.isArray(metrics.reason_codes) ? metrics.reason_codes : [])
+    .map(code => Object.hasOwn(REASON_LABELS, code) ? REASON_LABELS[code] : code)
   const baseline = metrics.baseline_sessions_used == null && metrics.baseline_target_sessions == null
     ? '—'
     : `${metrics.baseline_sessions_used ?? '—'}/${metrics.baseline_target_sessions ?? '—'} phiên`
@@ -121,11 +119,14 @@ function CccPanel({ ready, user, accessLoading, accessError, access, ccc, cccErr
     <div className="stock-v3-ccc-panel">
       {cccError ? <p className="stock-v3-inline-warning">Đang giữ trạng thái gần nhất · {cccError}</p> : null}
       {cccUnavailable ? <p className="stock-v3-capability-note">CCC Intelligence chưa có trên API hiện tại. Các chỉ số sẽ hiển thị khi endpoint sẵn sàng.</p> : null}
-      <section className={`stock-v3-ccc-state is-${String(metrics.signal_direction || 'neutral').toLowerCase()}`}>
-        <span>CCC Current State</span>
-        <h3>{SIGNAL_LABELS[metrics.signal_state] || metrics.signal_state || '—'}</h3>
-        <div><b>{metrics.signal_direction || '—'}</b><strong>Mức {metrics.signal_level ?? '—'}</strong></div>
-        {metrics.signal_summary_vi ? <p>{metrics.signal_summary_vi}</p> : null}
+      <section className={`stock-v3-ccc-state ccc-state-tone--${state.tone}${stateMuted ? ' is-muted' : ''}`}>
+        <span className="stock-v3-ccc-kicker">Trạng thái CCC</span>
+        <div className="stock-v3-ccc-state-main">
+          <CCCStateMeter signalState={metrics.signal_state} signalLevel={metrics.signal_level} showLabel={false} muted={stateMuted} animateOnChange />
+          <h3>{state.label}</h3>
+        </div>
+        <div className="stock-v3-ccc-state-meta"><b>{cccDirectionLabel(metrics.signal_direction)} · Mức {signalLevel ?? '—'}</b></div>
+        {stateSummary ? <p>{stateSummary}</p> : null}
         {metrics.state_changed_at ? <small>Đổi trạng thái: {new Date(metrics.state_changed_at).toLocaleString('vi-VN')}</small> : null}
       </section>
       <section>
@@ -134,7 +135,7 @@ function CccPanel({ ready, user, accessLoading, accessError, access, ccc, cccErr
           <Metric label="DayRVOL" value={formatValue(metrics.day_rvol, 2, 'x')} />
           <Metric label="RVOL15" value={formatValue(metrics.rvol15, 2, 'x')} />
           <Metric label="RVOL30" value={formatValue(metrics.rvol30, 2, 'x')} />
-          <Metric label="Baseline" value={baseline} supporting={metrics.metrics_trusted ? 'Dữ liệu tin cậy' : metrics.quality_status || '—'} />
+          <Metric label="Cơ sở RVOL" value={baseline} />
         </div>
       </section>
       <section>
@@ -147,8 +148,8 @@ function CccPanel({ ready, user, accessLoading, accessError, access, ccc, cccErr
       <section>
         <h3>Auction Intelligence</h3>
         <div className="stock-v3-intel-grid">
-          <Metric label="ATO RVOL" value={formatValue(metrics.ato_rvol, 2, 'x')} supporting={metrics.ato_baseline_quality} />
-          <Metric label="ATC RVOL" value={formatValue(metrics.atc_rvol, 2, 'x')} supporting={metrics.atc_baseline_quality} />
+          <Metric label="ATO RVOL" value={formatValue(metrics.ato_rvol, 2, 'x')} />
+          <Metric label="ATC RVOL" value={formatValue(metrics.atc_rvol, 2, 'x')} />
           <Metric label="Tác động giá ATC" value={formatPercent(metrics.atc_price_impact_pct)} />
         </div>
       </section>

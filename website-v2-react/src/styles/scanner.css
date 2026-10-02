@@ -99,7 +99,7 @@
 .scanner-company-name { max-width: 220px; overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .scanner-quick-metrics span, .scanner-quick-metrics small { display: block; }
 .scanner-quick-metrics small { margin-top: 3px; color: var(--muted); font-size: 10px; }
-.scanner-signal-cue { display: inline-block; max-width: 150px; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; white-space: nowrap; }
+.scanner-state-cell { text-align: left; white-space: normal; }
 .scanner-table .scanner-table-empty { height: 100px; padding: 22px; color: var(--muted); text-align: center; white-space: normal; }
 .scanner-cards { display: none; }
 .scanner-pagination { display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding: 10px 14px; border-top: 1px solid var(--border); color: var(--muted); font-size: 11px; }
@@ -140,8 +140,9 @@
   .scanner-card-price { display: grid; flex: none; gap: 3px; text-align: right; }
   .scanner-card-price strong { font-size: 14px; }
   .scanner-card-price small { color: var(--muted); font-size: 11px; }
-  .scanner-card-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; margin-top: 11px; padding-top: 9px; border-top: 1px solid var(--border); }
+  .scanner-card-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 4px; margin-top: 11px; padding-top: 9px; border-top: 1px solid var(--border); }
   .scanner-card-grid > span { display: grid; gap: 4px; min-width: 0; }
+  .scanner-card-grid .scanner-card-state { grid-column: 1 / -1; padding-top: 7px; border-top: 1px solid var(--border); }
   .scanner-card-grid small { color: var(--muted); font-size: 9px; }
   .scanner-card-grid strong { font-size: 11px; font-weight: 700; }
   .scanner-card-empty { margin: 0; padding: 24px 12px; color: var(--muted); font-size: 12px; text-align: center; }

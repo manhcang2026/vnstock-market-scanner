@@ -1,0 +1,50 @@
+.ccc-state-tone--neutral { --ccc-state-color: var(--muted); }
+.ccc-state-tone--watching { --ccc-state-color: var(--action); }
+.ccc-state-tone--positive { --ccc-state-color: var(--positive); }
+.ccc-state-tone--warning { --ccc-state-color: var(--warning); }
+.ccc-state-tone--negative { --ccc-state-color: var(--negative); }
+
+.ccc-state-meter {
+  --ccc-state-block-size: 16px;
+  --ccc-state-block-gap: 4px;
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  align-items: center;
+  gap: 8px;
+  color: var(--ccc-state-color);
+  vertical-align: middle;
+}
+.ccc-state-meter-blocks { display: inline-flex; flex: none; gap: var(--ccc-state-block-gap); }
+.ccc-state-meter-blocks > span {
+  width: var(--ccc-state-block-size);
+  height: var(--ccc-state-block-size);
+  border: 1px solid color-mix(in oklab, var(--ccc-state-color) 38%, var(--border));
+  border-radius: 2px;
+  background: var(--surface-2);
+}
+.ccc-state-meter-blocks > .is-filled { background: var(--ccc-state-color); }
+.ccc-state-meter-label { min-width: 0; font-size: 12px; font-weight: 650; line-height: 1.3; }
+.ccc-state-meter.is-compact { --ccc-state-block-size: 11px; --ccc-state-block-gap: 3px; gap: 6px; }
+.ccc-state-meter.is-compact .ccc-state-meter-label { font-size: 11px; }
+.ccc-state-meter.is-muted { opacity: .58; }
+
+.ccc-state-meter.is-animating .ccc-state-meter-blocks > .is-filled {
+  animation: ccc-state-change 300ms ease-out both;
+}
+.ccc-state-meter.is-animating .ccc-state-meter-blocks > :nth-child(2) { animation-delay: 40ms; }
+.ccc-state-meter.is-animating .ccc-state-meter-blocks > :nth-child(3) { animation-delay: 80ms; }
+.ccc-state-meter.is-animating .ccc-state-meter-blocks > :nth-child(4) { animation-delay: 120ms; }
+
+@keyframes ccc-state-change {
+  0% { opacity: .65; transform: scale(.94); }
+  55% { opacity: 1; transform: scale(1.06); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ccc-state-meter.is-animating .ccc-state-meter-blocks > .is-filled { animation: none; }
+}
+
+.ccc-state-locked { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 11px; font-weight: 650; }
+.ccc-state-locked svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }

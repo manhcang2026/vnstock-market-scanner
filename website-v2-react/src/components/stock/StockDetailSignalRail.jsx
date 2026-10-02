@@ -1,13 +1,6 @@
 import { Link } from 'react-router-dom'
-
-const STATE_LABELS = {
-  WATCHING: 'Đang theo dõi',
-  FLOW_APPEARING: 'Dòng tiền xuất hiện',
-  FLOW_PRICE_CONFIRMED: 'Dòng tiền & giá xác nhận',
-  MOMENTUM_MAINTAINED: 'Xu hướng duy trì',
-  MOMENTUM_WEAKENING: 'Động lượng suy yếu',
-  SELLING_PRESSURE: 'Áp lực bán',
-}
+import CCCStateMeter from '../ccc/CCCStateMeter'
+import { cccStatePresentation, validSignalLevel } from '../../lib/cccState'
 
 function shortTime(value) {
   if (!value) return '—'
@@ -27,7 +20,7 @@ export default function StockDetailSignalRail({ radar, radarError, radarUnavaila
     <aside className="stock-v3-signal-rail stock-v3-radar" aria-label="CCC Radar thị trường">
       <header>
         <span className="stock-v3-section-kicker">CCC Radar</span>
-        <strong>Tín hiệu thị trường</strong>
+        <strong>Trạng thái CCC thị trường</strong>
       </header>
 
       {radarUnavailable ? (
@@ -46,28 +39,34 @@ export default function StockDetailSignalRail({ radar, radarError, radarUnavaila
         <p className="stock-v3-radar-state">Đang tải trạng thái thị trường…</p>
       ) : null}
       {radar && !activeGroups.length ? (
-        <p className="stock-v3-radar-state">Chưa có tín hiệu hiện tại cần chú ý.</p>
+        <p className="stock-v3-radar-state">Chưa có trạng thái CCC cần chú ý.</p>
       ) : null}
       {radar && activeGroups.length > 0 && identityMessage ? (
         <p className="stock-v3-radar-state is-secondary">{identityMessage}</p>
       ) : null}
 
       <div className="stock-v3-radar-groups">
-        {activeGroups.map((group) => (
-          <section key={group.state} className={`stock-v3-radar-group is-${String(group.state).toLowerCase()}`}>
-            <div className="stock-v3-radar-group-title">
-              <strong>{STATE_LABELS[group.state] || group.state}</strong>
-              <b>{group.total}</b>
-            </div>
-            {(group.items || []).slice(0, 4).map((item) => (
-              <Link key={item.symbol} to={`/co-phieu/${item.symbol}`}>
-                <strong>{item.symbol}</strong>
-                <time>{shortTime(item.state_changed_at || item.event_at)}</time>
-              </Link>
-            ))}
-            {Number(group.hidden) > 0 ? <small>+{group.hidden} mã khác</small> : null}
-          </section>
-        ))}
+        {activeGroups.map((group) => {
+          const state = cccStatePresentation(group.state)
+          return (
+            <section key={group.state} className={`stock-v3-radar-group ccc-state-tone--${state.tone}${radarError ? ' is-muted' : ''}`}>
+              <div className="stock-v3-radar-group-title">
+                <strong>{state.label}</strong>
+                <b>{group.total}</b>
+              </div>
+              {validSignalLevel(group.signal_level) !== null ? (
+                <CCCStateMeter signalState={group.state} signalLevel={group.signal_level} compact showLabel={false} muted={Boolean(radarError)} />
+              ) : null}
+              {(group.items || []).slice(0, 4).map((item) => (
+                <Link key={item.symbol} to={`/co-phieu/${item.symbol}`}>
+                  <strong>{item.symbol}</strong>
+                  <time>{shortTime(item.state_changed_at || item.event_at)}</time>
+                </Link>
+              ))}
+              {Number(group.hidden) > 0 ? <small>+{group.hidden} mã khác</small> : null}
+            </section>
+          )
+        })}
       </div>
 
       {!radarUnavailable && radar?.identity_scope !== 'FULL_MARKET' ? (

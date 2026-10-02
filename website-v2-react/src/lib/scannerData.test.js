@@ -4,8 +4,9 @@ import { applyScannerFilters, fieldAvailability, signedDistanceForRow } from './
 import { sortScannerRows } from './scannerSort.js'
 import {
   mergeScannerRows, normalizeScannerResponse, normalizeScannerRow,
-  scannerSignalCue,
+  scannerStateCue,
 } from './scannerData.js'
+import { cccDirectionLabel, cccStatePresentation, cccStateSignature, isStatePresentationDegraded, meterSignalLevel, validSignalLevel } from './cccState.js'
 import { mergeWatchlistWithMetadata } from './watchlistMerge.js'
 
 const publicRow = {
@@ -44,7 +45,7 @@ test('null CCC exposes no protected normalized values or signal', () => {
     'atcRvol', 'atcPriceImpactPct', 'signalState', 'signalLevel',
     'signalDirection', 'reasonCodes', 'signalSummary', 'metricsTrusted',
   ]) assert.equal(row[field], null, field)
-  assert.equal(scannerSignalCue({ ...row, signalSummary: 'forged', signalState: 'WATCHING' }), null)
+  assert.equal(scannerStateCue({ ...row, signalSummary: 'forged', signalState: 'WATCHING' }), null)
   assert.equal(normalizeScannerRow({ ...publicRow, ccc: [] }).ccc, null)
 })
 
@@ -66,9 +67,41 @@ test('authorized CCC fields normalize only from a real object', () => {
   assert.deepEqual([row.signalState, row.signalLevel, row.signalDirection], ['WATCHING', 2, 'UP'])
   assert.deepEqual(row.reasonCodes, ['REAL_REASON'])
   assert.equal(row.metricsTrusted, false)
-  assert.equal(scannerSignalCue(row), 'Theo dõi dòng tiền')
-  assert.equal(scannerSignalCue({ ...row, signalState: 'NORMAL' }), null)
-  assert.equal(scannerSignalCue({ ...row, signalSummary: 'x'.repeat(60) }), 'Theo dõi')
+  assert.equal(scannerStateCue(row), 'Theo dõi')
+  assert.equal(scannerStateCue({ ...row, signalState: 'NORMAL' }), 'Bình thường')
+  assert.equal(scannerStateCue({ ...row, signalSummary: 'x'.repeat(60) }), 'Theo dõi')
+})
+
+test('canonical state labels and meter levels never derive from metrics or state', () => {
+  assert.deepEqual([
+    'NORMAL', 'WATCHING', 'FLOW_APPEARING', 'FLOW_PRICE_CONFIRMED',
+    'MOMENTUM_MAINTAINED', 'MOMENTUM_WEAKENING', 'SELLING_PRESSURE',
+  ].map(state => cccStatePresentation(state).label), [
+    'Bình thường', 'Theo dõi', 'Dòng tiền xuất hiện', 'Dòng tiền + giá xác nhận',
+    'Động lượng duy trì', 'Động lượng suy yếu', 'Áp lực bán',
+  ])
+  assert.deepEqual(cccStatePresentation('UNKNOWN_STATE'), { label: 'UNKNOWN_STATE', tone: 'neutral' })
+  assert.equal(validSignalLevel(null), null)
+  assert.equal(meterSignalLevel(null), null)
+  assert.equal(meterSignalLevel('not-a-level'), null)
+  assert.equal(meterSignalLevel(3), 3)
+  assert.equal(validSignalLevel(8), 8)
+  assert.equal(meterSignalLevel(8), 4)
+  assert.equal(cccStateSignature(null, 3), null)
+  assert.equal(cccStateSignature(' watching ', 1), 'WATCHING|1')
+  assert.equal(cccStateSignature('WATCHING', null), 'WATCHING|unknown')
+  assert.notEqual(cccStateSignature('WATCHING', 1), cccStateSignature('WATCHING', 2))
+  assert.notEqual(cccStateSignature('WATCHING', 1), cccStateSignature('SELLING_PRESSURE', 1))
+  assert.equal(isStatePresentationDegraded({ qualityStatus: 'METRICS_UNTRUSTED' }), true)
+  assert.equal(isStatePresentationDegraded({ metricsTrusted: false }), true)
+})
+
+test('CCC direction labels expose only canonical Vietnamese wording', () => {
+  assert.equal(cccDirectionLabel('NEUTRAL'), 'Trung tính')
+  assert.equal(cccDirectionLabel(' bullish '), 'Hướng tăng')
+  assert.equal(cccDirectionLabel('BEARISH'), 'Hướng giảm')
+  assert.equal(cccDirectionLabel('UNKNOWN_DIRECTION'), '—')
+  assert.equal(cccDirectionLabel(null), '—')
 })
 
 test('response stores technical scope only as metadata', () => {
