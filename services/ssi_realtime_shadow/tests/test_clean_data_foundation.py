@@ -17,6 +17,7 @@ from app.canonical_market_store import (
     MinuteBar,
 )
 from app.clean_rest_bootstrap import (
+    build_parser,
     normalize_daily_row,
     normalize_minute_row,
     run_bootstrap,
@@ -29,6 +30,33 @@ from app.rebuild_engine import (
     rebuild_engine,
 )
 from app.ssi_historical import SSINoDataFound
+
+
+def test_canonical_historical_recovery_cli_accepts_bounded_minute_range() -> None:
+    args = build_parser().parse_args(
+        [
+            "--mode",
+            "minute",
+            "--from-date",
+            "2026-09-01",
+            "--to-date",
+            "2026-09-11",
+            "--symbols",
+            "HPG,SSI,VIX",
+            "--db-dir",
+            "/app/data",
+            "--retry-failed",
+            "--verbose",
+        ]
+    )
+
+    assert args.mode == "minute"
+    assert args.from_date == date(2026, 9, 1)
+    assert args.to_date == date(2026, 9, 11)
+    assert args.symbols == "HPG,SSI,VIX"
+    assert args.db_dir == Path("/app/data")
+    assert args.retry_failed is True
+    assert args.verbose is True
 
 
 def _minute_raw(**changes: object) -> dict[str, object]:

@@ -38,18 +38,36 @@ Xem nhanh dữ liệu đã thu:
 python -m app.status
 ```
 
-## Bootstrap lịch sử 1 phút
+## Historical recovery
 
-Có thể nạp OHLC 1 phút từ SSI FastConnect Data vào cùng SQLite local. Lệnh có
-checkpoint theo symbol và chỉ thêm phút chưa tồn tại; không sửa hoặc cộng dồn lại
-bar realtime đã có.
+`app.clean_rest_bootstrap` is the canonical bounded historical/backfill tool.
+It fetches arbitrary minute or daily date ranges from SSI REST and writes them
+directly into the matching `ccc_market_YYYY.db` shard. For example, in
+PowerShell:
 
-```bat
-python -m app.historical_bootstrap --from-date 01/09/2026 --to-date 11/09/2026 --symbols HPG,SSI,VIX
+```powershell
+python -m app.clean_rest_bootstrap --mode minute `
+  --from-date 2026-09-01 --to-date 2026-09-11 `
+  --symbols HPG,SSI,VIX --db-dir /app/data --retry-failed --verbose
+
+python -m app.clean_rest_bootstrap --mode daily `
+  --from-date 2026-09-01 --to-date 2026-09-11 `
+  --symbols HPG,SSI,VIX --db-dir /app/data --retry-failed --verbose
 ```
 
-Bỏ `--symbols` để dùng scanner universe hiện tại; có thể thêm
-`--limit-symbols 10` khi kiểm thử phạm vi nhỏ. Credential tiếp tục lấy từ `.env`.
+When running directly on Windows outside the container, replace `/app/data`
+with the local canonical data directory. The date range is inclusive and may
+span years; the tool routes each result to its year shard.
+
+`app.canonical_eod` has a different purpose. It performs post-close
+reconciliation/finalization for one specific trading day. It is not the general
+replacement for missing historical days, especially when the selected day has
+no canonical live evidence.
+
+The removed `app.historical_bootstrap` wrote to the old hot-history storage and
+must not be reintroduced. Any retained `historical_bootstrap_checkpoints` schema
+or import references are legacy compatibility metadata, not an active bootstrap
+runtime.
 
 ## Chạy bằng Docker sau khi có Oracle/VPS
 
@@ -96,12 +114,33 @@ Retired production paths:
 - CCC V2 volume shadow and `LiveStateRuntime`;
 - the `ccc_market_v2.db.stock_state_current` writer;
 - the `ccc_v2_baseline.db` runtime dependency;
-- `ccc-ssi-daily-finalize`, whose retained wrapper is a safe no-op.
+- `ccc-ssi-daily-finalize`: service, timer, and wrapper removed from the repository;
+  retired service names must not be installed.
 
-The legacy modules remain in the repository only for offline/history tests until
-`LEGACY-CLEANUP-01`. Setting `VOLUME_ENGINE_ENABLED=true` or
-`LIVE_STATE_ENABLED=true` now makes collector startup fail closed with
-`LEGACY_V2_RUNTIME_RETIRED`.
+LEGACY-CODE-CLEANUP-01A removes the V2 runtime, harness, stock-state builder,
+readiness checker, daily finalizer, volume-baseline CLI, and hot-history bootstrap
+CLI. Shared types/helpers and migration compatibility remain where still consumed.
+No production collector path reads or writes V2 state/baseline databases.
 
-`ssi_history_2026.db` remains temporarily used only by `/v1/chart`. The chart,
-quote, and live WebSocket transports are intentionally unchanged in this case.
+`VOLUME_ENGINE_ENABLED` and `LIVE_STATE_ENABLED` are obsolete configuration.
+Remove them from deployment environments. The small explicit startup guard is
+retained to diagnose stale settings: true values fail closed with
+`LEGACY_V2_RUNTIME_RETIRED`, invalid booleans are rejected, and false/absent values
+are accepted. This guard cannot create a V2 runtime. Production startup requires
+both `CANONICAL_ENGINE_ENABLED=true` and `CANONICAL_SIGNAL_ENABLED=true`.
+
+`ssi_history_2026.db` is temporary chart-only storage until
+`CHART-API-CANONICAL-01`; `/v1/chart` uses `CHART_HISTORY_PATH` or its existing
+historical DB default. As read-only compatibility behavior, `chart_data.py` may
+read legacy `daily_finalize_runs` rows from this DB to choose day-level chart
+authority. Do not delete that table or its data before chart cutover. `/v1/quote`
+and live WebSocket still use hot transport. These routes and transports are
+unchanged by this cleanup.
+
+The collector and canonical maintenance do not use `MARKET_V2_DATABASE_PATH`,
+`VOLUME_BASELINE_PATH`, or `SSI_HISTORY_PATH`. `ccc_market_v2.db` and
+`ccc_v2_baseline.db` are retired / do not use. Their physical files, and
+`ssi_history_2026.db`, have NOT been deleted. Installed legacy systemd units
+will be cleaned separately after patch audit/deployment; this patch performs
+no production action. Keep the active `ccc-canonical-eod.*` and
+`ccc-canonical-premarket.*` units.

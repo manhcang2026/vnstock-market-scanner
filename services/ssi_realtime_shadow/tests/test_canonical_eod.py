@@ -1039,10 +1039,9 @@ def test_timer_persistence_matches_safety_policy() -> None:
     assert "Persistent=true" in premarket
 
 
-def test_legacy_timer_remains_separate_and_not_referenced_by_canonical_units() -> None:
+def test_retired_timer_is_absent_and_not_referenced_by_canonical_units() -> None:
     base = Path(__file__).resolve().parents[1] / "ops" / "systemd"
-    legacy = (base / "ccc-ssi-daily-finalize.timer").read_text(encoding="utf-8")
-    assert "16:05:00" in legacy
+    assert not (base / "ccc-ssi-daily-finalize.timer").exists()
     canonical = "\n".join(
         path.read_text(encoding="utf-8")
         for path in base.glob("ccc-canonical-*")

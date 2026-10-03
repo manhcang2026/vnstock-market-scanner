@@ -19,7 +19,6 @@ from app.volume_baseline import (
     select_volume_sessions,
     volume_market_grid,
 )
-from app.volume_baseline_build import build_parser
 
 
 def _history_db(
@@ -231,28 +230,6 @@ def test_intraday_endpoint_grid_adds_noncontinuous_provider_boundaries() -> None
     assert upcom["11:30"].session_segment == "PROVIDER_BOUNDARY"
     assert not upcom["11:30"].is_continuous
     assert upcom["14:30"].is_continuous
-
-
-def test_volume_baseline_cli_accepts_sample_arguments() -> None:
-    args = build_parser().parse_args(
-        [
-            "--history-db",
-            "/app/data/ssi_history_v2.db",
-            "--daily-db",
-            "/app/data/ccc_market_v2.db",
-            "--output-db",
-            "/app/data/ccc_v2_baseline.db",
-            "--as-of-date",
-            "2026-09-18",
-            "--lookback",
-            "10",
-            "--symbols",
-            "HPG,SSI,VIX",
-        ]
-    )
-    assert args.lookback == 10
-    assert args.max_scan_sessions == 20
-    assert args.symbols == ["HPG", "SSI", "VIX"]
 
 
 def _selection(pattern: str, *, max_scan_sessions: int = 20):

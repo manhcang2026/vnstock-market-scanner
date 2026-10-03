@@ -1,9 +1,9 @@
 # CCC Canonical Backend Contract
 
-> **Status:** Production checkpoint as of 2026-09-28
+> **Status:** Ownership updated by LEGACY-CODE-CLEANUP-01A; historical runtime observations below are dated 2026-09-28
 > **Repository:** `manhcang2026/vnstock-market-scanner`  
-> **Backend branch:** `fix/ssi-ato-realtime-boundary`  
-> **Production source commit:** `d6c299cdb79e7e625079cc8c7bfa4a2987b15c91`
+> **Cleanup branch:** `cleanup/legacy-backend-01`
+> **Production source/base at cleanup start:** `672d28813635c13e4bd2e0d6ad5dc94653db80c1` (cleanup not deployed)
 > **Purpose:** This is the single handoff document for frontend/backend integration. Frontend work should use this contract instead of inferring behavior from legacy databases or old V2 code.
 
 ---
@@ -38,11 +38,9 @@ Current runtime flags:
 ```text
 CANONICAL_ENGINE_ENABLED=true
 CANONICAL_SIGNAL_ENABLED=true
-VOLUME_ENGINE_ENABLED=false
-LIVE_STATE_ENABLED=false
 ```
 
-Current operational state:
+Historical operational observations (2026-09-28; not rechecked by this code cleanup):
 
 - canonical engine initialized successfully;
 - canonical signal projector initialized successfully;
@@ -178,49 +176,37 @@ Schema version at production signal enablement: **3**.
 - current state: 800 symbols;
 - rebuild failures: 0.
 
-### 4.2 LEGACY — archive/delete-later candidates
+### 4.2 TEMPORARY — chart transport
 
-These databases are **not canonical** and frontend must not build new dependencies on them.
+`ssi_history_2026.db` remains required only by `/v1/chart` until
+CHART-API-CANONICAL-01. The route uses `CHART_HISTORY_PATH` or its existing
+historical DB default. `chart_data.py` may read legacy `daily_finalize_runs`
+metadata from this DB to decide day-level chart authority. That access is
+read-only compatibility behavior: keep the physical DB and do not delete the
+table/data before chart cutover. Canonical history does not yet replace this API
+dependency. `/v1/quote` and live WebSocket remain on `ssi_shadow.db` hot/raw
+operational transport.
 
-#### `ssi_history_2026.db`
+### 4.3 RETIRED — do not use
 
-Status: **ARCHIVE CANDIDATE -> DELETE-LATER**
+- `ccc_market_v2.db`: V2 current state (`stock_state_current`) and old signal data.
+- `ccc_v2_baseline.db`: V2 baseline data; canonical baseline belongs to
+  `ccc_engine.db.volume_baseline_curve`.
+- V2 stock-state runtime, `LiveStateRuntime`, and V2 volume-engine runtime.
+- Old `ccc-ssi-daily-finalize` service/timer/wrapper: removed from the repository;
+  must not be installed.
 
-Reasons:
-
-- legacy historical minute store;
-- stopped being current around 2026-09-21;
-- canonical `ccc_market_2026.db` contains the replacement history and is newer/more complete in the late-September transition period;
-- still referenced by legacy chart/EOD code, so it cannot be removed until those dependencies are ported.
-
-#### `ccc_v2_baseline.db`
-
-Status: **ARCHIVE CANDIDATE -> DELETE-LATER**
-
-Reasons:
-
-- V2 baseline store;
-- `VOLUME_ENGINE_ENABLED=false`;
-- last audited metadata: `as_of_date=2026-09-23`;
-- canonical baseline now lives in `ccc_engine.db.volume_baseline_curve`;
-- still referenced by the legacy EOD wrapper/settings.
-
-#### `ccc_market_v2.db`
-
-Status: **ARCHIVE CANDIDATE -> DELETE-LATER**
-
-Reasons:
-
-- old V2 current state and signal architecture;
-- `stock_state_current` is stale relative to canonical runtime;
-- old `signal_events` is empty;
-- all legacy `daily_bars` keys are covered by canonical 2025/2026 daily bars;
-- canonical has additional daily rows not present in V2.
-
-One migration decision remains before deletion:
-
-- `auction_session_history` contains 90 older rows (2026-08-25 through 2026-09-17) that predate the current canonical auction history start.
-- Those rows must either be intentionally imported or explicitly retired before the DB is deleted.
+Neither collector nor canonical maintenance depends on these V2 databases.
+Shared helper/type and migration code can remain without enabling a V2 runtime.
+Retained `historical_bootstrap_checkpoints` schema and legacy-import references
+are compatibility metadata for old hot-history data, not an active bootstrap
+runtime. Canonical bounded historical/backfill recovery uses
+`app.clean_rest_bootstrap`, which writes SSI REST minute or daily ranges directly
+to `ccc_market_YYYY.db`.
+No physical database files have been deleted by this code cleanup. Preserve the
+older `auction_session_history` evidence until separately audited/imported or
+explicitly retired. Physical installed legacy units are a separate post-deploy
+cleanup, not an action performed here.
 
 ---
 
@@ -693,10 +679,20 @@ silently reactivate the retired path.
 
 Active production `Settings` and collector compose configuration no longer
 require `VOLUME_BASELINE_PATH`, `MARKET_V2_DATABASE_PATH`, or
-`SSI_HISTORY_PATH`. Legacy modules and physical databases remain untouched for
-offline/history use pending `LEGACY-CLEANUP-01`; `/v1/chart` still temporarily
-uses `ssi_history_2026.db`. Chart, quote, and live WebSocket transport cutover
-remain separate work.
+`SSI_HISTORY_PATH`. LEGACY-CODE-CLEANUP-01A removes the executable V2 runtime,
+harness, stock-state builder, readiness checker, daily finalizer,
+volume-baseline CLI and hot-history bootstrap CLI. Shared types/helpers and
+compatibility tests remain; physical databases are untouched. `/v1/chart` still
+temporarily uses `ssi_history_2026.db`. Chart, quote, and live WebSocket transport
+cutover remain separate work. The obsolete flags should be removed from deployed
+environments; false/absent values remain accepted and malformed values rejected
+by the small diagnostic guard. It contains no executable V2 path.
+
+General historical recovery after this cleanup uses `app.clean_rest_bootstrap`.
+It accepts bounded minute or daily ranges and writes directly into the canonical
+year shards. `app.canonical_eod` remains a one-trading-day post-close
+reconciliation/finalization job; it is not a general replacement for missing
+historical days, particularly when no canonical live evidence exists.
 
 ---
 
@@ -773,22 +769,13 @@ historical signal event is created by rebuild.
 No automated maintenance job may stop the collector close to or during a live
 market session.
 
-The installed legacy units:
-
-```text
-ccc-ssi-daily-finalize.service
-ccc-ssi-daily-finalize.timer
-ccc-ssi-daily-finalize-wrapper.sh
-```
-
-remain installed transition names, but their wrapper is now a **RETIRED no-op**.
-It exits successfully without container environment lookup or database access
-and directs operators to `ccc-canonical-eod`. The canonical units do not invoke,
-enable, or reuse the retired units; installed timer disablement remains an
-explicit VPS deployment action.
-
-This repository change performs no `systemctl` action. Deployment must install
-the retained no-op wrapper and explicitly disable the legacy timer on the VPS.
+The legacy names `ccc-ssi-daily-finalize.service`,
+`ccc-ssi-daily-finalize.timer`, and `ccc-ssi-daily-finalize-wrapper.sh` are
+**retired and must not be installed**. LEGACY-CODE-CLEANUP-01A removes their
+repository files and the retired finalizer implementation. Canonical units do
+not invoke, enable, or reuse them. Installed production units will be cleaned
+separately after this patch is audited/deployed. This repository change performs
+no `systemctl` action and does not modify active canonical EOD/premarket units.
 
 ---
 

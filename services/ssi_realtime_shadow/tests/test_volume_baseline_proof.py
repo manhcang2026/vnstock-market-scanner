@@ -13,7 +13,6 @@ from app.volume_baseline import (
     build_volume_baseline,
     prove_volume_session,
 )
-from app.volume_baseline_build import next_trading_session
 
 
 def _daily_db(path: Path, rows: list[tuple[str, str, str, int]]) -> None:
@@ -90,22 +89,6 @@ def _build(
         symbols=symbols,
     )
     return history, daily, output, summary
-
-
-def test_next_session_prefers_populated_trading_calendar(tmp_path: Path) -> None:
-    market = tmp_path / "market.db"
-    _daily_db(market, [])
-    connection = sqlite3.connect(market)
-    connection.executemany(
-        "INSERT INTO trading_calendar VALUES (?, 'HOSE', 1, 'SSI', 'TRUSTED', 'fixed')",
-        (("2026-09-22",), ("2026-09-24",)),
-    )
-    connection.commit()
-    connection.close()
-
-    assert next_trading_session(market, "2026-09-21") == "2026-09-22"
-    with pytest.raises(ValueError, match="no proven next session"):
-        next_trading_session(market, "2026-09-24")
 
 
 def test_unproven_missing_session_is_not_zero_but_proven_missing_minute_is_zero(
