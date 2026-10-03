@@ -1,88 +1,245 @@
-# CCC News V1
+# CCC News V1 — Architecture & Data Contract
 
-Optional content ingestion for Chuyện Chợ Chứng. This service is deliberately isolated from SSI canonical market data and signal calculations.
+Status: **running on CCC staging infrastructure**.
+As-built documentation date: **2026-10-04**.
 
-## NEWS-01 scope
+CCC News V1 is an optional content layer for Chuyện Chợ Chứng. It enriches the
+website with market/company news while remaining deliberately isolated from SSI
+canonical market data, chart, scanner and signal calculations.
 
-- Direct official RSS only: CafeF + Vietstock.
-- Normalize title, summary, outbound URL, publication time, category and image metadata.
-- One broken feed is fail-open; other feeds continue.
-- NEWS-02 adds an isolated optional SQLite store (`ccc_news.db`) with persistent URL dedupe.
-- NEWS-03 adds conservative deterministic symbol mapping from `config/watchlist.csv`.
-- No AI sentiment or frontend integration yet.
-- Image discovery does **not** imply reuse permission. Every discovered source image starts as `UNREVIEWED`.
+News is **not** a realtime trading-signal source. Market price/volume remains the
+authoritative layer. News may arrive later and must never block, alter or become
+a dependency of market data.
 
-## Live smoke test
+## 1. Architecture
 
-From repository root:
-
-```bash
-python -m services.ccc_news.collector --source all --limit 20
+```text
+CafeF RSS ─────┐
+               ├─> collector ─> normalize/dedupe/map ─> ccc_news.db
+Vietstock RSS ─┘                                      │
+                                                      ▼
+                                             standalone News API
+                                             127.0.0.1:8795
+                                                      │
+                                                      ▼
+                                        Nginx on ccc-webhosting-01
+                                                      │
+                                              beta /api/v2/news
 ```
 
-JSON output:
+News runs on `ccc-webhosting-01`. It does not run on `ccc-realtime-01` and does
+not use Supabase.
 
-```bash
-python -m services.ccc_news.collector --source all --limit 20 --json
+The existing market path remains separate:
+
+```text
+webhosting Nginx
+  ├─ market HTTP  -> 10.0.0.226:8787
+  └─ market WS    -> 10.0.0.226:8790
 ```
 
-The live smoke test needs internet access. Unit tests do not.
+No News module is imported by `services/ssi_realtime_shadow`.
 
-## Failure semantics
+## 2. Sources and collection
 
-If CafeF fails, Vietstock is still collected, and vice versa. The CLI exits non-zero only when no usable news item was collected at all.
+V1 uses direct official RSS only:
 
-## Optional local storage
+- CafeF
+- Vietstock
 
-Collection stays read-only unless `--db` is supplied:
+The collector stores normalized:
 
-```bash
-python -m services.ccc_news.collector --source all --limit 20 --db data/ccc_news.db
+- source and category;
+- title and RSS summary;
+- canonical outbound article URL;
+- publication time;
+- feed URL/GUID;
+- discovered image metadata;
+- deterministic stock-symbol links.
+
+One broken feed is fail-open: other feeds continue. The collector returns a
+non-zero exit status only when no usable item is collected at all.
+
+Full article crawling, AI sentiment and price/news reaction analysis are
+intentionally out of scope for V1.
+
+## 3. Storage
+
+News has its own SQLite database:
+
+```text
+/opt/ccc-news/data/ccc_news.db
 ```
 
-Repeated runs update `last_fetched_at` and do not create duplicate rows for the same outbound URL.
-The news database is independent from every SSI/canonical market database.
+Primary tables:
 
-`CafeF/BUSINESS` is intentionally collected at provider level even though the feed contains broad business/lifestyle items. NEWS-03 symbol mapping will decide which company-specific items are eligible for stock pages; broad unmatched BUSINESS items must not be surfaced there.
+### `news_articles`
 
+Stores normalized article metadata. Canonical outbound `url` is unique and is
+the persistent dedupe key.
 
-## Symbol mapping (NEWS-03)
+Important fields include:
 
-When `--db` is supplied and `config/watchlist.csv` exists, every fetched article is mapped to listed symbols conservatively:
+- `source`
+- `category`
+- `title`
+- `summary`
+- `url`
+- `published_at`
+- `guid`
+- `image_url`
+- `image_origin`
+- `image_usage_status`
+- `content_hash`
+- fetch/create/update timestamps
 
-- unique company-name aliases may map in any category;
-- bare ticker tokens map only in market/event categories when explicit stock context such as `cổ phiếu`, `cổ tức`, `chốt quyền` or insider-trading language is present;
-- ambiguous company aliases are discarded;
-- unmatched broad business stories remain stored but are not eligible for a stock-detail news query.
+### `news_article_symbols`
 
-This is intentionally precision-first. Missing a weak relation is preferable to attaching an unrelated article to a stock.
+Stores deterministic article-to-stock relations:
 
-## Standalone public API (NEWS-04)
+- `article_id`
+- `symbol`
+- `match_type` (`TICKER` or `NAME`)
+- `matched_text`
 
-News API is a separate process from SSI/realtime and reads only the isolated
-`ccc_news.db`. Production target is `ccc-webhosting-01`; market/realtime services
-do not import or depend on this package.
+Repeated collection is idempotent: an already-known URL is updated/marked
+unchanged rather than inserted as a duplicate.
 
-Run locally from repository root:
+The News database is independent from all SSI/canonical market databases.
 
-```bash
-python -m services.ccc_news.api --db data/ccc_news.db --host 127.0.0.1 --port 8795
+## 4. Symbol mapping
+
+Stock identities come from:
+
+```text
+config/watchlist.csv
 ```
 
-Public contract:
+Mapping is intentionally **precision-first**. Missing a weak relationship is
+preferable to attaching unrelated news to a stock.
 
-- `GET /v1/news?limit=20`
-- `GET /v1/news/HPG?limit=10`
-- private health probe: `GET /health`
+Rules:
 
-Missing/disabled/corrupt news fails open with HTTP 200, `available=false` and an
-empty item list. It must never affect chart, scanner, signals or market data.
+- unique strong company-name aliases may map in any category;
+- bare tickers are accepted conservatively only in market/event contexts;
+- ambiguous company-name aliases are discarded;
+- broad unmatched `BUSINESS`/`SMART_MONEY` stories remain stored but are not
+  eligible for stock-detail news.
 
-Overview relevance is intentionally conservative:
+Important Vietnamese false-positive rule:
 
-- market/finance/event categories may appear without a symbol;
-- broad `BUSINESS` and `SMART_MONEY` items appear only when deterministic mapping
-  links them to at least one listed symbol.
+Ticker detection must use uppercase ASCII tokens from the **original source
+text**, not the accent-stripped normalized text. Otherwise common Vietnamese
+words such as `vừa` and `trả` can normalize to real listed tickers such as
+`VUA` and `TRA`.
 
-Thumbnail projection never exposes an unreviewed source image. It falls back to
-`SYMBOL` when the article maps to a ticker and `CATEGORY` otherwise.
+Generic ambiguous uppercase tokens such as `CEO`, `API` and `NET` are blocked
+from bare-ticker inference.
+
+## 5. Image policy
+
+RSS image discovery is metadata discovery only; it does **not** imply permission
+to reuse an image.
+
+Every discovered source image starts as:
+
+```text
+image_usage_status = UNREVIEWED
+```
+
+The public API exposes a source image only when its usage status is explicitly
+approved. Otherwise the frontend receives a safe fallback projection:
+
+- `thumbnail_mode=SYMBOL` for symbol-linked news;
+- `thumbnail_mode=CATEGORY` when no stock logo is available.
+
+This lets News cards have a visual fallback without assuming third-party image
+rights.
+
+## 6. Standalone API contract
+
+Local process:
+
+```bash
+python -m services.ccc_news.api \
+  --db /opt/ccc-news/data/ccc_news.db \
+  --host 127.0.0.1 \
+  --port 8795
+```
+
+Routes:
+
+```text
+GET /v1/news?limit=20
+GET /v1/news/HPG?limit=10
+GET /health
+```
+
+Public payload contract:
+
+```text
+contract_version = ccc-news-v1
+available
+count
+items
+symbol                  # stock-specific route only
+reason                  # DISABLED / UNAVAILABLE when applicable
+```
+
+Article items expose normalized content plus:
+
+```text
+symbols
+thumbnail_mode
+thumbnail_url
+thumbnail_symbol
+thumbnail_category
+```
+
+`limit` is clamped to `1..50`.
+
+## 7. Failure semantics
+
+News is optional. Missing, disabled or unreadable News data must never affect the
+market application.
+
+When News is disabled/unavailable, public News endpoints fail open with:
+
+```text
+HTTP 200
+available=false
+count=0
+items=[]
+```
+
+No market/chart/scanner/SSI service needs to restart when News is stopped.
+
+## 8. Overview relevance
+
+The generic `/v1/news` feed is conservative.
+
+Market/event categories may appear without a symbol. Broad categories such as
+`BUSINESS` and `SMART_MONEY` are eligible only when deterministic symbol mapping
+links the article to at least one listed stock.
+
+Stock-specific `/v1/news/<SYMBOL>` uses `news_article_symbols`; the frontend does
+not need to perform fuzzy symbol matching.
+
+## 9. Current staging state
+
+The News backend is installed and running on `ccc-webhosting-01`.
+
+Current staging HTTP contract:
+
+```text
+https://beta.chuyenchochung.com/api/v2/news
+https://beta.chuyenchochung.com/api/v2/news/HPG
+```
+
+The main public domain `chuyenchochung.com` remains on the existing public
+version and **must not expose News until the controlled V4 production cutover**.
+
+Frontend News integration is intentionally deferred until the V4 Overview layout
+is stable.
+
+See `services/ccc_news/ops/README.md` for the live operating runbook.
