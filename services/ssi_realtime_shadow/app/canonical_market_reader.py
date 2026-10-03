@@ -62,6 +62,33 @@ class CanonicalMarketReader:
     def _mapping(row: sqlite3.Row) -> dict[str, object]:
         return {key: row[key] for key in row.keys()}
 
+    @staticmethod
+    def _quote_select_columns(connection: sqlite3.Connection) -> tuple[str, ...] | None:
+        available_columns = {
+            str(row["name"])
+            for row in connection.execute("PRAGMA table_info(latest_quotes)")
+        }
+        if "symbol" not in available_columns:
+            return None
+
+        select_columns: list[str] = []
+        for public_column in QUOTE_COLUMNS:
+            storage_column = (
+                "provider_session"
+                if public_column == "trading_session"
+                else public_column
+            )
+            if storage_column in available_columns:
+                if storage_column == public_column:
+                    select_columns.append(public_column)
+                else:
+                    select_columns.append(
+                        f"{storage_column} AS {public_column}"
+                    )
+            else:
+                select_columns.append(f"NULL AS {public_column}")
+        return tuple(select_columns)
+
     def minute_rows(
         self,
         *,
@@ -140,34 +167,23 @@ class CanonicalMarketReader:
         as_of_year: int | None = None,
     ) -> dict[str, object] | None:
         current_year = int(as_of_year or datetime.now(VN_TZ).year)
-        candidates: list[dict[str, object]] = []
-        select_columns = (
-            *QUOTE_COLUMNS[:17],
-            "provider_session AS trading_session",
-            *QUOTE_COLUMNS[18:],
-        )
         for year in (current_year, current_year - 1):
             connection = self._connect(year)
             if connection is None:
                 continue
             try:
+                select_columns = self._quote_select_columns(connection)
+                if select_columns is None:
+                    continue
                 row = connection.execute(
                     f"SELECT {', '.join(select_columns)} "
                     "FROM latest_quotes WHERE symbol = ?",
                     (symbol,),
                 ).fetchone()
                 if row is not None:
-                    candidates.append(self._mapping(row))
+                    quote = self._mapping(row)
+                    quote["source"] = "CANONICAL_MARKET"
+                    return quote
             finally:
                 connection.close()
-        if not candidates:
-            return None
-        newest = max(
-            candidates,
-            key=lambda row: (
-                str(row.get("trading_date") or ""),
-                str(row.get("event_time") or ""),
-            ),
-        )
-        newest["source"] = "CANONICAL_MARKET"
-        return newest
+        return None

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import sqlite3
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.canonical_market_store import CanonicalMarketStore
+from app.canonical_market_reader import CanonicalMarketReader
 from app.chart_api import (
     ChartAPIHandler,
     ChartHTTPServer,
@@ -58,6 +60,54 @@ def _seed_quote(
         connection.commit()
 
 
+def _seed_old_schema_quote(
+    market_dir: Path,
+    *,
+    year: int,
+    symbol: str = "HPG",
+    trading_date: str | None = None,
+    last_price: float = 19800,
+    provider_session: str | None = "CONTINUOUS",
+) -> None:
+    connection = sqlite3.connect(market_dir / f"ccc_market_{year}.db")
+    try:
+        connection.execute(
+            """
+            CREATE TABLE latest_quotes (
+                symbol TEXT PRIMARY KEY,
+                trading_date TEXT,
+                event_time TEXT,
+                last_price REAL,
+                total_volume INTEGER,
+                ref_price REAL,
+                open REAL,
+                high REAL,
+                low REAL,
+                close REAL,
+                exchange TEXT,
+                provider_session TEXT,
+                updated_at TEXT
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO latest_quotes(
+                symbol,trading_date,event_time,last_price,total_volume,ref_price,
+                open,high,low,close,exchange,provider_session,updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                symbol, trading_date or f"{year}-12-31", "14:45:00", last_price,
+                123456, 19700, 19750, 19900, 19600, last_price, "HOSE",
+                provider_session, f"{year}-12-31T14:45:00+07:00",
+            ),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
 def test_fetch_latest_canonical_quote_maps_all_public_fields(tmp_path: Path) -> None:
     _seed_quote(tmp_path, year=2026)
     quote = _fetch_latest_quote(tmp_path, "hpg", as_of_year=2026)
@@ -94,6 +144,59 @@ def test_previous_year_quote_is_last_known_fallback(tmp_path: Path) -> None:
     )
     quote = _fetch_latest_quote(tmp_path, "HPG", as_of_year=2026)
     assert quote is not None and quote["trading_date"] == "2025-12-31"
+    assert not (tmp_path / "ccc_market_2026.db").exists()
+
+
+def test_current_year_quote_returns_before_old_previous_schema_is_queried(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seed_quote(tmp_path, year=2026, last_price=20100)
+    _seed_old_schema_quote(tmp_path, year=2025)
+    reader = CanonicalMarketReader(tmp_path)
+    attempted_years: list[int] = []
+    original_connect = reader._connect
+
+    def tracked_connect(year: int):
+        attempted_years.append(year)
+        return original_connect(year)
+
+    monkeypatch.setattr(reader, "_connect", tracked_connect)
+    quote = reader.latest_quote("HPG", as_of_year=2026)
+
+    assert quote is not None
+    assert (quote["trading_date"], quote["last_price"]) == ("2026-10-02", 20100)
+    assert attempted_years == [2026]
+
+
+def test_old_previous_schema_projects_missing_optional_fields_as_none(
+    tmp_path: Path,
+) -> None:
+    _seed_quote(tmp_path, year=2026, symbol="SSI")
+    _seed_old_schema_quote(tmp_path, year=2025, provider_session="CLOSE")
+
+    quote = _fetch_latest_quote(tmp_path, "HPG", as_of_year=2026)
+
+    assert quote is not None
+    assert quote["trading_date"] == "2025-12-31"
+    assert quote["trading_session"] == "CLOSE"
+    for field in (
+        "bid_price1", "bid_vol1", "ask_price1", "ask_vol1", "change",
+        "ratio_change", "trading_status",
+    ):
+        assert quote[field] is None
+
+
+def test_missing_current_shard_falls_back_to_old_previous_schema(
+    tmp_path: Path,
+) -> None:
+    _seed_old_schema_quote(tmp_path, year=2025)
+
+    quote = _fetch_latest_quote(tmp_path, "HPG", as_of_year=2026)
+
+    assert quote is not None
+    assert quote["last_price"] == 19800
+    assert quote["source"] == "CANONICAL_MARKET"
     assert not (tmp_path / "ccc_market_2026.db").exists()
 
 
