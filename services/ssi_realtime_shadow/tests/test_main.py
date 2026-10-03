@@ -143,28 +143,67 @@ def test_collector_compose_is_canonical_and_has_no_legacy_paths() -> None:
     assert "CANONICAL_SIGNAL_ENABLED=true" in example
 
 
-def test_legacy_daily_finalize_wrapper_is_retired_noop() -> None:
-    systemd = SERVICE_ROOT / "ops" / "systemd"
-    wrapper = (systemd / "ccc-ssi-daily-finalize-wrapper.sh").read_text(
-        encoding="utf-8"
-    )
+def test_public_market_readers_use_canonical_shards_without_hot_fallback() -> None:
+    compose = (SERVICE_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    chart = compose.split("  chart-api:", 1)[1].split("  live-ws:", 1)[0]
+    live = compose.split("  live-ws:", 1)[1]
+    collector = compose.split("  chart-api:", 1)[0]
 
-    assert "RETIRED" in wrapper
-    assert "ccc-canonical-eod" in wrapper
-    assert "exit 0" in wrapper
-    for forbidden in (
-        "MARKET_V2_DATABASE_PATH",
-        "SSI_HISTORY_PATH",
-        "VOLUME_BASELINE_PATH",
-        "app.daily_finalize",
-        "app.volume_baseline_build",
-        "app.historical_bootstrap",
-        "docker exec",
+    for service in (chart, live):
+        assert "--canonical-market-dir" in service
+        assert "/app/data" in service
+        assert "./data:/app/data:ro" in service
+        assert "ssi_shadow.db" not in service
+        assert "--realtime" not in service
+    assert "DATABASE_PATH: /app/data/ssi_shadow.db" in collector
+
+
+@pytest.mark.parametrize("name", ["VOLUME_ENGINE_ENABLED", "LIVE_STATE_ENABLED"])
+def test_invalid_retired_flag_is_rejected(name: str) -> None:
+    with pytest.raises(RuntimeError, match=f"Invalid boolean environment variable {name}"):
+        validate_collector_startup(_settings(), environ={name: "typo"})
+
+
+@pytest.mark.parametrize("engine,signal", [(False, True), (True, False), (False, False)])
+def test_main_rejects_disabled_canonical_flags_before_opening_storage(
+    monkeypatch: pytest.MonkeyPatch, engine: bool, signal: bool
+) -> None:
+    monkeypatch.delenv("VOLUME_ENGINE_ENABLED", raising=False)
+    monkeypatch.delenv("LIVE_STATE_ENABLED", raising=False)
+    monkeypatch.setattr(
+        main_module.Settings, "from_env", lambda: _settings(engine=engine, signal=signal)
+    )
+    def unexpected_storage(*args: object, **kwargs: object) -> None:
+        pytest.fail("Invalid production configuration must not open storage")
+    monkeypatch.setattr(main_module, "SQLiteStore", unexpected_storage)
+    monkeypatch.setattr(main_module, "CanonicalMarketStore", unexpected_storage)
+    with pytest.raises(RuntimeError, match="CANONICAL_COLLECTOR_CONFIGURATION_REQUIRED"):
+        main_module.main()
+
+
+def test_retired_executable_modules_and_service_files_are_absent() -> None:
+    for name in (
+        "live_state_runtime", "live_runtime_harness", "stock_state_build",
+        "live_ready_check", "daily_finalize", "volume_baseline_build",
+        "historical_bootstrap", "realtime_volume", "stock_state_current",
     ):
-        assert forbidden not in wrapper
-    assert "RETIRED" in (
-        systemd / "ccc-ssi-daily-finalize.service"
-    ).read_text(encoding="utf-8")
-    assert "RETIRED" in (
-        systemd / "ccc-ssi-daily-finalize.timer"
-    ).read_text(encoding="utf-8")
+        assert not (SERVICE_ROOT / "app" / f"{name}.py").exists()
+    systemd = SERVICE_ROOT / "ops" / "systemd"
+    assert not list(systemd.glob("ccc-ssi-daily-finalize*"))
+
+
+def test_active_canonical_entrypoints_have_no_v2_paths() -> None:
+    paths = [SERVICE_ROOT / "app" / name for name in (
+        "main.py", "settings.py", "collector.py", "canonical_live_engine.py",
+        "canonical_state_reader.py", "canonical_eod.py", "canonical_premarket.py",
+        "rebuild_engine.py",
+    )]
+    paths += list((SERVICE_ROOT / "ops" / "systemd").glob("ccc-canonical-*"))
+    for path in paths:
+        source = path.read_text(encoding="utf-8")
+        for forbidden in (
+            "MARKET_V2_DATABASE_PATH", "VOLUME_BASELINE_PATH", "SSI_HISTORY_PATH",
+            "ccc_market_v2.db", "ccc_v2_baseline.db", "LiveStateRuntime",
+            "RealtimeVolumeEngine", "ccc-ssi-daily-finalize",
+        ):
+            assert forbidden not in source, (path.name, forbidden)

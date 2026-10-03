@@ -1,9 +1,0 @@
-[Unit]
-Description=RETIRED no-op - use CCC canonical EOD service
-Requires=docker.service
-After=docker.service network-online.target
-
-[Service]
-Type=oneshot
-ExecStart=/opt/ccc-realtime/app/services/ssi_realtime_shadow/ops/systemd/ccc-ssi-daily-finalize-wrapper.sh
-TimeoutStartSec=1min

@@ -8,7 +8,7 @@ import pytest
 
 from app.collector import QuoteCollector, _extract_payloads
 from app.market_session import VN_TZ
-from app.realtime_volume import VolumeEvent
+from app.volume_event import VolumeEvent
 from app.storage import SQLiteStore
 
 
@@ -766,6 +766,7 @@ def test_volume_callback_receives_exact_post_accounting_canonical_event(
 
     assert len(received) == 1
     event = received[0]
+    assert type(event) is VolumeEvent
     assert event.symbol == "HPG"
     assert event.exchange == "HOSE"
     assert event.trading_date == "2026-09-14"

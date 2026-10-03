@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -11,32 +12,10 @@ from zoneinfo import ZoneInfo
 from websockets.exceptions import ConnectionClosed
 from websockets.server import serve
 
+from .canonical_market_reader import CanonicalMarketReader
+
 VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 ALLOWED_RESOLUTIONS = {5, 15, 30, 60, 1440}
-
-QUOTE_COLUMNS = (
-    "symbol",
-    "trading_date",
-    "event_time",
-    "last_price",
-    "total_volume",
-    "ref_price",
-    "open",
-    "high",
-    "low",
-    "close",
-    "bid_price1",
-    "bid_vol1",
-    "ask_price1",
-    "ask_vol1",
-    "change",
-    "ratio_change",
-    "exchange",
-    "trading_session",
-    "trading_status",
-    "updated_at",
-)
-
 
 def _normalize_symbol(value: object) -> str:
     symbol = str(value or "").strip().upper()
@@ -62,87 +41,54 @@ def _bucket_start(event_time: str, resolution: int) -> str:
     return f"{bucket_hour:02d}:{bucket_minute:02d}"
 
 
-class LiveSQLiteStore:
-    def __init__(self, path: Path) -> None:
-        self.path = Path(path)
-
-    def _connect(self) -> sqlite3.Connection:
-        uri = f"file:{self.path.resolve()}?mode=ro"
-        conn = sqlite3.connect(uri, uri=True, timeout=2.5)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA query_only=ON")
-        conn.execute("PRAGMA busy_timeout=2500")
-        return conn
+class LiveCanonicalStore:
+    def __init__(self, market_dir: Path) -> None:
+        self.reader = CanonicalMarketReader(market_dir, busy_timeout_ms=2500)
 
     def latest_quote(self, symbol: str) -> dict | None:
-        conn = self._connect()
-        try:
-            row = conn.execute(
-                f"SELECT {', '.join(QUOTE_COLUMNS)} "
-                "FROM latest_quotes WHERE symbol = ?",
-                (symbol,),
-            ).fetchone()
-            if row is None:
-                return None
-            payload = {column: row[column] for column in QUOTE_COLUMNS}
-            payload["source"] = "SSI_STREAM"
-            return payload
-        finally:
-            conn.close()
+        return self.reader.latest_quote(symbol)
 
     def current_candle(
         self,
         *,
         symbol: str,
         trading_date: str,
-        event_time: str,
+        event_time: str | None,
         resolution: int,
     ) -> dict | None:
-        bucket_start = _bucket_start(event_time, resolution)
-        event_minute = event_time[:5]
-
-        conn = self._connect()
-        try:
-            if resolution == 1440:
-                rows = conn.execute(
-                    """
-                    SELECT minute, open, high, low, close, volume,
-                           data_source, provider_time
-                    FROM minute_bars
-                    WHERE symbol = ?
-                      AND trading_date = ?
-                    ORDER BY minute
-                    """,
-                    (symbol, trading_date),
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    """
-                    SELECT minute, open, high, low, close, volume,
-                           data_source, provider_time
-                    FROM minute_bars
-                    WHERE symbol = ?
-                      AND trading_date = ?
-                      AND minute >= ?
-                      AND minute <= ?
-                    ORDER BY minute
-                    """,
-                    (symbol, trading_date, bucket_start, event_minute),
-                ).fetchall()
-        finally:
-            conn.close()
+        if resolution == 1440:
+            bucket_start = "00:00"
+            rows = self.reader.candle_rows(
+                symbol=symbol,
+                trading_date=trading_date,
+            )
+        else:
+            if not event_time:
+                return None
+            bucket_start = _bucket_start(event_time, resolution)
+            rows = self.reader.candle_rows(
+                symbol=symbol,
+                trading_date=trading_date,
+                minute_from=bucket_start,
+                minute_to=event_time[:5],
+            )
 
         if not rows:
             return None
 
+        required_ohlc = ("open", "high", "low", "close")
+        if any(row[field] is None for row in rows for field in required_ohlc):
+            return None
+
         first = rows[0]
         last = rows[-1]
-        highs = [float(row["high"]) for row in rows if row["high"] is not None]
-        lows = [float(row["low"]) for row in rows if row["low"] is not None]
-        volumes = [int(row["volume"] or 0) for row in rows]
-
-        if first["open"] is None or last["close"] is None or not highs or not lows:
-            return None
+        highs = [float(row["high"]) for row in rows]
+        lows = [float(row["low"]) for row in rows]
+        volume = (
+            None
+            if any(row["volume"] is None for row in rows)
+            else sum(int(row["volume"]) for row in rows)
+        )
 
         return {
             "trading_date": trading_date,
@@ -152,8 +98,8 @@ class LiveSQLiteStore:
             "high": max(highs),
             "low": min(lows),
             "close": float(last["close"]),
-            "volume": sum(volumes),
-            "data_source": str(last["data_source"] or "SSI_STREAM"),
+            "volume": volume,
+            "data_source": str(last["data_source"]),
             "provider_time": last["provider_time"],
         }
 
@@ -172,7 +118,11 @@ class LiveSQLiteStore:
         candle = self.current_candle(
             symbol=symbol,
             trading_date=str(quote["trading_date"]),
-            event_time=str(quote["event_time"]),
+            event_time=(
+                str(quote["event_time"])
+                if quote.get("event_time") is not None
+                else None
+            ),
             resolution=resolution,
         )
         return {
@@ -189,7 +139,7 @@ class LiveGateway:
     def __init__(
         self,
         *,
-        store: LiveSQLiteStore,
+        store: LiveCanonicalStore,
         interval_seconds: float = 3.0,
     ) -> None:
         self.store = store
@@ -258,9 +208,9 @@ class LiveGateway:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="CCC V2 live WebSocket gateway")
     parser.add_argument(
-        "--realtime",
+        "--canonical-market-dir",
         type=Path,
-        default=Path("/app/data/ssi_shadow.db"),
+        default=Path(os.getenv("CANONICAL_MARKET_DIR", "/app/data")),
     )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8790)
@@ -270,7 +220,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 async def _run(args) -> None:
     gateway = LiveGateway(
-        store=LiveSQLiteStore(args.realtime),
+        store=LiveCanonicalStore(args.canonical_market_dir),
         interval_seconds=args.interval,
     )
     async with serve(

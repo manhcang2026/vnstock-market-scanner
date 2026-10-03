@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 import pytest
 
-from app.daily_finalize import finalize_day
 from app.daily_history import DailyBar
 from app.market_storage_schema import ensure_market_storage_schema
 from app.storage import SCHEMA, SQLiteStore
@@ -172,28 +170,20 @@ def _fixture(tmp_path: Path):
     return source, history, market, output, old_dates, old_volumes
 
 
-def _finalize_rest_day(
+def _store_rest_day(
     source: Path,
     history: Path,
     market: Path,
     trading_date: str,
     volumes: tuple[int, ...],
 ) -> None:
+    # Model already stored REST evidence without executing the retired finalizer.
     _insert_stream_source(source, trading_date, volumes)
-    result = finalize_day(
-        source_path=source,
-        history_path=history,
-        market_path=market,
-        trading_date=trading_date,
-        daily_bars=(_daily_bar(trading_date, volumes),),
-        dry_run=False,
-        now=datetime.combine(
-            date.fromisoformat(trading_date),
-            datetime.min.time().replace(hour=16),
-            tzinfo=ZoneInfo("Asia/Ho_Chi_Minh"),
-        ),
-    )
-    assert result.status == "PASS"
+    _insert_stream_source(history, trading_date, volumes)
+    connection = sqlite3.connect(market)
+    _insert_daily(connection, _daily_bar(trading_date, volumes))
+    connection.commit()
+    connection.close()
 
 
 def _coverage(path: Path) -> sqlite3.Row:
@@ -216,7 +206,7 @@ def test_real_baseline_keeps_exact10_as_rest_days_advance(
 
     first_volumes = _volumes(100)
     stream_volumes[new_dates[0]] = first_volumes
-    _finalize_rest_day(source, history, market, new_dates[0], first_volumes)
+    _store_rest_day(source, history, market, new_dates[0], first_volumes)
     first_summary = build_volume_baseline(
         history_db=history,
         daily_db=market,
@@ -291,7 +281,7 @@ def test_real_baseline_keeps_exact10_as_rest_days_advance(
     for offset, trading_date in enumerate(new_dates[1:], start=101):
         volumes = _volumes(offset)
         stream_volumes[trading_date] = volumes
-        _finalize_rest_day(source, history, market, trading_date, volumes)
+        _store_rest_day(source, history, market, trading_date, volumes)
     final_summary = build_volume_baseline(
         history_db=history,
         daily_db=market,
@@ -331,7 +321,7 @@ def test_real_baseline_keeps_exact10_as_rest_days_advance(
 def test_rest_finalized_history_is_canonical_proof(tmp_path: Path) -> None:
     source, history, market, _, old_dates, _ = _fixture(tmp_path)
     stream_date = "2026-09-14"
-    _finalize_rest_day(source, history, market, stream_date, _volumes(100))
+    _store_rest_day(source, history, market, stream_date, _volumes(100))
     history_connection = sqlite3.connect(history)
     history_connection.row_factory = sqlite3.Row
     market_connection = sqlite3.connect(market)
@@ -395,7 +385,7 @@ def test_unsafe_or_missing_finalized_rest_is_rejected(
 ) -> None:
     source, history, market, _, _, _ = _fixture(tmp_path)
     stream_date = "2026-09-14"
-    _finalize_rest_day(source, history, market, stream_date, _volumes(100))
+    _store_rest_day(source, history, market, stream_date, _volumes(100))
     if mutation in {"partial", "gap", "quality"}:
         connection = sqlite3.connect(history)
         if mutation == "partial":
@@ -444,7 +434,7 @@ def test_finalized_rest_daily_volume_difference_remains_proven(
     source, history, market, _, _, _ = _fixture(tmp_path)
     stream_date = "2026-09-14"
     volumes = _volumes(100)
-    _finalize_rest_day(source, history, market, stream_date, volumes)
+    _store_rest_day(source, history, market, stream_date, volumes)
     connection = sqlite3.connect(market)
     connection.execute(
         "UPDATE daily_bars SET volume=volume+1 WHERE trading_date=?",
