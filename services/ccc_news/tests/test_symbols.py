@@ -34,6 +34,8 @@ class SymbolMapperTests(unittest.TestCase):
                 StockIdentity("HDB", "HOSE", "Ngân hàng TMCP Phát triển Thành phố Hồ Chí Minh"),
                 StockIdentity("DGW", "HOSE", "CTCP Thế Giới Số"),
                 StockIdentity("CEO", "HNX", "CTCP Tập đoàn C.E.O"),
+                StockIdentity("VUA", "UPCOM", "CTCP Vua Việt Nam"),
+                StockIdentity("TRA", "HOSE", "CTCP Traphaco"),
             ]
         )
 
@@ -47,6 +49,24 @@ class SymbolMapperTests(unittest.TestCase):
 
     def test_generic_ceo_word_does_not_map_ceo_ticker_in_banking_story(self) -> None:
         matches = self.mapper.match(_item("CEO Techcombank: Cuộc đua AI không nằm ở công nghệ", category="FINANCE_BANKING"))
+        self.assertEqual(matches, [])
+
+    def test_vietnamese_vua_word_does_not_turn_into_vua_ticker(self) -> None:
+        matches = self.mapper.match(
+            _item("PNJ nêu lý do khiến cổ phiếu giảm sàn", "Giá cổ phiếu trong giai đoạn vừa qua biến động mạnh.")
+        )
+        self.assertEqual([m.symbol for m in matches], ["PNJ"])
+
+    def test_vietnamese_tra_word_does_not_turn_into_tra_ticker(self) -> None:
+        matches = self.mapper.match(
+            _item("Lịch chốt quyền cổ tức: MWG", "Doanh nghiệp trả cổ tức bằng tiền mặt.")
+        )
+        self.assertEqual([m.symbol for m in matches], ["MWG"])
+
+    def test_generic_uppercase_ceo_is_blocked_even_with_market_context(self) -> None:
+        matches = self.mapper.match(
+            _item("CEO Techcombank nói về cổ phiếu ngân hàng")
+        )
         self.assertEqual(matches, [])
 
     def test_ticker_without_market_context_is_not_guessed(self) -> None:

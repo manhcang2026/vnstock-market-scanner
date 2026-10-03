@@ -9,8 +9,9 @@ from typing import Iterable
 
 from .models import NewsItem
 
-_TOKEN_RE = re.compile(r"[A-Z0-9]+")
+_RAW_TICKER_RE = re.compile(r"(?<![A-Za-z0-9])[A-Z0-9]{2,12}(?![A-Za-z0-9])")
 _SPACE_RE = re.compile(r"\s+")
+_AMBIGUOUS_BARE_TICKERS = frozenset({"CEO", "API", "NET"})
 
 # Bare ticker matching is intentionally conservative. These feeds are about
 # listed-company events, but a generic business/banking story may contain words
@@ -159,7 +160,8 @@ class SymbolMapper:
         return cls(load_stock_identities(path))
 
     def match(self, item: NewsItem) -> list[SymbolMatch]:
-        text = normalize_text(f"{item.title} {item.summary}")
+        raw_text = f"{item.title} {item.summary}"
+        text = normalize_text(raw_text)
         if not text:
             return []
         padded = f" {text} "
@@ -176,8 +178,15 @@ class SymbolMapper:
             and any(phrase in text for phrase in _MARKET_CONTEXT_PHRASES)
         )
         if allow_bare_tickers:
-            for token in _TOKEN_RE.findall(text):
-                if token not in self.symbols or token in matches:
+            # Ticker detection must use the original text, not the accent-stripped
+            # normalized projection. Otherwise Vietnamese words such as "vừa" and
+            # "trả" become VUA/TRA and can collide with real listed symbols.
+            for token in _RAW_TICKER_RE.findall(raw_text):
+                if (
+                    token in _AMBIGUOUS_BARE_TICKERS
+                    or token not in self.symbols
+                    or token in matches
+                ):
                     continue
                 matches[token] = SymbolMatch(symbol=token, match_type="TICKER", matched_text=token)
 

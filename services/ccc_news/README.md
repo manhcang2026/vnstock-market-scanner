@@ -56,3 +56,33 @@ When `--db` is supplied and `config/watchlist.csv` exists, every fetched article
 - unmatched broad business stories remain stored but are not eligible for a stock-detail news query.
 
 This is intentionally precision-first. Missing a weak relation is preferable to attaching an unrelated article to a stock.
+
+## Standalone public API (NEWS-04)
+
+News API is a separate process from SSI/realtime and reads only the isolated
+`ccc_news.db`. Production target is `ccc-webhosting-01`; market/realtime services
+do not import or depend on this package.
+
+Run locally from repository root:
+
+```bash
+python -m services.ccc_news.api --db data/ccc_news.db --host 127.0.0.1 --port 8795
+```
+
+Public contract:
+
+- `GET /v1/news?limit=20`
+- `GET /v1/news/HPG?limit=10`
+- private health probe: `GET /health`
+
+Missing/disabled/corrupt news fails open with HTTP 200, `available=false` and an
+empty item list. It must never affect chart, scanner, signals or market data.
+
+Overview relevance is intentionally conservative:
+
+- market/finance/event categories may appear without a symbol;
+- broad `BUSINESS` and `SMART_MONEY` items appear only when deterministic mapping
+  links them to at least one listed symbol.
+
+Thumbnail projection never exposes an unreviewed source image. It falls back to
+`SYMBOL` when the article maps to a ticker and `CATEGORY` otherwise.
