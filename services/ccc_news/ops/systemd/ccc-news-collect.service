@@ -1,0 +1,34 @@
+[Unit]
+Description=CCC News RSS collection
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=cccnews
+Group=cccnews
+WorkingDirectory=/opt/ccc-news/app
+EnvironmentFile=/etc/ccc-news/ccc-news.env
+ExecStart=/opt/ccc-news/venv/bin/python -m services.ccc_news.collector --source all --limit 0 --db /opt/ccc-news/data/ccc_news.db --metadata /opt/ccc-news/app/config/watchlist.csv
+TimeoutStartSec=5min
+UMask=0027
+
+# Collector is intentionally background/low-priority work.
+CPUQuota=20%
+MemoryMax=256M
+Nice=10
+IOWeight=20
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectKernelLogs=true
+LockPersonality=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/opt/ccc-news/data

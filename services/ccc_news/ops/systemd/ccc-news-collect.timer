@@ -1,0 +1,15 @@
+[Unit]
+Description=Run CCC News RSS collector on the daytime 15-minute schedule
+
+[Timer]
+# Vietnam time: every 15 minutes from 07:00 through 21:45,
+# then 22:00, plus one late-night catch-up at 00:15.
+OnCalendar=*-*-* 07..21:00,15,30,45:00 Asia/Ho_Chi_Minh
+OnCalendar=*-*-* 22:00:00 Asia/Ho_Chi_Minh
+OnCalendar=*-*-* 00:15:00 Asia/Ho_Chi_Minh
+Persistent=true
+AccuracySec=1min
+Unit=ccc-news-collect.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,40 @@
+[Unit]
+Description=CCC standalone public News API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cccnews
+Group=cccnews
+WorkingDirectory=/opt/ccc-news/app
+EnvironmentFile=/etc/ccc-news/ccc-news.env
+ExecStart=/opt/ccc-news/venv/bin/python -m services.ccc_news.api
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=15s
+UMask=0027
+
+# News is non-critical content. Bound its resources so it cannot pressure the
+# webhosting VPS if traffic or provider data behaves unexpectedly.
+CPUQuota=30%
+MemoryMax=256M
+Nice=5
+IOWeight=50
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectKernelLogs=true
+LockPersonality=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/opt/ccc-news/data
+
+[Install]
+WantedBy=multi-user.target
