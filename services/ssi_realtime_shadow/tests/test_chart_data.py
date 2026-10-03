@@ -1,370 +1,219 @@
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
 
+import pytest
+
+from app.canonical_market_store import CanonicalMarketStore, MinuteBar
 from app.chart_data import ChartDataStore
 
 
-SCHEMA = """
-CREATE TABLE minute_bars (
-    trading_date TEXT NOT NULL,
-    minute TEXT NOT NULL,
-    symbol TEXT NOT NULL,
-    open REAL NOT NULL,
-    high REAL NOT NULL,
-    low REAL NOT NULL,
-    close REAL NOT NULL,
-    volume INTEGER NOT NULL DEFAULT 0,
-    last_total_volume INTEGER,
-    event_count INTEGER NOT NULL DEFAULT 0,
-    is_partial INTEGER NOT NULL DEFAULT 0,
-    exchange TEXT,
-    quality_status TEXT NOT NULL DEFAULT 'TRUSTED',
-    has_gap INTEGER NOT NULL DEFAULT 0,
-    gap_from TEXT,
-    gap_to TEXT,
-    data_source TEXT NOT NULL DEFAULT 'SSI_STREAM',
-    provider_time TEXT,
-    updated_at TEXT NOT NULL,
-    PRIMARY KEY (trading_date, minute, symbol)
-);
-
-CREATE TABLE daily_finalize_runs (
-    trading_date TEXT PRIMARY KEY,
-    status TEXT NOT NULL
-);
-"""
-
-
-def _make_db(path: Path) -> None:
-    con = sqlite3.connect(path)
-    con.executescript(SCHEMA)
-    con.commit()
-    con.close()
-
-
-def _insert(
-    path: Path,
+def _bar(
     *,
     day: str,
     minute: str,
-    symbol: str = "HPG",
-    open_price: float = 10.0,
-    high: float = 11.0,
-    low: float = 9.0,
-    close: float = 10.5,
-    volume: int = 100,
     source: str = "SSI_REST",
-) -> None:
-    con = sqlite3.connect(path)
-    con.execute(
-        """
-        INSERT INTO minute_bars (
-            trading_date, minute, symbol, open, high, low, close, volume,
-            exchange, quality_status, data_source, provider_time, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'HOSE', 'TRUSTED', ?, ?, ?)
-        """,
-        (
-            day,
-            minute,
-            symbol,
-            open_price,
-            high,
-            low,
-            close,
-            volume,
-            source,
-            minute + ":00",
-            day + "T15:30:00+07:00",
+    quality: str = "TRUSTED",
+    finalized: int = 1,
+    open_price: float | None = 10.0,
+    high: float | None = 11.0,
+    low: float | None = 9.0,
+    close: float | None = 10.5,
+    volume: int | None = 100,
+) -> MinuteBar:
+    return MinuteBar(
+        symbol="HPG",
+        trading_date=day,
+        minute=minute,
+        exchange="HOSE",
+        open=open_price,
+        high=high,
+        low=low,
+        close=close,
+        volume=volume,
+        source=source,
+        quality_status=quality,
+        is_finalized=finalized,
+    )
+
+
+def _seed(market_dir: Path, *rows: MinuteBar) -> None:
+    with CanonicalMarketStore(market_dir) as store:
+        store.upsert_minute_bars(rows)
+
+
+def test_single_year_canonical_query_and_source_counts(tmp_path: Path) -> None:
+    _seed(
+        tmp_path,
+        _bar(day="2026-09-18", minute="09:00", source="SSI_REST"),
+        _bar(
+            day="2026-09-18", minute="09:01", source="SSI_STREAM",
+            finalized=0, close=10.8,
         ),
     )
-    con.commit()
-    con.close()
-
-
-def _finalize(path: Path, *, day: str, status: str) -> None:
-    con = sqlite3.connect(path)
-    con.execute(
-        "INSERT INTO daily_finalize_runs(trading_date, status) VALUES (?, ?)",
-        (day, status),
+    result = ChartDataStore(tmp_path).query(
+        symbol="hpg", date_from="2026-09-18", date_to="2026-09-18"
     )
-    con.commit()
-    con.close()
-
-
-def test_finalized_history_is_canonical_by_day_and_realtime_fills_new_day(
-    tmp_path: Path,
-) -> None:
-    history = tmp_path / "history.db"
-    realtime = tmp_path / "realtime.db"
-    _make_db(history)
-    _make_db(realtime)
-
-    _insert(
-        history,
-        day="2026-09-14",
-        minute="09:00",
-        close=10.5,
-        source="SSI_REST",
-    )
-    _insert(
-        history,
-        day="2026-09-15",
-        minute="09:00",
-        close=11.0,
-        source="SSI_REST",
-    )
-    _finalize(history, day="2026-09-15", status="REST_PASS")
-
-    # Conflicting + extra realtime bars on a finalized day must both be ignored.
-    _insert(
-        realtime,
-        day="2026-09-15",
-        minute="09:00",
-        close=99.0,
-        high=100.0,
-        source="SSI_STREAM",
-    )
-    _insert(
-        realtime,
-        day="2026-09-15",
-        minute="09:01",
-        close=98.0,
-        high=100.0,
-        source="SSI_STREAM",
-    )
-
-    # Current/unfinalized day is still allowed to come from realtime.
-    _insert(
-        realtime,
-        day="2026-09-16",
-        minute="09:00",
-        close=12.0,
-        high=12.0,
-        low=12.0,
-        open_price=12.0,
-        source="SSI_STREAM",
-    )
-
-    result = ChartDataStore(history, realtime).query(
-        symbol="HPG",
-        date_from="2026-09-14",
-        date_to="2026-09-16",
-    )
-
-    assert len(result.bars) == 3
-    assert result.bars[0].data_source == "SSI_REST"
-    assert result.bars[1].close == 11.0
-    assert result.bars[1].data_source == "SSI_REST"
-    assert result.bars[2].close == 12.0
-    assert result.bars[2].data_source == "SSI_STREAM"
-    assert result.source_counts == {"SSI_REST": 2, "SSI_STREAM": 1}
-
-
-def test_finalized_day_suppresses_realtime_even_when_symbol_has_no_history_bar(
-    tmp_path: Path,
-) -> None:
-    history = tmp_path / "history.db"
-    realtime = tmp_path / "realtime.db"
-    _make_db(history)
-    _make_db(realtime)
-
-    _finalize(history, day="2026-09-15", status="REST_PASS")
-    _insert(
-        realtime,
-        day="2026-09-15",
-        minute="09:00",
-        symbol="HPG",
-        source="SSI_STREAM",
-    )
-
-    result = ChartDataStore(history, realtime).query(
-        symbol="HPG",
-        date_from="2026-09-15",
-        date_to="2026-09-15",
-    )
-
-    assert result.bars == ()
-    assert result.source_counts == {}
-
-
-def test_legacy_rest_history_without_finalize_metadata_is_canonical(
-    tmp_path: Path,
-) -> None:
-    history = tmp_path / "history.db"
-    realtime = tmp_path / "realtime.db"
-    _make_db(history)
-    _make_db(realtime)
-
-    _insert(
-        history,
-        day="2026-09-14",
-        minute="09:00",
-        source="SSI_REST",
-    )
-    _insert(
-        realtime,
-        day="2026-09-14",
-        minute="09:01",
-        source="SSI_STREAM",
-    )
-
-    result = ChartDataStore(history, realtime).query(
-        symbol="HPG",
-        date_from="2026-09-14",
-        date_to="2026-09-14",
-    )
-
-    assert len(result.bars) == 1
-    assert result.bars[0].minute == "09:00"
-    assert result.bars[0].data_source == "SSI_REST"
-
-
-def test_blocked_day_can_still_use_realtime_fill(tmp_path: Path) -> None:
-    history = tmp_path / "history.db"
-    realtime = tmp_path / "realtime.db"
-    _make_db(history)
-    _make_db(realtime)
-
-    _insert(
-        history,
-        day="2026-09-15",
-        minute="09:00",
-        source="SSI_REST",
-    )
-    _finalize(history, day="2026-09-15", status="REST_BLOCKED")
-    _insert(
-        realtime,
-        day="2026-09-15",
-        minute="09:01",
-        source="SSI_STREAM",
-    )
-
-    result = ChartDataStore(history, realtime).query(
-        symbol="HPG",
-        date_from="2026-09-15",
-        date_to="2026-09-15",
-    )
-
-    assert len(result.bars) == 2
+    assert [(bar.minute, bar.close) for bar in result.bars] == [
+        ("09:00", 10.5), ("09:01", 10.8)
+    ]
     assert result.source_counts == {"SSI_REST": 1, "SSI_STREAM": 1}
+    assert result.invalid_ohlc_dropped == 0
 
 
-def test_invalid_ohlc_is_filtered_by_default(tmp_path: Path) -> None:
-    history = tmp_path / "history.db"
-    realtime = tmp_path / "realtime.db"
-    _make_db(history)
-    _make_db(realtime)
-
-    _insert(
-        history,
-        day="2026-01-05",
-        minute="09:00",
-        open_price=10.0,
-        high=10.0,
-        low=10.0,
-        close=9.0,
+def test_cross_year_query_opens_required_shards_and_orders_rows(tmp_path: Path) -> None:
+    _seed(
+        tmp_path,
+        _bar(day="2025-12-31", minute="14:30", close=9.5),
+        _bar(day="2026-01-02", minute="09:00", close=10.5),
     )
+    result = ChartDataStore(tmp_path).query(
+        symbol="HPG", date_from="2025-12-20", date_to="2026-01-10"
+    )
+    assert [(bar.trading_date, bar.minute) for bar in result.bars] == [
+        ("2025-12-31", "14:30"), ("2026-01-02", "09:00")
+    ]
+    assert {path.name for path in tmp_path.glob("*.db")} == {
+        "ccc_market_2025.db", "ccc_market_2026.db"
+    }
 
-    store = ChartDataStore(history, realtime)
+
+def test_missing_year_shard_contributes_no_rows_and_is_not_created(
+    tmp_path: Path,
+) -> None:
+    _seed(tmp_path, _bar(day="2026-01-02", minute="09:00"))
+    result = ChartDataStore(tmp_path).query(
+        symbol="HPG", date_from="2025-12-20", date_to="2026-01-10"
+    )
+    assert len(result.bars) == 1
+    assert not (tmp_path / "ccc_market_2025.db").exists()
+
+
+def test_usable_unfinalized_current_minute_is_public_evidence(tmp_path: Path) -> None:
+    _seed(
+        tmp_path,
+        _bar(
+            day="2026-10-02", minute="10:17", source="SSI_STREAM",
+            quality="PARTIAL", finalized=0,
+        ),
+    )
+    result = ChartDataStore(tmp_path).query(
+        symbol="HPG", date_from="2026-10-02", date_to="2026-10-02"
+    )
+    assert len(result.bars) == 1
+    assert result.bars[0].quality_status == "PARTIAL"
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"open_price": None}, {"high": None}, {"low": None},
+        {"close": None}, {"volume": None},
+    ],
+)
+def test_structurally_incomplete_rows_are_omitted_without_fabrication(
+    tmp_path: Path, changes: dict[str, object]
+) -> None:
+    _seed(tmp_path, _bar(day="2026-10-02", minute="10:17", **changes))
+    store = ChartDataStore(tmp_path)
+    default = store.query(
+        symbol="HPG", date_from="2026-10-02", date_to="2026-10-02"
+    )
+    included = store.query(
+        symbol="HPG", date_from="2026-10-02", date_to="2026-10-02",
+        include_invalid=True,
+    )
+    assert default.bars == included.bars == ()
+    assert default.invalid_ohlc_dropped == included.invalid_ohlc_dropped == 1
+
+
+def test_complete_invalid_ohlc_is_filtered_or_explicitly_exposed(
+    tmp_path: Path,
+) -> None:
+    _seed(
+        tmp_path,
+        _bar(
+            day="2026-10-02", minute="10:17", open_price=12, high=11,
+            low=9, close=10, quality="PARTIAL",
+        ),
+    )
+    store = ChartDataStore(tmp_path)
     filtered = store.query(
-        symbol="HPG",
-        date_from="2026-01-05",
-        date_to="2026-01-05",
+        symbol="HPG", date_from="2026-10-02", date_to="2026-10-02"
+    )
+    included = store.query(
+        symbol="HPG", date_from="2026-10-02", date_to="2026-10-02",
+        include_invalid=True,
     )
     assert filtered.bars == ()
     assert filtered.invalid_ohlc_dropped == 1
-
-    included = store.query(
-        symbol="HPG",
-        date_from="2026-01-05",
-        date_to="2026-01-05",
-        include_invalid=True,
-    )
     assert len(included.bars) == 1
     assert included.bars[0].quality_status == "INVALID_OHLC"
 
 
-def test_five_minute_aggregation(tmp_path: Path) -> None:
-    history = tmp_path / "history.db"
-    realtime = tmp_path / "realtime.db"
-    _make_db(history)
-    _make_db(realtime)
-
-    _insert(
-        history,
-        day="2026-01-05",
-        minute="09:00",
-        open_price=10,
-        high=11,
-        low=9,
-        close=10,
-        volume=100,
+@pytest.mark.parametrize(
+    ("resolution", "expected_minute"),
+    [(5, "10:15"), (15, "10:15"), (30, "10:00"), (60, "10:00")],
+)
+def test_intraday_aggregation_resolutions(
+    tmp_path: Path, resolution: int, expected_minute: str
+) -> None:
+    _seed(
+        tmp_path,
+        _bar(
+            day="2026-10-02", minute="10:16", open_price=10, high=11,
+            low=9, close=10.5, volume=100,
+        ),
+        _bar(
+            day="2026-10-02", minute="10:17", open_price=10.5, high=12,
+            low=10, close=11.5, volume=200, quality="LATE_CORRECTION",
+        ),
     )
-    _insert(
-        history,
-        day="2026-01-05",
-        minute="09:01",
-        open_price=10,
-        high=12,
-        low=10,
-        close=11,
-        volume=200,
+    result = ChartDataStore(tmp_path).query(
+        symbol="HPG", date_from="2026-10-02", date_to="2026-10-02",
+        resolution=resolution,
     )
-    _insert(
-        history,
-        day="2026-01-05",
-        minute="09:04",
-        open_price=11,
-        high=13,
-        low=10,
-        close=12,
-        volume=300,
-    )
-
-    result = ChartDataStore(history, realtime).query(
-        symbol="HPG",
-        date_from="2026-01-05",
-        date_to="2026-01-05",
-        resolution=5,
-    )
-
     assert len(result.bars) == 1
     bar = result.bars[0]
-    assert bar.minute == "09:00"
-    assert bar.open == 10
-    assert bar.high == 13
-    assert bar.low == 9
-    assert bar.close == 12
-    assert bar.volume == 600
+    assert (bar.minute, bar.open, bar.high, bar.low, bar.close, bar.volume) == (
+        expected_minute, 10, 12, 9, 11.5, 300
+    )
+    assert bar.quality_status == "LATE_CORRECTION"
 
 
-def test_daily_aggregation_returns_one_bar_per_trading_date(tmp_path: Path) -> None:
-    history = tmp_path / "history.db"
-    realtime = tmp_path / "realtime.db"
-    _make_db(history)
-    _make_db(realtime)
-
-    _insert(history, day="2026-09-15", minute="09:00",
-            open_price=10, high=11, low=9, close=10.5, volume=100)
-    _insert(history, day="2026-09-15", minute="14:45",
-            open_price=10.5, high=12, low=10, close=11.5, volume=200)
-    _insert(realtime, day="2026-09-16", minute="09:00",
-            open_price=12, high=13, low=11, close=12.5, volume=300,
-            source="SSI_STREAM")
-
-    result = ChartDataStore(history, realtime).query(
-        symbol="HPG",
-        date_from="2026-09-15",
-        date_to="2026-09-16",
+def test_daily_resolution_aggregates_canonical_minutes(tmp_path: Path) -> None:
+    _seed(
+        tmp_path,
+        _bar(day="2026-10-01", minute="09:00", close=10, volume=100),
+        _bar(
+            day="2026-10-01", minute="14:45", open_price=10, high=13,
+            low=8, close=12, volume=250,
+        ),
+        _bar(day="2026-10-02", minute="09:00", close=11, volume=120),
+    )
+    result = ChartDataStore(tmp_path).query(
+        symbol="HPG", date_from="2026-10-01", date_to="2026-10-02",
         resolution=1440,
     )
-
     assert len(result.bars) == 2
-    assert result.bars[0].open == 10
-    assert result.bars[0].high == 12
-    assert result.bars[0].low == 9
-    assert result.bars[0].close == 11.5
-    assert result.bars[0].volume == 300
-    assert result.bars[1].trading_date == "2026-09-16"
+    assert result.bars[0].minute == "09:00"
+    assert result.bars[0].close == 12
+    assert result.bars[0].volume == 350
+
+
+@pytest.mark.parametrize(
+    "quality",
+    [
+        "TRUSTED", "PARTIAL", "MISSING_PRICE", "MISSING_VOLUME",
+        "VOLUME_REGRESSION", "LATE_CORRECTION", "FUTURE_UNKNOWN",
+    ],
+)
+def test_canonical_quality_statuses_aggregate_without_error(
+    tmp_path: Path, quality: str
+) -> None:
+    _seed(tmp_path, _bar(day="2026-10-02", minute="10:17", quality=quality))
+    result = ChartDataStore(tmp_path).query(
+        symbol="HPG", date_from="2026-10-02", date_to="2026-10-02",
+        resolution=5,
+    )
+    assert result.bars[0].quality_status == quality

@@ -20,31 +20,8 @@ from .access_control import (
     extract_bearer_token,
 )
 from .chart_data import ChartDataStore, SYMBOL_RE
+from .canonical_market_reader import QUOTE_COLUMNS, CanonicalMarketReader
 from .canonical_state_reader import CanonicalStateReader
-
-
-QUOTE_COLUMNS = (
-    "symbol",
-    "trading_date",
-    "event_time",
-    "last_price",
-    "total_volume",
-    "ref_price",
-    "open",
-    "high",
-    "low",
-    "close",
-    "bid_price1",
-    "bid_vol1",
-    "ask_price1",
-    "ask_vol1",
-    "change",
-    "ratio_change",
-    "exchange",
-    "trading_session",
-    "trading_status",
-    "updated_at",
-)
 
 
 def _bool_arg(value: str | None) -> bool:
@@ -58,28 +35,14 @@ def _normalize_symbol(symbol: str) -> str:
     return normalized
 
 
-def _fetch_latest_quote(path: Path, symbol: str) -> dict | None:
-    """Read one current quote from the realtime SQLite DB in read-only mode."""
+def _fetch_latest_quote(
+    market_dir: Path, symbol: str, *, as_of_year: int | None = None
+) -> dict | None:
+    """Read the newest current/previous-year canonical quote."""
     symbol = _normalize_symbol(symbol)
-    if not path.exists():
-        return None
-
-    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5)
-    conn.row_factory = sqlite3.Row
-    try:
-        conn.execute("PRAGMA query_only=ON")
-        conn.execute("PRAGMA busy_timeout=5000")
-        row = conn.execute(
-            f"SELECT {', '.join(QUOTE_COLUMNS)} FROM latest_quotes WHERE symbol = ?",
-            (symbol,),
-        ).fetchone()
-        if row is None:
-            return None
-        payload = {column: row[column] for column in QUOTE_COLUMNS}
-        payload["source"] = "SSI_STREAM"
-        return payload
-    finally:
-        conn.close()
+    return CanonicalMarketReader(market_dir).latest_quote(
+        symbol, as_of_year=as_of_year
+    )
 
 
 def _response(handler: BaseHTTPRequestHandler, status: int, payload: dict) -> None:
@@ -169,7 +132,7 @@ class ChartAPIHandler(BaseHTTPRequestHandler):
         if parsed.path.startswith(quote_prefix):
             try:
                 symbol = _normalize_symbol(parsed.path[len(quote_prefix) :])
-                quote = _fetch_latest_quote(self.store.realtime_path, symbol)
+                quote = _fetch_latest_quote(self.store.market_dir, symbol)
             except ValueError as exc:
                 _response(
                     self,
@@ -445,16 +408,6 @@ class ChartHTTPServer(ThreadingHTTPServer):
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="CCC local chart-data HTTP API")
     parser.add_argument(
-        "--history",
-        type=Path,
-        default=Path(os.getenv("CHART_HISTORY_PATH", "/app/data/ssi_history_2026.db")),
-    )
-    parser.add_argument(
-        "--realtime",
-        type=Path,
-        default=Path(os.getenv("CHART_REALTIME_PATH", "/app/data/ssi_shadow.db")),
-    )
-    parser.add_argument(
         "--host",
         default=os.getenv("CHART_API_HOST", "127.0.0.1"),
     )
@@ -478,7 +431,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    store = ChartDataStore(args.history, args.realtime)
+    store = ChartDataStore(args.canonical_market_dir)
     server = ChartHTTPServer(
         (args.host, args.port),
         ChartAPIHandler,
@@ -489,7 +442,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     print(
         f"CCC Chart API listening on {args.host}:{args.port} "
-        f"history={args.history} realtime={args.realtime}",
+        f"canonical_market_dir={args.canonical_market_dir}",
         flush=True,
     )
     try:

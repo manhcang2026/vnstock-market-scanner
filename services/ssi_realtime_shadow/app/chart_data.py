@@ -1,16 +1,15 @@
 from __future__ import annotations
 
 import re
-import sqlite3
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Mapping
+
+from .canonical_market_reader import CanonicalMarketReader
 
 SYMBOL_RE = re.compile(r"^[A-Z0-9]{2,12}$")
 ALLOWED_RESOLUTIONS = {1, 5, 15, 30, 60, 1440}
-FINALIZED_STATUSES = {"PASS", "REST_PASS"}
-CANONICAL_HISTORY_SOURCES = {"SSI_REST", "SSI_STREAM"}
 
 
 @dataclass(frozen=True)
@@ -69,119 +68,7 @@ def _validate_date(value: str) -> str:
         raise ValueError("date must be YYYY-MM-DD") from exc
 
 
-def _connect_readonly(
-    path: Path,
-    *,
-    immutable: bool = False,
-) -> sqlite3.Connection | None:
-    if not path.exists():
-        return None
-    uri = f"file:{path}?mode=ro"
-    if immutable:
-        uri += "&immutable=1"
-    conn = sqlite3.connect(uri, uri=True, timeout=15)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA query_only=ON")
-    conn.execute("PRAGMA busy_timeout=15000")
-    return conn
-
-
-def _fetch_rows(
-    path: Path,
-    *,
-    symbol: str,
-    date_from: str,
-    date_to: str,
-    immutable: bool = False,
-) -> list[sqlite3.Row]:
-    conn = _connect_readonly(path, immutable=immutable)
-    if conn is None:
-        return []
-    try:
-        return conn.execute(
-            """
-            SELECT trading_date, minute, symbol, exchange,
-                   open, high, low, close, volume,
-                   quality_status, data_source, provider_time
-            FROM minute_bars
-            WHERE symbol = ?
-              AND trading_date BETWEEN ? AND ?
-            ORDER BY trading_date, minute
-            """,
-            (symbol, date_from, date_to),
-        ).fetchall()
-    finally:
-        conn.close()
-
-
-def _fetch_finalize_statuses(
-    path: Path,
-    *,
-    date_from: str,
-    date_to: str,
-    immutable: bool = False,
-) -> dict[str, str]:
-    """Return day-level finalize states when the metadata table exists."""
-    conn = _connect_readonly(path, immutable=immutable)
-    if conn is None:
-        return {}
-    try:
-        exists = conn.execute(
-            """
-            SELECT 1
-            FROM sqlite_master
-            WHERE type='table' AND name='daily_finalize_runs'
-            """
-        ).fetchone()
-        if not exists:
-            return {}
-        return {
-            str(row["trading_date"]): str(row["status"])
-            for row in conn.execute(
-                """
-                SELECT trading_date, status
-                FROM daily_finalize_runs
-                WHERE trading_date BETWEEN ? AND ?
-                """,
-                (date_from, date_to),
-            ).fetchall()
-        }
-    finally:
-        conn.close()
-
-
-def _canonical_history_dates(
-    history_rows: Iterable[sqlite3.Row],
-    finalize_statuses: dict[str, str],
-) -> set[str]:
-    """Choose dates where history wins at the whole-day level.
-
-    PASS/REST_PASS is authoritative even when one symbol has no historical bars.
-    Older SSI_REST/SSI_STREAM history created before daily-finalize metadata
-    existed is also canonical. Explicit BLOCKED/REST_BLOCKED metadata prevents
-    legacy-source inference for that day.
-    """
-    canonical = {
-        day
-        for day, status in finalize_statuses.items()
-        if status in FINALIZED_STATUSES
-    }
-
-    sources_by_day: dict[str, set[str]] = {}
-    for row in history_rows:
-        day = str(row["trading_date"])
-        sources_by_day.setdefault(day, set()).add(str(row["data_source"]))
-
-    for day, sources in sources_by_day.items():
-        if day in finalize_statuses:
-            continue
-        if sources & CANONICAL_HISTORY_SOURCES:
-            canonical.add(day)
-
-    return canonical
-
-
-def _row_to_bar(row: sqlite3.Row, *, invalid_override: bool = False) -> ChartBar:
+def _row_to_bar(row: Mapping[str, object], *, invalid_override: bool = False) -> ChartBar:
     quality = "INVALID_OHLC" if invalid_override else str(row["quality_status"])
     return ChartBar(
         trading_date=str(row["trading_date"]),
@@ -202,15 +89,18 @@ def _row_to_bar(row: sqlite3.Row, *, invalid_override: bool = False) -> ChartBar
 def _quality_rank(status: str) -> int:
     order = {
         "TRUSTED": 0,
-        "LEGACY_UNVERIFIED": 1,
-        "PARTIAL": 2,
-        "UNKNOWN_MARKET": 3,
-        "MISSING_TOTAL_VOLUME": 4,
-        "VOLUME_REGRESSION": 5,
-        "GAP": 6,
-        "INVALID_OHLC": 7,
+        "LATE_CORRECTION": 1,
+        "LEGACY_UNVERIFIED": 2,
+        "PARTIAL": 3,
+        "UNKNOWN_MARKET": 4,
+        "MISSING_TOTAL_VOLUME": 5,
+        "MISSING_VOLUME": 5,
+        "MISSING_PRICE": 6,
+        "VOLUME_REGRESSION": 7,
+        "GAP": 8,
+        "INVALID_OHLC": 9,
     }
-    return order.get(status, 2)
+    return order.get(status, 8)
 
 
 def _aggregate(bars: Iterable[ChartBar], resolution: int) -> tuple[ChartBar, ...]:
@@ -283,11 +173,11 @@ def _aggregate(bars: Iterable[ChartBar], resolution: int) -> tuple[ChartBar, ...
 
 
 class ChartDataStore:
-    """Read a seamless chart series from historical + current realtime SQLite."""
+    """Read public chart bars from canonical year-sharded market SQLite."""
 
-    def __init__(self, history_path: Path, realtime_path: Path) -> None:
-        self.history_path = Path(history_path)
-        self.realtime_path = Path(realtime_path)
+    def __init__(self, market_dir: Path) -> None:
+        self.market_dir = Path(market_dir)
+        self.reader = CanonicalMarketReader(self.market_dir, busy_timeout_ms=15000)
 
     def query(
         self,
@@ -308,57 +198,27 @@ class ChartDataStore:
                 f"resolution must be one of {sorted(ALLOWED_RESOLUTIONS)}"
             )
 
-        history_rows = _fetch_rows(
-            self.history_path,
-            symbol=symbol,
-            date_from=date_from,
-            date_to=date_to,
-            immutable=True,
-        )
-        realtime_rows = _fetch_rows(
-            self.realtime_path,
+        rows = self.reader.minute_rows(
             symbol=symbol,
             date_from=date_from,
             date_to=date_to,
         )
-        finalize_statuses = _fetch_finalize_statuses(
-            self.history_path,
-            date_from=date_from,
-            date_to=date_to,
-            immutable=True,
-        )
-        canonical_dates = _canonical_history_dates(
-            history_rows,
-            finalize_statuses,
-        )
-
-        # History wins for an entire canonical day. Realtime may only fill a date
-        # that has not been finalized/canonicalized yet (normally the current day).
-        merged: dict[tuple[str, str], sqlite3.Row] = {
-            (str(row["trading_date"]), str(row["minute"])): row
-            for row in history_rows
-        }
-        for row in realtime_rows:
-            day = str(row["trading_date"])
-            if day in canonical_dates:
-                continue
-            merged.setdefault(
-                (day, str(row["minute"])),
-                row,
-            )
 
         invalid_dropped = 0
         bars: list[ChartBar] = []
         source_counts: dict[str, int] = {}
-        for key in sorted(merged):
-            row = merged[key]
-            valid = is_valid_ohlc(
-                float(row["open"]),
-                float(row["high"]),
-                float(row["low"]),
-                float(row["close"]),
-                int(row["volume"]),
-            )
+        for row in rows:
+            required = tuple(row[field] for field in ("open", "high", "low", "close", "volume"))
+            if any(value is None for value in required):
+                invalid_dropped += 1
+                continue
+            try:
+                open_price, high, low, close = (float(value) for value in required[:4])
+                volume = int(required[4])
+            except (TypeError, ValueError, OverflowError):
+                invalid_dropped += 1
+                continue
+            valid = is_valid_ohlc(open_price, high, low, close, volume)
             if not valid and not include_invalid:
                 invalid_dropped += 1
                 continue

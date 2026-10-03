@@ -30,6 +30,8 @@ services:
       - 0.0.0.0
       - --port
       - "8787"
+      - --canonical-market-dir
+      - /app/data
     ports:
       - "10.0.0.226:8787:8787"
 
@@ -52,5 +54,7 @@ services:
       - "8790"
       - --interval
       - "3"
+      - --canonical-market-dir
+      - /app/data
     ports:
       - "10.0.0.226:8790:8790"

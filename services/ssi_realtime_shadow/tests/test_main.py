@@ -143,6 +143,21 @@ def test_collector_compose_is_canonical_and_has_no_legacy_paths() -> None:
     assert "CANONICAL_SIGNAL_ENABLED=true" in example
 
 
+def test_public_market_readers_use_canonical_shards_without_hot_fallback() -> None:
+    compose = (SERVICE_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    chart = compose.split("  chart-api:", 1)[1].split("  live-ws:", 1)[0]
+    live = compose.split("  live-ws:", 1)[1]
+    collector = compose.split("  chart-api:", 1)[0]
+
+    for service in (chart, live):
+        assert "--canonical-market-dir" in service
+        assert "/app/data" in service
+        assert "./data:/app/data:ro" in service
+        assert "ssi_shadow.db" not in service
+        assert "--realtime" not in service
+    assert "DATABASE_PATH: /app/data/ssi_shadow.db" in collector
+
+
 @pytest.mark.parametrize("name", ["VOLUME_ENGINE_ENABLED", "LIVE_STATE_ENABLED"])
 def test_invalid_retired_flag_is_rejected(name: str) -> None:
     with pytest.raises(RuntimeError, match=f"Invalid boolean environment variable {name}"):

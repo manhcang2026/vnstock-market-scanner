@@ -104,8 +104,10 @@ Dòng phút đầu tiên của mỗi symbol sau khi process khởi động đư�
 
 Active production paths:
 
-- `ssi_shadow.db`: hot SSI quote/minute transport;
+- `ssi_shadow.db`: collector-owned hot/raw operational transport;
 - `ccc_market_YYYY.db`: canonical market history and current market facts;
+- `/v1/chart`, `/v1/quote`, and live WebSocket chart snapshots: read-only
+  consumers of canonical `ccc_market_YYYY.db` shards;
 - `ccc_engine.db`: canonical baselines, current state, and signals;
 - `CanonicalStateReader` and state serializers: canonical frontend API contracts;
 - `app.volume_event.VolumeEvent`: normalized collector event contract;
@@ -144,13 +146,14 @@ retained to diagnose stale settings: true values fail closed with
 are accepted. This guard cannot create a V2 runtime. Production startup requires
 both `CANONICAL_ENGINE_ENABLED=true` and `CANONICAL_SIGNAL_ENABLED=true`.
 
-`ssi_history_2026.db` is temporary chart-only storage until
-`CHART-API-CANONICAL-01`; `/v1/chart` uses `CHART_HISTORY_PATH` or its existing
-historical DB default. As read-only compatibility behavior, `chart_data.py` may
-read legacy `daily_finalize_runs` rows from this DB to choose day-level chart
-authority. Do not delete that table or its data before chart cutover. `/v1/quote`
-and live WebSocket still use hot transport. These routes and transports are
-unchanged by this cleanup.
+CHART-API-CANONICAL-01B moves `/v1/chart`, `/v1/quote`, and live WebSocket chart
+snapshots to read-only canonical year shards. Chart ranges open only the required
+`ccc_market_YYYY.db` files; quote continuity checks only the current and previous
+year. `CHART_HISTORY_PATH`, `CHART_REALTIME_PATH`, legacy `daily_finalize_runs`
+chart authority, and request-time reads from `ssi_shadow.db` are removed.
+`ssi_history_2026.db` remains a physical cleanup candidate after deployment
+verification and must not be deleted by the code cutover. `ssi_shadow.db` remains
+active collector operational storage through `DATABASE_PATH`.
 
 The collector and canonical maintenance do not use `MARKET_V2_DATABASE_PATH`,
 `VOLUME_BASELINE_PATH`, or `SSI_HISTORY_PATH`. `ccc_market_v2.db` and

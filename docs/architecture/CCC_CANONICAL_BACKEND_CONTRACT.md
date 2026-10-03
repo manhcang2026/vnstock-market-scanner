@@ -115,8 +115,10 @@ Current uses:
 
 - collector write path;
 - hot latest quotes/minute evidence;
-- live WebSocket source if/when `live-ws` is enabled;
-- may remain useful as transport/hot evidence even after legacy cleanup.
+- operational transport/hot evidence after public read cutover.
+
+It is no longer a request-time source for `/v1/chart`, `/v1/quote`, or live
+WebSocket chart snapshots after CHART-API-CANONICAL-01B.
 
 Do **not** treat it as the long-term canonical historical database.
 
@@ -128,7 +130,9 @@ Current important content:
 
 - `daily_bars`: 166,736 rows, 2025-01-02 through 2025-12-31.
 
-Current minute history for 2025 is not the frontend intraday source in this checkpoint.
+Canonical minute history is the frontend intraday source after
+CHART-API-CANONICAL-01B; a missing year shard contributes missing data and never
+falls back to a legacy database.
 
 Used by canonical engine for long technical history such as MA10/MA200.
 
@@ -176,16 +180,15 @@ Schema version at production signal enablement: **3**.
 - current state: 800 symbols;
 - rebuild failures: 0.
 
-### 4.2 TEMPORARY — chart transport
+### 4.2 RETAIN PHYSICALLY PENDING POST-CUTOVER CLEANUP
 
-`ssi_history_2026.db` remains required only by `/v1/chart` until
-CHART-API-CANONICAL-01. The route uses `CHART_HISTORY_PATH` or its existing
-historical DB default. `chart_data.py` may read legacy `daily_finalize_runs`
-metadata from this DB to decide day-level chart authority. That access is
-read-only compatibility behavior: keep the physical DB and do not delete the
-table/data before chart cutover. Canonical history does not yet replace this API
-dependency. `/v1/quote` and live WebSocket remain on `ssi_shadow.db` hot/raw
-operational transport.
+CHART-API-CANONICAL-01B removes request-time use of `ssi_history_2026.db`,
+`CHART_HISTORY_PATH`, `CHART_REALTIME_PATH`, and legacy `daily_finalize_runs`
+chart authority. `/v1/chart`, `/v1/quote`, and live WebSocket chart snapshots
+read canonical `ccc_market_YYYY.db` shards only. Keep the physical history DB
+through deployment verification and observation; deletion is a separate cleanup
+operation. `ssi_shadow.db` remains active collector operational storage and is
+not retired by the public read cutover.
 
 ### 4.3 RETIRED — do not use
 
@@ -696,11 +699,12 @@ require `VOLUME_BASELINE_PATH`, `MARKET_V2_DATABASE_PATH`, or
 `SSI_HISTORY_PATH`. LEGACY-CODE-CLEANUP-01A removes the executable V2 runtime,
 harness, stock-state builder, readiness checker, daily finalizer,
 volume-baseline CLI and hot-history bootstrap CLI. Shared types/helpers and
-compatibility tests remain; physical databases are untouched. `/v1/chart` still
-temporarily uses `ssi_history_2026.db`. Chart, quote, and live WebSocket transport
-cutover remain separate work. The obsolete flags should be removed from deployed
-environments; false/absent values remain accepted and malformed values rejected
-by the small diagnostic guard. It contains no executable V2 path.
+compatibility tests remain; physical databases are untouched. Public chart,
+quote, and live WebSocket reads move to canonical year shards in
+CHART-API-CANONICAL-01B, while `ssi_shadow.db` remains collector operational
+storage. The obsolete flags should be removed from deployed environments;
+false/absent values remain accepted and malformed values rejected by the small
+diagnostic guard. It contains no executable V2 path.
 
 General historical recovery after this cleanup uses `app.clean_rest_bootstrap`.
 It accepts bounded minute or daily ranges and writes directly into the canonical
