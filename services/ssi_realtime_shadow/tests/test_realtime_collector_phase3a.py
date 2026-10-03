@@ -11,6 +11,7 @@ from app.canonical_market_store import (
     MARKET_SCHEMA_VERSION,
     SCHEMA_SQL,
     CanonicalMarketStore,
+    MinuteBar,
     RealtimeMarketEvent,
 )
 from app.collector import QuoteCollector
@@ -92,6 +93,153 @@ def test_partial_and_full_events_persist_independent_fields(
     assert collector.stats.partial_events_written == int(
         last_price is None or total_volume is None
     )
+
+
+def test_completed_rest_session_locks_all_realtime_canonical_tables(
+    tmp_path: Path,
+) -> None:
+    store = CanonicalMarketStore(tmp_path)
+    prior = RealtimeMarketEvent(
+        symbol="HPG",
+        trading_date=DAY,
+        event_at=_moment(14, 30),
+        minute="14:30",
+        exchange="HOSE",
+        price=25,
+        total_volume=100,
+        provider_session="ATC",
+    )
+    store.write_realtime_event(prior, observed_at=_moment(14, 30))
+    store.replace_rest_minute_sessions(
+        [
+            MinuteBar(
+                "HPG", DAY, "14:29", exchange="HOSE", close=24,
+                volume=90, provider_total_volume=90,
+            )
+        ]
+    )
+    connection = store.connection(2026)
+    before = {
+        table: [tuple(row) for row in connection.execute(f"SELECT * FROM {table}")]
+        for table in ("minute_bars", "latest_quotes", "auction_sessions")
+    }
+
+    result = store.write_realtime_event(
+        RealtimeMarketEvent(
+            symbol="HPG",
+            trading_date=DAY,
+            event_at=_moment(15, 0),
+            minute="15:00",
+            exchange="HOSE",
+            price=30,
+            total_volume=200,
+            provider_session="ATC",
+        ),
+        observed_at=_moment(15, 0),
+    )
+
+    after = {
+        table: [tuple(row) for row in connection.execute(f"SELECT * FROM {table}")]
+        for table in ("minute_bars", "latest_quotes", "auction_sessions")
+    }
+    assert after == before
+    assert result.rest_session_locked is True
+    assert result.latest_quote_updated is False
+    assert result.late_event is False
+    assert result.volume_regression is False
+    assert result.volume_delta == 0
+    assert result.effective_total_volume is None
+    assert result.minute_was_finalized is False
+
+
+@pytest.mark.parametrize(
+    "proof",
+    [
+        None,
+        ("minute", 1, "NO_DATA", 0),
+        ("minute", 1, "FAILED", 0),
+        ("daily", 1, "COMPLETED", 1),
+        ("minute", 5, "COMPLETED", 1),
+        ("minute", 1, "COMPLETED", 0),
+    ],
+)
+def test_only_positive_completed_minute_resolution_one_proof_locks_stream(
+    tmp_path: Path,
+    proof: tuple[str, int, str, int] | None,
+) -> None:
+    store = CanonicalMarketStore(tmp_path)
+    connection = store.connection(2026)
+    if proof is not None:
+        mode, resolution, status, rows_received = proof
+        connection.execute(
+            """INSERT INTO rest_session_status(
+                   mode,symbol,trading_date,resolution,status,rows_received,updated_at
+               ) VALUES(?,?,?,?,?,?,?)""",
+            (mode, "HPG", DAY, resolution, status, rows_received, "test"),
+        )
+        connection.commit()
+
+    result = store.write_realtime_event(
+        RealtimeMarketEvent(
+            symbol="HPG", trading_date=DAY, event_at=_moment(9, 11),
+            minute="09:11", exchange="HOSE", price=25, total_volume=100,
+            provider_session="LO",
+        )
+    )
+
+    assert result.rest_session_locked is False
+    assert connection.execute("SELECT COUNT(*) FROM minute_bars").fetchone()[0] == 1
+
+
+def test_collector_rejects_post_rest_replay_before_all_projections(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("app.collector._now_vn", lambda: _moment(15, 0))
+    store = CanonicalMarketStore(tmp_path)
+    store.replace_rest_minute_sessions(
+        [
+            MinuteBar(
+                "HPG", DAY, "14:44", exchange="HOSE", close=25,
+                volume=100, provider_total_volume=100,
+            )
+        ]
+    )
+    hooks: list[object] = []
+    volume_events: list[object] = []
+    collector = QuoteCollector(
+        {"HPG"},
+        None,
+        started_at=_moment(8, 30),
+        canonical_store=store,
+        volume_event_handler=volume_events.append,
+        post_commit_hook=lambda *args: hooks.append(args),
+    )
+
+    collector.on_message(_event(Time="14:45:00", LastPrice=26, TotalVol=110))
+    collector.on_message(
+        _event(
+            Time="15:00:00", TradingSession="ATC", LastPrice=27, TotalVol=120
+        )
+    )
+
+    connection = store.connection(2026)
+    assert [
+        tuple(row)
+        for row in connection.execute(
+            "SELECT minute,source,volume FROM minute_bars ORDER BY minute"
+        )
+    ] == [("14:44", "SSI_REST", 100)]
+    assert connection.execute("SELECT COUNT(*) FROM latest_quotes").fetchone()[0] == 0
+    assert connection.execute("SELECT COUNT(*) FROM auction_sessions").fetchone()[0] == 0
+    assert collector.stats.rejected_rest_completed_events == 2
+    assert collector.stats.canonical_events_written == 0
+    assert collector.stats.accepted_events == 0
+    assert collector.stats.canonical_write_errors == 0
+    assert collector.stats.post_commit_projection_errors == 0
+    assert collector.stats.volume_shadow_events == 0
+    assert hooks == [] and volume_events == []
+    assert collector.snapshot_stats()["rejected_rest_completed_events"] == 2
 
 
 def test_latest_quote_day_rollover_clears_previous_day_market_state(
@@ -485,7 +633,7 @@ def test_atc_pre_auction_price_uses_latest_valid_continuous_price(
     assert tuple(row) == (25, None)
 
 
-def test_ato_uses_zero_start_only_when_day_start_is_proven(
+def test_ato_during_auction_uses_proven_zero_start_but_is_not_finalized(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     clock = [_moment(9, 0, 10)]
@@ -498,10 +646,10 @@ def test_ato_uses_zero_start_only_when_day_start_is_proven(
     )
 
     row = store.connection(2026).execute(
-        """SELECT start_total_volume,end_total_volume,auction_volume
+        """SELECT start_total_volume,end_total_volume,auction_volume,finalized
            FROM auction_sessions WHERE auction_type='ATO'"""
     ).fetchone()
-    assert tuple(row) == (0, 250, 250)
+    assert tuple(row) == (0, 250, 250, 0)
 
 
 def test_mid_session_ato_does_not_fabricate_zero_start(
@@ -526,6 +674,282 @@ def test_mid_session_ato_does_not_fabricate_zero_start(
            FROM auction_sessions WHERE auction_type='ATO'"""
     ).fetchone()
     assert tuple(row) == (None, 250, None)
+
+
+def test_ato_total_volume_regression_cannot_lower_high_watermark(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = [_moment(9, 0, 10)]
+    collector, store = _collector(tmp_path, monkeypatch, now=clock)
+    collector.on_message(
+        _event(Time="09:00:10", TradingSession="ATO", TotalVol=250)
+    )
+    clock[0] = _moment(9, 0, 20)
+    collector.on_message(
+        _event(Time="09:00:20", TradingSession="ATO", TotalVol=200)
+    )
+
+    row = store.connection(2026).execute(
+        """SELECT start_total_volume,end_total_volume,auction_volume
+           FROM auction_sessions WHERE auction_type='ATO'"""
+    ).fetchone()
+    assert tuple(row) == (0, 250, 250)
+
+
+def test_ato_retains_chronologically_latest_valid_price(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = [_moment(9, 10, 20)]
+    collector, store = _collector(tmp_path, monkeypatch, now=clock)
+    collector.on_message(
+        _event(
+            Time="09:10:20", TradingSession="ATO", LastPrice=100, TotalVol=250
+        )
+    )
+    clock[0] = _moment(9, 10, 30)
+    collector.on_message(
+        _event(
+            Time="09:10:10", TradingSession="ATO", LastPrice=99, TotalVol=200
+        )
+    )
+
+    row = store.connection(2026).execute(
+        """SELECT auction_price,end_total_volume,last_event_at
+           FROM auction_sessions WHERE auction_type='ATO'"""
+    ).fetchone()
+    assert tuple(row) == (100, 250, _moment(9, 10, 20).isoformat())
+
+
+def test_hose_ato_finalizes_on_first_exit_event_without_minute_contamination(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = [_moment(9, 0, 10)]
+    collector, store = _collector(tmp_path, monkeypatch, now=clock)
+    collector.on_message(
+        _event(Time="09:00:10", TradingSession="ATO", LastPrice=None, TotalVol=0)
+    )
+    clock[0] = _moment(9, 10, 10)
+    collector.on_message(
+        _event(Time="09:10:10", TradingSession="ATO", LastPrice=100, TotalVol=500)
+    )
+    clock[0] = _moment(9, 15, 0)
+    collector.on_message(
+        _event(Time="09:15:00", TradingSession="LO", LastPrice=999, TotalVol=700)
+    )
+    boundary = store.connection(2026).execute(
+        """SELECT start_total_volume,end_total_volume,auction_volume,
+                  auction_price,finalized,event_count,first_event_at,last_event_at
+           FROM auction_sessions WHERE symbol='HPG' AND auction_type='ATO'"""
+    ).fetchone()
+    assert tuple(boundary) == (
+        0,
+        500,
+        500,
+        100,
+        1,
+        2,
+        _moment(9, 0, 10).isoformat(),
+        _moment(9, 10, 10).isoformat(),
+    )
+
+    clock[0] = _moment(9, 15, 20)
+    collector.on_message(
+        _event(Time="09:15:20", TradingSession="LO", LastPrice=101, TotalVol=700)
+    )
+    clock[0] = _moment(9, 15, 50)
+    collector.on_message(
+        _event(Time="09:15:50", TradingSession="LO", LastPrice=102, TotalVol=900)
+    )
+
+    unchanged = store.connection(2026).execute(
+        """SELECT end_total_volume,auction_volume,auction_price,finalized,event_count
+           FROM auction_sessions WHERE symbol='HPG' AND auction_type='ATO'"""
+    ).fetchone()
+    minute = store.connection(2026).execute(
+        """SELECT close,provider_total_volume FROM minute_bars
+           WHERE symbol='HPG' AND minute='09:15'"""
+    ).fetchone()
+    assert tuple(unchanged) == (500, 500, 100, 1, 2)
+    assert tuple(minute) == (102, 900)
+
+
+def test_ato_boundary_missing_price_finalizes_without_later_price_substitution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = [_moment(9, 0, 10)]
+    collector, store = _collector(tmp_path, monkeypatch, now=clock)
+    collector.on_message(
+        _event(Time="09:00:10", TradingSession="ATO", LastPrice=None, TotalVol=0)
+    )
+    clock[0] = _moment(9, 14, 59)
+    collector.on_message(
+        _event(Time="09:14:59", TradingSession="ATO", LastPrice=None, TotalVol=500)
+    )
+    clock[0] = _moment(9, 15, 0)
+    collector.on_message(
+        _event(Time="09:15:00", TradingSession="LO", LastPrice=999, TotalVol=700)
+    )
+    clock[0] = _moment(9, 15, 20)
+    collector.on_message(
+        _event(Time="09:15:20", TradingSession="LO", LastPrice=101, TotalVol=700)
+    )
+
+    row = store.connection(2026).execute(
+        """SELECT auction_price,end_total_volume,auction_volume,finalized
+           FROM auction_sessions WHERE symbol='HPG' AND auction_type='ATO'"""
+    ).fetchone()
+    assert tuple(row) == (None, 500, 500, 1)
+
+
+def test_ato_unknown_start_stays_unknown_at_boundary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = [_moment(9, 10, 10)]
+    collector, store = _collector(
+        tmp_path, monkeypatch, now=clock, started_at=_moment(9, 5)
+    )
+    collector.on_message(
+        _event(Time="09:10:10", TradingSession="ATO", LastPrice=90, TotalVol=250)
+    )
+    clock[0] = _moment(9, 15, 0)
+    collector.on_message(
+        _event(Time="09:15:00", TradingSession="LO", LastPrice=100, TotalVol=500)
+    )
+
+    row = store.connection(2026).execute(
+        """SELECT start_total_volume,end_total_volume,auction_volume,
+                  auction_price,finalized
+           FROM auction_sessions WHERE symbol='HPG' AND auction_type='ATO'"""
+    ).fetchone()
+    assert tuple(row) == (None, 250, None, 90, 1)
+
+
+def test_later_transition_finalizes_only_stored_ato_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = [_moment(9, 0, 10)]
+    collector, store = _collector(tmp_path, monkeypatch, now=clock)
+    collector.on_message(
+        _event(Time="09:00:10", TradingSession="ATO", LastPrice=None, TotalVol=0)
+    )
+    clock[0] = _moment(9, 14, 59)
+    collector.on_message(
+        _event(Time="09:14:59", TradingSession="ATO", LastPrice=None, TotalVol=0)
+    )
+    clock[0] = _moment(9, 15, 20)
+    collector.on_message(
+        _event(Time="09:15:20", TradingSession="LO", LastPrice=101, TotalVol=700)
+    )
+    clock[0] = _moment(9, 16, 0)
+    collector.on_message(
+        _event(Time="09:16:00", TradingSession="LO", LastPrice=102, TotalVol=900)
+    )
+
+    row = store.connection(2026).execute(
+        """SELECT end_total_volume,auction_volume,auction_price,finalized,event_count
+           FROM auction_sessions WHERE symbol='HPG' AND auction_type='ATO'"""
+    ).fetchone()
+    assert tuple(row) == (0, 0, None, 1, 2)
+
+
+def test_late_ato_event_cannot_modify_any_finalized_summary_field(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = [_moment(9, 0, 10)]
+    collector, store = _collector(tmp_path, monkeypatch, now=clock)
+    collector.on_message(
+        _event(Time="09:00:10", TradingSession="ATO", LastPrice=None, TotalVol=0)
+    )
+    clock[0] = _moment(9, 10, 10)
+    collector.on_message(
+        _event(Time="09:10:10", TradingSession="ATO", LastPrice=100, TotalVol=500)
+    )
+    clock[0] = _moment(9, 15, 0)
+    collector.on_message(
+        _event(Time="09:15:00", TradingSession="LO", LastPrice=999, TotalVol=700)
+    )
+    connection = store.connection(2026)
+    before = dict(
+        connection.execute(
+            """SELECT * FROM auction_sessions
+               WHERE symbol='HPG' AND auction_type='ATO'"""
+        ).fetchone()
+    )
+    clock[0] = _moment(9, 15, 10)
+    collector.on_message(
+        _event(Time="09:10:30", TradingSession="ATO", LastPrice=99, TotalVol=300)
+    )
+
+    after = dict(
+        connection.execute(
+            """SELECT * FROM auction_sessions
+               WHERE symbol='HPG' AND auction_type='ATO'"""
+        ).fetchone()
+    )
+    historical = connection.execute(
+        """SELECT close,provider_total_volume FROM minute_bars
+           WHERE symbol='HPG' AND minute='09:10'"""
+    ).fetchone()
+    assert before["event_count"] == 2
+    assert after == before
+    assert tuple(historical) == (99, 500)
+
+
+@pytest.mark.parametrize("exchange", ["HNX", "UPCOM"])
+def test_non_hose_ato_code_is_raw_evidence_without_auction_bucket(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, exchange: str
+) -> None:
+    collector, store = _collector(tmp_path, monkeypatch)
+    collector.on_message(
+        _event(Market=exchange, TradingSession="ATO", LastPrice=25, TotalVol=100)
+    )
+
+    connection = store.connection(2026)
+    minute = connection.execute(
+        "SELECT provider_session FROM minute_bars WHERE symbol='HPG'"
+    ).fetchone()[0]
+    latest = connection.execute(
+        "SELECT provider_session FROM latest_quotes WHERE symbol='HPG'"
+    ).fetchone()[0]
+    assert minute == latest == "ATO"
+    assert connection.execute(
+        "SELECT COUNT(*) FROM auction_sessions WHERE symbol='HPG'"
+    ).fetchone()[0] == 0
+
+
+def test_out_of_clock_hose_ato_is_raw_evidence_without_auction_bucket(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    exchange = "HOSE"
+    provider_session = "ATO"
+    event_time = "10:00:00"
+    hour, minute, second = (int(part) for part in event_time.split(":"))
+    clock = [_moment(hour, minute, second)]
+    collector, store = _collector(tmp_path, monkeypatch, now=clock)
+    collector.on_message(
+        _event(
+            Market=exchange,
+            Time=event_time,
+            TradingSession=provider_session,
+            LastPrice=25,
+            TotalVol=100,
+        )
+    )
+
+    connection = store.connection(2026)
+    minute_row = connection.execute(
+        """SELECT provider_session,close,provider_total_volume
+           FROM minute_bars WHERE symbol='HPG'"""
+    ).fetchone()
+    latest = connection.execute(
+        "SELECT provider_session,last_price FROM latest_quotes WHERE symbol='HPG'"
+    ).fetchone()
+    assert tuple(minute_row) == (provider_session, 25, 100)
+    assert tuple(latest) == (provider_session, 25)
+    assert connection.execute(
+        "SELECT COUNT(*) FROM auction_sessions WHERE symbol='HPG'"
+    ).fetchone()[0] == 0
 
 
 def test_reconnect_backoff_remains_bounded_after_repeated_failures() -> None:

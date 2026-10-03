@@ -40,14 +40,6 @@ def _service_path(raw: str) -> Path:
     return path if path.is_absolute() else ROOT / path
 
 
-def _symbol_list(raw: str) -> tuple[str, ...]:
-    return tuple(
-        dict.fromkeys(
-            symbol.strip().upper() for symbol in raw.split(",") if symbol.strip()
-        )
-    )
-
-
 @dataclass(frozen=True)
 class Settings:
     ssi_consumer_id: str
@@ -66,29 +58,15 @@ class Settings:
     commit_every_events: int
     commit_every_seconds: int
     log_level: str
-    volume_engine_enabled: bool
-    live_state_enabled: bool
     canonical_engine_enabled: bool
+    canonical_signal_enabled: bool
     canonical_engine_path: Path
-    volume_baseline_path: Path
-    market_v2_database_path: Path
-    ssi_history_path: Path
-    volume_shadow_symbols: tuple[str, ...]
 
     @classmethod
     def from_env(cls) -> "Settings":
         universe_raw = _env("UNIVERSE_FILE", "")
         universe_file = Path(universe_raw).expanduser() if universe_raw else None
         db_raw = _env("DATABASE_PATH", required=True)
-        baseline_raw = _env("VOLUME_BASELINE_PATH", required=True)
-        market_raw = _env("MARKET_V2_DATABASE_PATH", required=True)
-        history_raw = _env("SSI_HISTORY_PATH", required=True)
-        volume_engine_enabled = _env_bool("VOLUME_ENGINE_ENABLED", False)
-        live_state_enabled = _env_bool("LIVE_STATE_ENABLED", False)
-        if live_state_enabled and not volume_engine_enabled:
-            raise RuntimeError(
-                "LIVE_STATE_ENABLED=true requires VOLUME_ENGINE_ENABLED=true"
-            )
         return cls(
             ssi_consumer_id=_env("SSI_CONSUMER_ID", required=True),
             ssi_consumer_secret=_env("SSI_CONSUMER_SECRET", required=True),
@@ -108,24 +86,13 @@ class Settings:
             commit_every_events=_env_int("COMMIT_EVERY_EVENTS", 500),
             commit_every_seconds=_env_int("COMMIT_EVERY_SECONDS", 1),
             log_level=_env("LOG_LEVEL", "INFO").upper(),
-            volume_engine_enabled=volume_engine_enabled,
-            live_state_enabled=live_state_enabled,
             canonical_engine_enabled=_env_bool(
                 "CANONICAL_ENGINE_ENABLED", False
             ),
+            canonical_signal_enabled=_env_bool(
+                "CANONICAL_SIGNAL_ENABLED", False
+            ),
             canonical_engine_path=_service_path(
                 _env("CANONICAL_ENGINE_PATH", "data/ccc_engine.db")
-            ),
-            volume_baseline_path=_service_path(
-                baseline_raw
-            ),
-            market_v2_database_path=_service_path(
-                market_raw
-            ),
-            ssi_history_path=_service_path(
-                history_raw
-            ),
-            volume_shadow_symbols=_symbol_list(
-                _env("VOLUME_SHADOW_SYMBOLS", "HPG,SHS,VGI")
             ),
         )

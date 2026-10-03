@@ -122,32 +122,38 @@ a fabricated canonical minute bar.
 
 ---
 
-## 6. ATO / ATC are realtime-priority data
+## 6. ACC-PORT-01 ATO hardening
 
-Explicit auction evidence is more time-sensitive than ordinary continuous-session minute OHLCV.
+Provider `TradingSession` is raw SSI evidence and never overrides actual
+exchange semantics. Preserve identifiable events in canonical minute/latest
+state even when the provider session code is not an auction for that exchange.
 
-When SSI sends `TradingSession=ATO` or `TradingSession=ATC`, persist auction evidence immediately at event level.
+### ATO
 
-Preserve as available:
+- ATO auction semantics exist only on HOSE and only during the official
+  `OPEN_AUCTION` clock session. HNX, UPCOM, and out-of-session provider `ATO`
+  codes must not create or update an ATO bucket.
+- HOSE ATO remains realtime-priority evidence. Price and TotalVol are nullable;
+  never require a positive price and never invent a zero start volume.
+- While inside `OPEN_AUCTION`, retain the TotalVol high-watermark and the
+  chronologically latest valid ATO price. Auction volume is provisionally
+  `end_total - start_total` only when both values are known and ordered.
+- The first later event whose non-empty provider session is not `ATO` finalizes
+  the bucket once the official open-auction clock has ended. It is transition
+  evidence only: its price and TotalVol never become ATO data.
+- Missing a message exactly at 09:15 must not leave the bucket hanging. Finalize
+  later from the ATO evidence already stored, leaving unavailable fields NULL
+  and quality PARTIAL rather than substituting a later continuous trade.
+- The boundary event is not an ATO event and does not increment ATO
+  `event_count` or change its first/last ATO-event timestamps.
+- Never infer ATO from the finished 09:15 minute bar. Once finalized, the
+  complete ATO summary is immutable. Later continuous events and late
+  historical ATO events may still follow ordinary canonical persistence rules,
+  but they must not change any `auction_sessions` field for finalized ATO.
 
-- symbol;
-- exchange;
-- trading date;
-- exact provider event time;
-- provider session ATO/ATC;
-- price, nullable;
-- cumulative TotalVol, nullable;
-- bid/ask fields if present;
-- TradingStatus if present;
-- source and quality metadata.
+### ATC
 
-Do **not** require `LastPrice > 0` before recording an auction event.
-
-Afterward, build the ATO/ATC summary/bucket from persisted evidence.
-
-If evidence is incomplete, store an incomplete auction result. Do not make the auction disappear.
-
-Why: SSI REST may recover minute OHLCV later, but it cannot be assumed to reproduce the exact realtime provider-session/event sequence for ATO/ATC.
+ATC behavior is outside the scope of ACC-PORT-01 and remains unchanged.
 
 ---
 

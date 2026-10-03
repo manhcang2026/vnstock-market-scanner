@@ -1,15 +1,16 @@
-# SSI Realtime Shadow Collector
+# SSI Realtime Canonical Collector
 
-Service này thu dữ liệu SSI FCData `X:ALL` song song với pipeline hiện tại, là nền tảng ingest cho CCC V2, và **không ghi đè production `stock_snapshot`** trong giai đoạn shadow.
-
-Đặc tả engine V2: [`../../docs/product/CCC_V2_PRODUCT_ENGINE_SPEC_v2.0.md`](../../docs/product/CCC_V2_PRODUCT_ENGINE_SPEC_v2.0.md).
+Thư mục có tên lịch sử `ssi_realtime_shadow`, nhưng đây là collector production
+canonical của CCC V3. Runtime lưu hot transport vào `ssi_shadow.db`, canonical
+market truth vào `ccc_market_YYYY.db`, và derived intelligence vào
+`ccc_engine.db`.
 
 ## Nguyên tắc
 
 - SSI FCData là nguồn realtime mới.
 - Chỉ giữ các mã thuộc scanner universe CCC (~800 mã).
 - Lưu dữ liệu 1 phút vào SQLite local để nhẹ, portable và không làm đầy Supabase Free.
-- Pipeline cũ vẫn chạy bình thường trong giai đoạn shadow/cutover.
+- Canonical market persistence luôn xảy ra trước derived calculation.
 - Không commit `consumerID`, `consumerSecret`, Supabase service-role key hoặc SSI SDK archive vào Git.
 
 ## Chạy trực tiếp trên Windows khi chờ Oracle
@@ -81,40 +82,26 @@ Volume 1 phút được tính từ chênh lệch `TotalVol` giữa các event. K
 
 Dòng phút đầu tiên của mỗi symbol sau khi process khởi động được đánh dấu `is_partial=1`; dữ liệu này không nên dùng làm baseline tin cậy nếu collector khởi động giữa phút.
 
-## Shadow mode
+## Production runtime ownership
 
-Phiên bản này **chưa ghi production Supabase**. Mục tiêu đầu tiên là kiểm chứng:
+Active production paths:
 
-- coverage universe;
-- continuity theo phút;
-- reconnect;
-- giá/volume so với pipeline cũ;
-- dữ liệu ingest đủ tin cậy để làm đầu vào cho các engine CCC V2 tiếp theo.
+- `ssi_shadow.db`: hot SSI quote/minute transport;
+- `ccc_market_YYYY.db`: canonical market history and current market facts;
+- `ccc_engine.db`: canonical baselines, current state, and signals;
+- `ccc-canonical-eod` and `ccc-canonical-premarket`: canonical maintenance.
 
-Sau khi đạt tiêu chí cutover, service mới mở rộng API/WebSocket và writer sang bảng production/shadow phù hợp.
-## CCC V2 live current-state runtime
+Retired production paths:
 
-The opt-in live path is enabled with both `VOLUME_ENGINE_ENABLED=true` and
-`LIVE_STATE_ENABLED=true`. It reuses the canonical collector event after hot
-minute, quote, auction, and volume state have been updated, then materializes a
-single row per symbol in `ccc_market_v2.db.stock_state_current`. The default is
-disabled so the existing raw collector remains unchanged until controlled
-deployment.
+- CCC V2 volume shadow and `LiveStateRuntime`;
+- the `ccc_market_v2.db.stock_state_current` writer;
+- the `ccc_v2_baseline.db` runtime dependency;
+- `ccc-ssi-daily-finalize`, whose retained wrapper is a safe no-op.
 
-Live trust and replay/EOD proof are intentionally different. During an active
-session, a matching immutable `SSI_DAILY_VOLUME_RECONCILED_V1` exact-10
-baseline plus a trusted current `VolumeSnapshot` is sufficient; the current
-day does not yet need a final `DailyOhlc` row. The offline
-`stock_state_build.py` replay path continues to require current-day DailyOhlc
-volume reconciliation. The live runtime never writes `daily_bars` or
-`signal_events`.
+The legacy modules remain in the repository only for offline/history tests until
+`LEGACY-CLEANUP-01`. Setting `VOLUME_ENGINE_ENABLED=true` or
+`LIVE_STATE_ENABLED=true` now makes collector startup fail closed with
+`LEGACY_V2_RUNTIME_RETIRED`.
 
-Local readiness is network-free:
-
-```text
-python -m app.live_ready_check --trading-date 2026-09-21
-```
-
-The `LiveRuntimeHarness` in `app.live_runtime_harness` drives fixture messages
-through the real collector normalization, volume engine, live projector,
-current-state table, and frontend serializer without a provider connection.
+`ssi_history_2026.db` remains temporarily used only by `/v1/chart`. The chart,
+quote, and live WebSocket transports are intentionally unchanged in this case.

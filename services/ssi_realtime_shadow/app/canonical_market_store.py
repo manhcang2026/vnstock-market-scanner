@@ -9,6 +9,8 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable, Mapping
 
+from .market_session import SessionType, classify_market_session
+
 
 MARKET_SCHEMA_VERSION = "4"
 MINUTE_FINALIZATION_GRACE_SECONDS = 3
@@ -265,6 +267,7 @@ class RealtimeWriteResult:
     volume_delta: int
     effective_total_volume: int | None
     minute_was_finalized: bool
+    rest_session_locked: bool = False
 
 
 class CanonicalMarketStore:
@@ -472,6 +475,26 @@ class CanonicalMarketStore:
             connection = self.connection(year)
             connection.execute("BEGIN IMMEDIATE")
             try:
+                rest_session_locked = connection.execute(
+                    """SELECT 1 FROM rest_session_status
+                       WHERE mode='minute' AND symbol=? AND trading_date=?
+                         AND resolution=1 AND status='COMPLETED'
+                         AND rows_received>0
+                       LIMIT 1""",
+                    (symbol, trading_date),
+                ).fetchone()
+                if rest_session_locked is not None:
+                    connection.commit()
+                    return RealtimeWriteResult(
+                        latest_quote_updated=False,
+                        late_event=False,
+                        partial_event=False,
+                        volume_regression=False,
+                        volume_delta=0,
+                        effective_total_volume=None,
+                        minute_was_finalized=False,
+                        rest_session_locked=True,
+                    )
                 latest = connection.execute(
                     "SELECT * FROM latest_quotes WHERE symbol=?", (symbol,)
                 ).fetchone()
@@ -646,7 +669,31 @@ class CanonicalMarketStore:
                         corrected_total=int(minute_provider_total),
                     )
 
-                if provider_session in {"ATO", "ATC"}:
+                exchange = str(event.exchange or "").strip().upper()
+                exchange_session = (
+                    classify_market_session(exchange, event.event_at)
+                    if exchange in {"HOSE", "HNX", "UPCOM"}
+                    else None
+                )
+                if (
+                    provider_session
+                    and provider_session != "ATO"
+                    and exchange == "HOSE"
+                ):
+                    self._finalize_realtime_ato(
+                        connection,
+                        symbol=symbol,
+                        trading_date=trading_date,
+                        exchange=exchange,
+                        transition_at=event.event_at,
+                        updated_at=now,
+                    )
+                if (
+                    provider_session == "ATO"
+                    and exchange == "HOSE"
+                    and exchange_session is not None
+                    and exchange_session.session_type is SessionType.OPEN_AUCTION
+                ):
                     self._upsert_realtime_auction(
                         connection,
                         event=event,
@@ -659,10 +706,24 @@ class CanonicalMarketStore:
                         quality_status=quality,
                         updated_at=now,
                     )
-                elif provider_session:
+                elif provider_session == "ATC":
+                    self._upsert_realtime_auction(
+                        connection,
+                        event=event,
+                        symbol=symbol,
+                        trading_date=trading_date,
+                        event_iso=event_iso,
+                        price=price,
+                        total_volume=total_volume,
+                        prior_latest=latest,
+                        quality_status=quality,
+                        updated_at=now,
+                    )
+                elif provider_session and provider_session != "ATO":
                     connection.execute(
                         """UPDATE auction_sessions SET finalized=1,updated_at=?
-                           WHERE symbol=? AND trading_date=? AND finalized=0""",
+                           WHERE symbol=? AND trading_date=? AND auction_type='ATC'
+                             AND finalized=0""",
                         (now, symbol, trading_date),
                     )
 
@@ -790,6 +851,52 @@ class CanonicalMarketStore:
         return bool(cursor.rowcount)
 
     @staticmethod
+    def _finalize_realtime_ato(
+        connection: sqlite3.Connection,
+        *,
+        symbol: str,
+        trading_date: str,
+        exchange: str,
+        transition_at: datetime,
+        updated_at: str,
+    ) -> None:
+        existing_row = connection.execute(
+            """SELECT * FROM auction_sessions
+               WHERE symbol=? AND trading_date=? AND auction_type='ATO'
+                 AND exchange=? AND finalized=0""",
+            (symbol, trading_date, exchange),
+        ).fetchone()
+        if existing_row is None:
+            return
+        existing = dict(existing_row)
+        last_event_text = existing.get("last_event_at")
+        if last_event_text is None:
+            return
+        try:
+            last_event_at = datetime.fromisoformat(str(last_event_text))
+        except ValueError:
+            return
+        evidence_session = classify_market_session(exchange, last_event_at)
+        if (
+            evidence_session.session_type is not SessionType.OPEN_AUCTION
+            or evidence_session.session_end is None
+            or transition_at < evidence_session.session_end
+            or transition_at <= last_event_at
+        ):
+            return
+        connection.execute(
+            """UPDATE auction_sessions SET finalized=1,updated_at=?
+               WHERE symbol=? AND trading_date=? AND auction_type='ATO'
+                 AND exchange=? AND finalized=0""",
+            (
+                updated_at,
+                symbol,
+                trading_date,
+                exchange,
+            ),
+        )
+
+    @staticmethod
     def _upsert_realtime_auction(
         connection: sqlite3.Connection,
         *,
@@ -810,6 +917,8 @@ class CanonicalMarketStore:
             (symbol, trading_date, auction_type),
         ).fetchone()
         existing = dict(existing_row) if existing_row is not None else {}
+        if auction_type == "ATO" and int(existing.get("finalized") or 0):
+            return
         prior_total = (
             int(prior_latest["total_volume"])
             if prior_latest is not None
@@ -829,11 +938,20 @@ class CanonicalMarketStore:
         end_total = existing.get("end_total_volume")
         if total_volume is not None:
             end_total = total_volume if end_total is None else max(int(end_total), total_volume)
-        auction_volume = (
-            max(0, int(end_total) - int(start_total))
-            if end_total is not None and start_total is not None
-            else None
-        )
+        if auction_type == "ATO":
+            auction_volume = (
+                int(end_total) - int(start_total)
+                if end_total is not None
+                and start_total is not None
+                and int(end_total) >= int(start_total)
+                else None
+            )
+        else:
+            auction_volume = (
+                max(0, int(end_total) - int(start_total))
+                if end_total is not None and start_total is not None
+                else None
+            )
         pre_auction_price = existing.get("pre_auction_price")
         if (
             auction_type == "ATC"
@@ -849,9 +967,20 @@ class CanonicalMarketStore:
         last_event = max(
             value for value in (existing.get("last_event_at"), event_iso) if value
         )
-        auction_price = price if price is not None else existing.get("auction_price")
+        auction_price = existing.get("auction_price")
+        if price is not None and (
+            auction_type != "ATO"
+            or existing.get("last_event_at") is None
+            or event_iso >= str(existing["last_event_at"])
+        ):
+            auction_price = price
         if existing.get("quality_status") == "VOLUME_REGRESSION":
             quality_status = "VOLUME_REGRESSION"
+        elif (
+            auction_type == "ATO"
+            and (auction_volume is None or auction_price is None)
+        ):
+            quality_status = "PARTIAL"
         connection.execute(
             """INSERT INTO auction_sessions(
                    symbol,trading_date,exchange,auction_type,provider_session,
@@ -932,6 +1061,62 @@ class CanonicalMarketStore:
             written += len(values)
         return written
 
+    def replace_rest_minute_sessions(self, rows: Iterable[MinuteBar]) -> int:
+        """Atomically replace and lock each positive SSI REST symbol/day."""
+        grouped: dict[tuple[int, str, str], list[tuple[object, ...]]] = {}
+        fields = tuple(MinuteBar.__dataclass_fields__)
+        for row in rows:
+            values = asdict(row)
+            symbol, trading_date, year = self._identity(row.symbol, row.trading_date)
+            minute = str(row.minute or "").strip()
+            datetime.strptime(minute, "%H:%M")
+            source = str(row.source or "").strip().upper()
+            if source != "SSI_REST":
+                raise ValueError("REST session replacement requires SSI_REST rows")
+            values.update(
+                symbol=symbol,
+                trading_date=trading_date,
+                minute=minute,
+                source=source,
+                updated_at=row.updated_at or utc_now(),
+            )
+            grouped.setdefault((year, symbol, trading_date), []).append(
+                tuple(values[field] for field in fields)
+            )
+
+        placeholders = ",".join("?" for _ in fields)
+        insert_sql = (
+            f"INSERT INTO minute_bars({','.join(fields)}) VALUES({placeholders})"
+        )
+        written = 0
+        for (year, symbol, trading_date), values in grouped.items():
+            with self._lock:
+                connection = self.connection(year)
+                connection.execute("BEGIN IMMEDIATE")
+                try:
+                    connection.execute(
+                        "DELETE FROM minute_bars WHERE symbol=? AND trading_date=?",
+                        (symbol, trading_date),
+                    )
+                    connection.executemany(insert_sql, values)
+                    connection.execute(
+                        """INSERT INTO rest_session_status(
+                               mode,symbol,trading_date,resolution,status,
+                               rows_received,updated_at
+                           ) VALUES('minute',?,?,1,'COMPLETED',?,?)
+                           ON CONFLICT(mode,symbol,trading_date,resolution)
+                           DO UPDATE SET status=excluded.status,
+                               rows_received=excluded.rows_received,
+                               updated_at=excluded.updated_at""",
+                        (symbol, trading_date, len(values), utc_now()),
+                    )
+                    connection.commit()
+                except BaseException:
+                    connection.rollback()
+                    raise
+            written += len(values)
+        return written
+
     def upsert_daily_bars(self, rows: Iterable[DailyBar]) -> int:
         written = 0
         grouped: dict[int, list[tuple[object, ...]]] = {}
@@ -962,6 +1147,201 @@ class CanonicalMarketStore:
                 connection.commit()
             written += len(values)
         return written
+
+    def finalize_eod_latest_quote(
+        self,
+        *,
+        symbol: str,
+        trading_date: str,
+        expected_exchange: str,
+    ) -> bool:
+        """Project positively proven DailyOhlc truth into one latest quote."""
+        canonical_symbol, canonical_trading_date, year = self._identity(
+            symbol, trading_date
+        )
+        canonical_exchange = str(expected_exchange or "").strip().upper()
+        if not canonical_exchange:
+            raise ValueError("expected_exchange is required")
+
+        with self._lock:
+            connection = self.connection(year)
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                daily = connection.execute(
+                    """SELECT * FROM daily_bars
+                       WHERE symbol=? AND trading_date=? AND exchange=?
+                         AND EXISTS (
+                             SELECT 1 FROM rest_fetch_status
+                             WHERE mode='minute' AND symbol=?
+                               AND from_date=? AND to_date=?
+                               AND resolution=1 AND year=?
+                               AND status='COMPLETED'
+                         )
+                         AND EXISTS (
+                             SELECT 1 FROM rest_session_status
+                             WHERE mode='minute' AND symbol=?
+                               AND trading_date=? AND resolution=1
+                               AND status='COMPLETED' AND rows_received>0
+                         )
+                         AND EXISTS (
+                             SELECT 1 FROM rest_fetch_status
+                             WHERE mode='daily' AND symbol=?
+                               AND from_date=? AND to_date=?
+                               AND resolution=0 AND year=?
+                               AND status='COMPLETED'
+                         )""",
+                    (
+                        canonical_symbol,
+                        canonical_trading_date,
+                        canonical_exchange,
+                        canonical_symbol,
+                        canonical_trading_date,
+                        canonical_trading_date,
+                        year,
+                        canonical_symbol,
+                        canonical_trading_date,
+                        canonical_symbol,
+                        canonical_trading_date,
+                        canonical_trading_date,
+                        year,
+                    ),
+                ).fetchone()
+                if (
+                    daily is None
+                    or self.daily_quote_authority_error(daily) is not None
+                ):
+                    connection.commit()
+                    return False
+
+                existing = connection.execute(
+                    "SELECT * FROM latest_quotes WHERE symbol=?",
+                    (canonical_symbol,),
+                ).fetchone()
+                if (
+                    existing is not None
+                    and str(existing["trading_date"]) > canonical_trading_date
+                ):
+                    connection.commit()
+                    return False
+
+                same_day = bool(
+                    existing is not None
+                    and existing["trading_date"] == canonical_trading_date
+                )
+                ref_price = existing["ref_price"] if same_day else None
+                close = daily["close"]
+                valid_change_inputs = bool(
+                    ref_price is not None
+                    and float(ref_price) > 0
+                    and close is not None
+                    and float(close) > 0
+                )
+                change = float(close) - float(ref_price) if valid_change_inputs else None
+                ratio_change = (
+                    change / float(ref_price) * 100 if valid_change_inputs else None
+                )
+                provider_fields = (
+                    (
+                        existing["event_time"],
+                        (
+                            existing["last_price_at"]
+                            if existing["last_price"] == close
+                            else None
+                        ),
+                        ref_price,
+                        existing["bid_price1"],
+                        existing["bid_vol1"],
+                        existing["ask_price1"],
+                        existing["ask_vol1"],
+                        existing["provider_session"],
+                        existing["trading_status"],
+                    )
+                    if same_day
+                    else (None,) * 9
+                )
+                connection.execute(
+                    """INSERT INTO latest_quotes(
+                           symbol,trading_date,event_time,last_price,last_price_at,
+                           total_volume,ref_price,open,high,low,close,bid_price1,
+                           bid_vol1,ask_price1,ask_vol1,change,ratio_change,
+                           exchange,provider_session,trading_status,updated_at
+                       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                       ON CONFLICT(symbol) DO UPDATE SET
+                           trading_date=excluded.trading_date,
+                           event_time=excluded.event_time,
+                           last_price=excluded.last_price,
+                           last_price_at=excluded.last_price_at,
+                           total_volume=excluded.total_volume,
+                           ref_price=excluded.ref_price,
+                           open=excluded.open,high=excluded.high,low=excluded.low,
+                           close=excluded.close,bid_price1=excluded.bid_price1,
+                           bid_vol1=excluded.bid_vol1,
+                           ask_price1=excluded.ask_price1,ask_vol1=excluded.ask_vol1,
+                           change=excluded.change,ratio_change=excluded.ratio_change,
+                           exchange=excluded.exchange,
+                           provider_session=excluded.provider_session,
+                           trading_status=excluded.trading_status,
+                           updated_at=excluded.updated_at""",
+                    (
+                        canonical_symbol,
+                        canonical_trading_date,
+                        provider_fields[0],
+                        close,
+                        provider_fields[1],
+                        daily["volume"],
+                        provider_fields[2],
+                        daily["open"],
+                        daily["high"],
+                        daily["low"],
+                        close,
+                        provider_fields[3],
+                        provider_fields[4],
+                        provider_fields[5],
+                        provider_fields[6],
+                        change,
+                        ratio_change,
+                        daily["exchange"],
+                        provider_fields[7],
+                        provider_fields[8],
+                        daily["updated_at"],
+                    ),
+                )
+                connection.commit()
+                return True
+            except BaseException:
+                connection.rollback()
+                raise
+
+    @staticmethod
+    def daily_quote_authority_error(
+        row: sqlite3.Row | Mapping[str, object],
+    ) -> str | None:
+        quality = str(row["quality_status"] or "").strip().upper()
+        if quality != "TRUSTED":
+            return f"QUALITY_{quality or 'MISSING'}"
+        fields = ("open", "high", "low", "close", "volume", "exchange")
+        missing = [field for field in fields if row[field] is None]
+        if missing:
+            return f"MISSING_{','.join(missing)}"
+        try:
+            prices = {
+                field: float(row[field])
+                for field in ("open", "high", "low", "close")
+            }
+            volume = float(row["volume"])
+        except (TypeError, ValueError):
+            return "NONNUMERIC_OHLCV"
+        nonpositive = [field for field, value in prices.items() if value <= 0]
+        if nonpositive:
+            return f"NONPOSITIVE_{','.join(nonpositive)}"
+        if volume < 0:
+            return "NEGATIVE_VOLUME"
+        if not (
+            prices["low"] <= prices["open"] <= prices["high"]
+            and prices["low"] <= prices["close"] <= prices["high"]
+        ):
+            return "INVALID_OHLC_RANGE"
+        return None
 
     def upsert_auction_sessions(self, rows: Iterable[AuctionSession]) -> int:
         written = 0

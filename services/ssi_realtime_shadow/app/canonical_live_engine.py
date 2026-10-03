@@ -6,16 +6,18 @@ import json
 import logging
 import sqlite3
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from .canonical_engine_store import CanonicalEngineStore, CurrentState
+from .canonical_signal_projector import CanonicalSignalProjector
 from .canonical_market_store import (
     MINUTE_FINALIZATION_GRACE_SECONDS,
     CanonicalMarketStore,
     RealtimeMarketEvent,
     RealtimeWriteResult,
+    utc_now,
 )
 from .market_session import VN_TZ, normalize_exchange
 from .rebuild_engine import (
@@ -38,6 +40,11 @@ class ProjectorStats:
     state_writes: int
     calculation_errors: int
     trading_date: str
+    canonical_signal_enabled: bool
+    canonical_signal_initialized: bool
+    canonical_signal_writes: int
+    canonical_signal_events: int
+    canonical_signal_errors: int
 
 
 class CanonicalLiveMarketReader:
@@ -86,6 +93,40 @@ class CanonicalLiveMarketReader:
                     (trading_date,),
                 )
             )
+
+    def has_projectable_evidence(
+        self, trading_date: str, observed_at: datetime
+    ) -> bool:
+        """Check safe rollover evidence with one bounded, set-based query."""
+        connection = self._for_date(trading_date)
+        if connection is None:
+            return False
+        with self._lock:
+            evidence = tuple(
+                connection.execute(
+                    """SELECT DISTINCT UPPER(TRIM(exchange)), minute
+                       FROM minute_bars
+                       WHERE trading_date=? AND is_finalized=1
+                         AND UPPER(TRIM(exchange)) IN
+                             ('HOSE','HSX','HNX','UPCOM','UPCO')""",
+                    (trading_date,),
+                )
+            )
+        eligible_by_exchange: dict[str, frozenset[str]] = {}
+        for raw_exchange, raw_minute in evidence:
+            exchange = normalize_exchange(str(raw_exchange))
+            eligible = eligible_by_exchange.get(exchange)
+            if eligible is None:
+                target = _target_point(exchange, observed_at)
+                eligible = frozenset(
+                    point.minute
+                    for point in (target[0][: target[1] + 1] if target else ())
+                    if point.is_continuous
+                )
+                eligible_by_exchange[exchange] = eligible
+            if str(raw_minute) in eligible:
+                return True
+        return False
 
     def read_live_day(
         self, symbol: str, trading_date: str
@@ -173,6 +214,14 @@ def _target_point(
     return (grid, eligible[-1]) if eligible else None
 
 
+def _minute_eligible_at(trading_date: str, minute: str) -> datetime:
+    return datetime.fromisoformat(
+        f"{trading_date}T{minute}:00"
+    ).replace(tzinfo=VN_TZ) + timedelta(
+        minutes=1, seconds=MINUTE_FINALIZATION_GRACE_SECONDS
+    )
+
+
 class CanonicalLiveEngine:
     """Projects active symbols at most once per eligible minute.
 
@@ -186,15 +235,47 @@ class CanonicalLiveEngine:
         market_store: CanonicalMarketStore,
         engine_path: str | Path,
         active_at: datetime,
+        signal_enabled: bool = False,
     ) -> None:
         self._market_store = market_store
         self.engine_store = CanonicalEngineStore(engine_path)
         self._lock = threading.RLock()
-        self._trading_date = _local(active_at).date().isoformat()
-        self._prepare_market_schema(self._trading_date)
+        self._signal_enabled = signal_enabled
+        self._signal_writes = 0
+        self._signal_events = 0
+        self._signal_errors = 0
+        self._active_at = _local(active_at)
+        self.signal_projector: CanonicalSignalProjector | None = None
+        if signal_enabled:
+            try:
+                self.signal_projector = CanonicalSignalProjector(self.engine_store)
+            except Exception:
+                self._signal_errors += 1
+                LOG.exception(
+                    "Canonical signal projector initialization failed; "
+                    "canonical metrics continue"
+                )
+        candidate_date = _local(active_at).date().isoformat()
+        self._prepare_market_schema(candidate_date)
         self.market_reader = CanonicalLiveMarketReader(market_store)
-        self.engine_store.expire_current_state(self._trading_date)
-        self._active = set(self.market_reader.live_symbols(self._trading_date))
+        self._has_active_market_evidence = (
+            self.market_reader.has_projectable_evidence(
+                candidate_date, self._active_at
+            )
+        )
+        self._trading_date = (
+            candidate_date
+            if self._has_active_market_evidence
+            else self.engine_store.latest_snapshot_date() or candidate_date
+        )
+        if self._has_active_market_evidence:
+            self.engine_store.expire_current_state(self._trading_date)
+            if self.signal_projector is not None:
+                self.engine_store.expire_signal_state(self._trading_date)
+            self._active = set(self.market_reader.live_symbols(self._trading_date))
+        else:
+            self._prepare_market_schema(self._trading_date)
+            self._active = set(self.market_reader.live_symbols(self._trading_date))
         self._dirty = {symbol: "" for symbol in self._active}
         self._dirty_generation = {symbol: 0 for symbol in self._active}
         self._exchanges: dict[str, str] = {}
@@ -228,17 +309,55 @@ class CanonicalLiveEngine:
 
     def advance(self, observed_at: datetime) -> int:
         local = _local(observed_at)
-        trading_date = local.date().isoformat()
+        candidate_date = local.date().isoformat()
         with self._lock:
-            if trading_date != self._trading_date:
-                self._prepare_market_schema(trading_date)
-                self.engine_store.expire_current_state(trading_date)
-                self._trading_date = trading_date
-                self._active = set(self.market_reader.live_symbols(trading_date))
-                self._dirty = {symbol: "" for symbol in self._active}
-                self._dirty_generation = {symbol: 0 for symbol in self._active}
-                self._exchanges.clear()
-                self._last_projected.clear()
+            should_check_candidate = (
+                candidate_date > self._trading_date
+                or (
+                    candidate_date == self._trading_date
+                    and not self._has_active_market_evidence
+                )
+            )
+            if should_check_candidate:
+                self._prepare_market_schema(candidate_date)
+                try:
+                    has_candidate_evidence = (
+                        self.market_reader.has_projectable_evidence(
+                            candidate_date, local
+                        )
+                    )
+                    candidate_symbols = (
+                        set(self.market_reader.live_symbols(candidate_date))
+                        if has_candidate_evidence
+                        else set()
+                    )
+                except Exception:
+                    self._calculation_errors += 1
+                    LOG.exception(
+                        "Canonical live-engine rollover probe failed; will retry: "
+                        "trading_date=%s",
+                        candidate_date,
+                    )
+                    return 0
+                if has_candidate_evidence:
+                    self.engine_store.expire_current_state(candidate_date)
+                    if self.signal_projector is not None:
+                        self.engine_store.expire_signal_state(candidate_date)
+                    self._trading_date = candidate_date
+                    self._has_active_market_evidence = True
+                    self._active = candidate_symbols
+                    self._dirty = {symbol: "" for symbol in self._active}
+                    self._dirty_generation = {
+                        symbol: 0 for symbol in self._active
+                    }
+                    self._exchanges.clear()
+                    self._last_projected.clear()
+            if (
+                candidate_date != self._trading_date
+                or not self._has_active_market_evidence
+            ):
+                return 0
+            trading_date = self._trading_date
             symbols = tuple(sorted(self._active))
 
         written = 0
@@ -264,6 +383,8 @@ class CanonicalLiveEngine:
                 state = self._calculate(symbol, trading_date, local)
                 if state is None:
                     continue
+                if not state.updated_at:
+                    state = replace(state, updated_at=utc_now())
                 self.engine_store.upsert_current(state)
             except Exception:
                 with self._lock:
@@ -273,6 +394,37 @@ class CanonicalLiveEngine:
                     symbol,
                 )
                 continue
+            if self.signal_projector is not None:
+                try:
+                    eligible_at = _minute_eligible_at(
+                        state.trading_date, state.minute
+                    )
+                    became_eligible_while_active = (
+                        self._active_at <= eligible_at <= local
+                    )
+                    has_new_eligible_evidence = (
+                        projection_generation > 0 and dirty_is_eligible
+                    )
+                    signal_result = self.signal_projector.project(
+                        state,
+                        local,
+                        fresh_continuous_minute=(
+                            became_eligible_while_active
+                            or has_new_eligible_evidence
+                        ),
+                    )
+                except Exception:
+                    with self._lock:
+                        self._signal_errors += 1
+                    LOG.exception(
+                        "Canonical signal projection failed; metrics remain committed: "
+                        "symbol=%s",
+                        symbol,
+                    )
+                else:
+                    with self._lock:
+                        self._signal_writes += int(signal_result.state_written)
+                        self._signal_events += int(signal_result.event_appended)
             with self._lock:
                 self._last_projected[symbol] = str(state.minute)
                 dirty_minute = self._dirty.get(symbol)
@@ -543,6 +695,11 @@ class CanonicalLiveEngine:
                 state_writes=self._state_writes,
                 calculation_errors=self._calculation_errors,
                 trading_date=self._trading_date,
+                canonical_signal_enabled=self._signal_enabled,
+                canonical_signal_initialized=self.signal_projector is not None,
+                canonical_signal_writes=self._signal_writes,
+                canonical_signal_events=self._signal_events,
+                canonical_signal_errors=self._signal_errors,
             )
 
     def close(self) -> None:

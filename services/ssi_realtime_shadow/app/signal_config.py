@@ -10,8 +10,8 @@ from typing import Any, Mapping
 import yaml
 
 
-EXPECTED_CONFIG_VERSION = "cfg-20260922-beta-002"
-EXPECTED_ENGINE_VERSION = "2.0.1-beta"
+EXPECTED_CONFIG_VERSION = "cfg-20261002-context-001"
+EXPECTED_ENGINE_VERSION = "2.0.4-beta"
 EXPECTED_STATES = (
     "NORMAL",
     "WATCHING",
@@ -39,6 +39,16 @@ EXPECTED_PRIORITY = (
     "FLOW_APPEARING",
     "WATCHING",
     "NORMAL",
+)
+EXPECTED_MOMENTUM_MAINTAINED_PREVIOUS_STATES = (
+    "FLOW_PRICE_CONFIRMED",
+    "MOMENTUM_MAINTAINED",
+)
+EXPECTED_MOMENTUM_WEAKENING_PREVIOUS_STATES = (
+    "FLOW_APPEARING",
+    "FLOW_PRICE_CONFIRMED",
+    "MOMENTUM_MAINTAINED",
+    "MOMENTUM_WEAKENING",
 )
 CONFIG_PATH = (
     Path(__file__).resolve().parents[1]
@@ -69,7 +79,8 @@ class SignalConfig:
     continuous_max_break_blocks: int
     states: Mapping[str, StateDefinition]
     evaluation_priority: tuple[str, ...]
-    positive_previous_states: frozenset[str]
+    momentum_maintained_previous_states: frozenset[str]
+    momentum_weakening_previous_states: frozenset[str]
     inactive_sessions: frozenset[str]
     preserve_inactive_state: bool
     create_inactive_signal_from_clock_only: bool
@@ -217,9 +228,22 @@ def validate_signal_config(raw: Mapping[str, Any]) -> SignalConfig:
     priority = tuple(state_model.get("evaluation_priority") or ())
     if priority != EXPECTED_PRIORITY:
         raise SignalConfigError("evaluation priority does not match the locked model")
-    positive = frozenset(state_model.get("positive_previous_states") or ())
-    if not positive or not positive <= set(EXPECTED_STATES):
-        raise SignalConfigError("positive_previous_states is invalid")
+    maintained_previous = tuple(
+        state_model.get("momentum_maintained_previous_states") or ()
+    )
+    if maintained_previous != EXPECTED_MOMENTUM_MAINTAINED_PREVIOUS_STATES:
+        raise SignalConfigError(
+            "momentum_maintained_previous_states is invalid"
+        )
+    weakening_previous = tuple(
+        state_model.get("momentum_weakening_previous_states") or ()
+    )
+    if weakening_previous != EXPECTED_MOMENTUM_WEAKENING_PREVIOUS_STATES:
+        raise SignalConfigError(
+            "momentum_weakening_previous_states is invalid"
+        )
+    if not set(maintained_previous + weakening_previous) <= set(EXPECTED_STATES):
+        raise SignalConfigError("transition configuration contains unknown states")
     inactive = frozenset(state_model.get("inactive_sessions") or ())
     if not inactive or not all(isinstance(item, str) and item for item in inactive):
         raise SignalConfigError("inactive_sessions is invalid")
@@ -282,7 +306,8 @@ def validate_signal_config(raw: Mapping[str, Any]) -> SignalConfig:
         continuous_max_break_blocks=int(ordinary["maximum_break_blocks"]),
         states=MappingProxyType(states),
         evaluation_priority=priority,
-        positive_previous_states=positive,
+        momentum_maintained_previous_states=frozenset(maintained_previous),
+        momentum_weakening_previous_states=frozenset(weakening_previous),
         inactive_sessions=inactive,
         preserve_inactive_state=preserve_inactive,
         create_inactive_signal_from_clock_only=create_from_clock,

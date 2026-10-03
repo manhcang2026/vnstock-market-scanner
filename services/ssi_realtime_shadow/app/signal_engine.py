@@ -52,6 +52,8 @@ def _all(state: TechnicalState, conditions: tuple[tuple[str, str, float], ...]) 
             return False
         if operator == "<=" and not value <= threshold:
             return False
+        if operator == "<" and not value < threshold:
+            return False
     return True
 
 
@@ -74,18 +76,39 @@ def _continuous_candidates(
     ))):
         candidates.add(str(shock["resulting_state"]))
 
-    if previous in config.positive_previous_states:
+    if previous in config.momentum_weakening_previous_states:
         weakening = raw["negative_flow"]["momentum_weakening"]
-        weak = _all(state, (
+        deep_weakening = _all(state, (
             ("price5_pct", "<=", weakening["price5_pct_max"]),
             ("price15_pct", "<=", weakening["price15_pct_max"]),
             ("rvol30", ">=", weakening["rvol30_min"]),
         ))
         if state.recent_high_retreat_pct is not None:
-            weak = weak and state.recent_high_retreat_pct >= weakening["loss_from_recent_high_pct_min"]
-        if weakening["enabled"] and weak:
+            deep_weakening = (
+                deep_weakening
+                and state.recent_high_retreat_pct
+                >= weakening["loss_from_recent_high_pct_min"]
+            )
+        positive_context = (
+            previous in config.momentum_maintained_previous_states
+            or previous == "MOMENTUM_WEAKENING"
+        )
+        maintained = raw["positive_flow"]["momentum_maintained"]
+        contextual_weakening = (
+            positive_context
+            and state.metrics_trusted
+            and state.baseline_sessions_used
+            >= config.continuous_minimum_sessions
+            and _all(state, (
+                ("rvol30", ">=", weakening["rvol30_min"]),
+                ("price5_pct", "<=", weakening["price5_pct_max"]),
+                ("price15_pct", "<", maintained["price15_pct_floor"]),
+            ))
+        )
+        if weakening["enabled"] and (deep_weakening or contextual_weakening):
             candidates.add("MOMENTUM_WEAKENING")
 
+    if previous in config.momentum_maintained_previous_states:
         maintained = raw["positive_flow"]["momentum_maintained"]
         keep = _all(state, (
             ("rvol30", ">=", maintained["rvol30_min"]),

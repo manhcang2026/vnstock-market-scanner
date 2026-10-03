@@ -11,7 +11,7 @@ from typing import Iterable
 from .canonical_market_store import canonical_date, utc_now
 
 
-ENGINE_SCHEMA_VERSION = "2"
+ENGINE_SCHEMA_VERSION = "3"
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -67,6 +67,44 @@ CREATE TABLE IF NOT EXISTS current_state (
     reason_codes_json TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS signal_state_current (
+    symbol TEXT PRIMARY KEY,
+    exchange TEXT,
+    trading_date TEXT,
+    minute TEXT,
+    session_type TEXT,
+    signal_state TEXT NOT NULL,
+    signal_level INTEGER NOT NULL,
+    signal_direction TEXT NOT NULL,
+    reason_codes_json TEXT NOT NULL,
+    signal_summary_vi TEXT NOT NULL,
+    previous_signal_state TEXT,
+    state_changed_at TEXT,
+    signal_at TEXT,
+    metrics_trusted INTEGER NOT NULL,
+    baseline_sessions_used INTEGER NOT NULL,
+    engine_version TEXT NOT NULL,
+    config_version TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS signal_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol TEXT NOT NULL,
+    exchange TEXT,
+    trading_date TEXT,
+    minute TEXT,
+    session_type TEXT,
+    previous_signal_state TEXT,
+    signal_state TEXT NOT NULL,
+    signal_level INTEGER NOT NULL,
+    signal_direction TEXT NOT NULL,
+    reason_codes_json TEXT NOT NULL,
+    engine_version TEXT NOT NULL,
+    config_version TEXT NOT NULL,
+    detected_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_signal_events_symbol_detected
+    ON signal_events(symbol, detected_at DESC);
 """
 
 
@@ -122,6 +160,25 @@ class CurrentState:
     rvol30_sessions_used: int = 0
 
 
+@dataclass(frozen=True, slots=True)
+class SignalState:
+    symbol: str
+    exchange: str | None
+    trading_date: str
+    minute: str
+    session_type: str
+    signal_state: str
+    signal_level: int
+    signal_direction: str
+    reason_codes_json: str
+    signal_summary_vi: str
+    metrics_trusted: int
+    baseline_sessions_used: int
+    engine_version: str
+    config_version: str
+    updated_at: str
+
+
 class CanonicalEngineStore:
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
@@ -163,6 +220,7 @@ class CanonicalEngineStore:
         technical_rows = list(technical)
         volume_rows = list(volume)
         current_rows = list(current)
+        canonical_as_of = canonical_date(as_of_date)
         with self._lock, self.connection:
             self.connection.execute(
                 "DELETE FROM technical_baseline WHERE as_of_date=?", (as_of_date,)
@@ -171,6 +229,11 @@ class CanonicalEngineStore:
                 "DELETE FROM volume_baseline_curve WHERE as_of_date=?", (as_of_date,)
             )
             self.connection.execute("DELETE FROM current_state")
+            self.connection.execute(
+                """DELETE FROM signal_state_current
+                   WHERE trading_date IS NULL OR trading_date<>?""",
+                (canonical_as_of,),
+            )
             self.connection.executemany(
                 """INSERT INTO technical_baseline(
                        symbol,as_of_date,previous_close,ma10,ma10_sessions,
@@ -194,6 +257,7 @@ class CanonicalEngineStore:
 
     def begin_rebuild(self, as_of_date: str) -> None:
         """Clear disposable output before streaming one symbol at a time."""
+        canonical_as_of = canonical_date(as_of_date)
         with self._lock, self.connection:
             self.connection.execute(
                 "DELETE FROM technical_baseline WHERE as_of_date=?", (as_of_date,)
@@ -202,6 +266,11 @@ class CanonicalEngineStore:
                 "DELETE FROM volume_baseline_curve WHERE as_of_date=?", (as_of_date,)
             )
             self.connection.execute("DELETE FROM current_state")
+            self.connection.execute(
+                """DELETE FROM signal_state_current
+                   WHERE trading_date IS NULL OR trading_date<>?""",
+                (canonical_as_of,),
+            )
 
     def write_symbol(
         self,
@@ -303,12 +372,137 @@ class CanonicalEngineStore:
                 "SELECT * FROM current_state WHERE symbol=?", (symbol,)
             ).fetchone()
 
+    def signal_row(self, symbol: str) -> sqlite3.Row | None:
+        with self._lock:
+            return self.connection.execute(
+                "SELECT * FROM signal_state_current WHERE symbol=?", (symbol,)
+            ).fetchone()
+
+    def latest_snapshot_date(self) -> str | None:
+        """Return the newest date represented by either current snapshot table."""
+        with self._lock:
+            row = self.connection.execute(
+                """SELECT MAX(trading_date) FROM (
+                       SELECT trading_date FROM current_state
+                       WHERE trading_date IS NOT NULL
+                       UNION ALL
+                       SELECT trading_date FROM signal_state_current
+                       WHERE trading_date IS NOT NULL
+                   )"""
+            ).fetchone()
+        return str(row[0]) if row is not None and row[0] is not None else None
+
+    def upsert_signal(self, row: SignalState) -> bool:
+        """Commit current signal state and append history only on same-day change."""
+        values = asdict(row)
+        with self._lock, self.connection:
+            existing = self.connection.execute(
+                """SELECT trading_date,signal_state,previous_signal_state,
+                          state_changed_at,signal_at
+                   FROM signal_state_current WHERE symbol=?""",
+                (row.symbol,),
+            ).fetchone()
+            same_day = (
+                existing is not None
+                and str(existing["trading_date"] or "") == row.trading_date
+            )
+            changed = same_day and str(existing["signal_state"]) != row.signal_state
+            first_actionable = not same_day and row.signal_state != "NORMAL"
+            append_event = first_actionable or changed
+            if not same_day:
+                previous = None
+                changed_at = row.updated_at if row.signal_state != "NORMAL" else None
+                signal_at = row.updated_at if row.signal_state != "NORMAL" else None
+            elif changed:
+                previous = str(existing["signal_state"])
+                changed_at = row.updated_at
+                signal_at = row.updated_at if row.signal_state != "NORMAL" else None
+            else:
+                previous = existing["previous_signal_state"]
+                changed_at = existing["state_changed_at"]
+                signal_at = existing["signal_at"]
+            values.update(
+                previous_signal_state=previous,
+                state_changed_at=changed_at,
+                signal_at=signal_at,
+            )
+            self.connection.execute(
+                """INSERT INTO signal_state_current(
+                       symbol,exchange,trading_date,minute,session_type,
+                       signal_state,signal_level,signal_direction,
+                       reason_codes_json,signal_summary_vi,
+                       previous_signal_state,state_changed_at,signal_at,
+                       metrics_trusted,baseline_sessions_used,
+                       engine_version,config_version,updated_at
+                   ) VALUES(
+                       :symbol,:exchange,:trading_date,:minute,:session_type,
+                       :signal_state,:signal_level,:signal_direction,
+                       :reason_codes_json,:signal_summary_vi,
+                       :previous_signal_state,:state_changed_at,:signal_at,
+                       :metrics_trusted,:baseline_sessions_used,
+                       :engine_version,:config_version,:updated_at)
+                   ON CONFLICT(symbol) DO UPDATE SET
+                       exchange=excluded.exchange,
+                       trading_date=excluded.trading_date,
+                       minute=excluded.minute,
+                       session_type=excluded.session_type,
+                       signal_state=excluded.signal_state,
+                       signal_level=excluded.signal_level,
+                       signal_direction=excluded.signal_direction,
+                       reason_codes_json=excluded.reason_codes_json,
+                       signal_summary_vi=excluded.signal_summary_vi,
+                       previous_signal_state=excluded.previous_signal_state,
+                       state_changed_at=excluded.state_changed_at,
+                       signal_at=excluded.signal_at,
+                       metrics_trusted=excluded.metrics_trusted,
+                       baseline_sessions_used=excluded.baseline_sessions_used,
+                       engine_version=excluded.engine_version,
+                       config_version=excluded.config_version,
+                       updated_at=excluded.updated_at""",
+                values,
+            )
+            if append_event:
+                self.connection.execute(
+                    """INSERT INTO signal_events(
+                           symbol,exchange,trading_date,minute,session_type,
+                           previous_signal_state,signal_state,signal_level,
+                           signal_direction,reason_codes_json,engine_version,
+                           config_version,detected_at
+                       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        row.symbol,
+                        row.exchange,
+                        row.trading_date,
+                        row.minute,
+                        row.session_type,
+                        previous,
+                        row.signal_state,
+                        row.signal_level,
+                        row.signal_direction,
+                        row.reason_codes_json,
+                        row.engine_version,
+                        row.config_version,
+                        row.updated_at,
+                    ),
+                )
+        return bool(append_event)
+
     def expire_current_state(self, trading_date: str) -> int:
         """Remove stale calculated state without touching today's baselines."""
         canonical = canonical_date(trading_date)
         with self._lock, self.connection:
             cursor = self.connection.execute(
                 """DELETE FROM current_state
+                   WHERE trading_date IS NULL OR trading_date<>?""",
+                (canonical,),
+            )
+        return int(cursor.rowcount)
+
+    def expire_signal_state(self, trading_date: str) -> int:
+        canonical = canonical_date(trading_date)
+        with self._lock, self.connection:
+            cursor = self.connection.execute(
+                """DELETE FROM signal_state_current
                    WHERE trading_date IS NULL OR trading_date<>?""",
                 (canonical,),
             )

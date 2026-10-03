@@ -3,14 +3,24 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
+from typing import Protocol
 
 import requests
 
 from .market_session import normalize_exchange
-from .settings import Settings
 
 LOG = logging.getLogger(__name__)
 SYMBOL_RE = re.compile(r"^[A-Z0-9]{2,12}$")
+
+
+class ExchangeMetadataConfig(Protocol):
+    supabase_url: str
+    supabase_key: str
+
+
+class UniverseConfig(ExchangeMetadataConfig, Protocol):
+    universe_file: Path | None
+    min_universe_size: int
 
 
 def _normalize(symbols: list[str]) -> set[str]:
@@ -33,7 +43,7 @@ def _load_file(path: Path) -> set[str]:
     return _normalize(values)
 
 
-def _load_supabase(settings: Settings) -> set[str]:
+def _load_supabase(settings: UniverseConfig) -> set[str]:
     if not settings.supabase_url or not settings.supabase_key:
         raise RuntimeError(
             "No usable UNIVERSE_FILE and SUPABASE_URL/SUPABASE_KEY are not configured"
@@ -51,7 +61,7 @@ def _load_supabase(settings: Settings) -> set[str]:
     return _normalize([row.get("symbol", "") for row in rows if isinstance(row, dict)])
 
 
-def load_exchange_map(settings: Settings) -> dict[str, str]:
+def load_exchange_map(settings: ExchangeMetadataConfig) -> dict[str, str]:
     """Load the trusted symbol-to-exchange map from public.stock_metadata."""
     if not settings.supabase_url or not settings.supabase_key:
         raise RuntimeError(
@@ -108,7 +118,7 @@ def load_exchange_map(settings: Settings) -> dict[str, str]:
     return exchange_map
 
 
-def load_universe(settings: Settings) -> set[str]:
+def load_universe(settings: UniverseConfig) -> set[str]:
     symbols: set[str]
     if settings.universe_file and settings.universe_file.exists():
         symbols = _load_file(settings.universe_file)

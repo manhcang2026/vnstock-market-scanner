@@ -12,6 +12,7 @@ import pytest
 from app.canonical_engine_store import (
     CanonicalEngineStore,
     CurrentState,
+    SignalState,
     TechnicalBaseline,
     VolumeBaselinePoint,
 )
@@ -20,6 +21,7 @@ from app.canonical_market_store import (
     MARKET_SCHEMA_VERSION,
     SCHEMA_SQL,
     CanonicalMarketStore,
+    DailyBar,
     MinuteBar,
     RealtimeMarketEvent,
     RealtimeWriteResult,
@@ -38,6 +40,12 @@ def _at(minute: str, seconds: int = 0) -> datetime:
     return datetime(2026, 9, 25, hour, value, seconds, tzinfo=VN_TZ)
 
 
+def _at_on(trading_date: str, minute: str, seconds: int = 0) -> datetime:
+    hour, value = (int(part) for part in minute.split(":"))
+    day = datetime.fromisoformat(trading_date)
+    return datetime(day.year, day.month, day.day, hour, value, seconds, tzinfo=VN_TZ)
+
+
 def _after(minute: str) -> datetime:
     return _at(minute) + timedelta(minutes=1, seconds=3)
 
@@ -45,6 +53,8 @@ def _after(minute: str) -> datetime:
 def _minute(
     minute: str,
     *,
+    symbol: str = "AAA",
+    trading_date: str = DAY,
     exchange: str = "HNX",
     close: float | None = 100,
     volume: int | None = 10,
@@ -52,8 +62,8 @@ def _minute(
     finalized: int = 1,
 ) -> MinuteBar:
     return MinuteBar(
-        "AAA",
-        DAY,
+        symbol,
+        trading_date,
         minute,
         exchange=exchange,
         close=close,
@@ -215,7 +225,7 @@ def test_year_rollover_migrates_new_shard_before_readonly_projection(
     _assert_v4_shard_preserved(shard, rollover_day)
 
 
-def test_startup_expires_old_state_but_preserves_today_baseline(
+def test_startup_preserves_old_state_without_new_day_market_evidence(
     tmp_path: Path,
 ) -> None:
     engine_path = tmp_path / "engine.db"
@@ -235,22 +245,293 @@ def test_startup_expires_old_state_but_preserves_today_baseline(
         active_at=_after("09:14"),
     )
 
-    assert engine.engine_store.current_row("AAA") is None
+    state = engine.engine_store.current_row("AAA")
+    assert state is not None
+    assert state["trading_date"] == "2026-09-24"
     assert engine.engine_store.load_technical("AAA", DAY) is not None
     assert engine.engine_store.load_volume_point("AAA", "09:14", DAY) is not None
 
 
-def test_day_rollover_expires_previous_current_state(tmp_path: Path) -> None:
+def test_midnight_without_market_evidence_preserves_current_and_signal_snapshots(
+    tmp_path: Path,
+) -> None:
+    engine_path = tmp_path / "engine.db"
+    with CanonicalEngineStore(engine_path) as store:
+        store.upsert_current(_current_state())
+        assert store.upsert_signal(_signal_state())
+
     engine = CanonicalLiveEngine(
         market_store=CanonicalMarketStore(tmp_path / "market"),
+        engine_path=engine_path,
+        active_at=_after("09:14"),
+        signal_enabled=True,
+    )
+
+    for observed_at in (
+        datetime(2026, 9, 26, 0, 1, tzinfo=VN_TZ),
+        datetime(2026, 9, 27, 12, 0, tzinfo=VN_TZ),
+    ):
+        assert engine.advance(observed_at) == 0
+
+    assert engine.engine_store.current_row("AAA")["trading_date"] == DAY
+    assert engine.engine_store.signal_row("AAA")["trading_date"] == DAY
+    assert engine.stats().trading_date == DAY
+    assert engine.engine_store.connection.execute(
+        "SELECT COUNT(*) FROM signal_events"
+    ).fetchone()[0] == 1
+
+
+def test_weekday_clock_does_not_reproject_old_snapshot_without_new_day_evidence(
+    tmp_path: Path,
+) -> None:
+    engine_path = tmp_path / "engine.db"
+    with CanonicalEngineStore(engine_path) as store:
+        store.upsert_current(_current_state())
+        assert store.upsert_signal(_signal_state())
+    engine = CanonicalLiveEngine(
+        market_store=CanonicalMarketStore(tmp_path / "market"),
+        engine_path=engine_path,
+        active_at=_after("09:14"),
+        signal_enabled=True,
+    )
+    current_before = dict(engine.engine_store.current_row("AAA"))
+    signal_before = dict(engine.engine_store.signal_row("AAA"))
+    events_before = engine.engine_store.connection.execute(
+        "SELECT COUNT(*) FROM signal_events"
+    ).fetchone()[0]
+    stats_before = engine.stats()
+
+    assert engine.advance(_at_on("2026-09-28", "10:00")) == 0
+
+    assert dict(engine.engine_store.current_row("AAA")) == current_before
+    assert dict(engine.engine_store.signal_row("AAA")) == signal_before
+    assert engine.engine_store.connection.execute(
+        "SELECT COUNT(*) FROM signal_events"
+    ).fetchone()[0] == events_before
+    stats_after = engine.stats()
+    assert stats_after.state_writes == stats_before.state_writes
+    assert stats_after.canonical_signal_writes == stats_before.canonical_signal_writes
+    assert stats_after.canonical_signal_events == stats_before.canonical_signal_events
+
+
+def test_preopen_zero_volume_row_is_not_destructive_rollover_evidence(
+    tmp_path: Path,
+) -> None:
+    next_day = "2026-09-28"
+    engine_path = tmp_path / "engine.db"
+    with CanonicalEngineStore(engine_path) as store:
+        store.upsert_current(_current_state())
+        assert store.upsert_signal(_signal_state())
+    market = CanonicalMarketStore(tmp_path / "market")
+    market.upsert_minute_bars(
+        [
+            _minute(
+                "08:00",
+                trading_date=next_day,
+                close=None,
+                volume=0,
+                total=0,
+            )
+        ]
+    )
+
+    engine = CanonicalLiveEngine(
+        market_store=market,
+        engine_path=engine_path,
+        active_at=_at_on(next_day, "10:00"),
+        signal_enabled=True,
+    )
+
+    assert engine.advance(_at_on(next_day, "10:00")) == 0
+    assert engine.engine_store.current_row("AAA")["trading_date"] == DAY
+    assert engine.engine_store.signal_row("AAA")["trading_date"] == DAY
+    assert engine.engine_store.connection.execute(
+        "SELECT COUNT(*) FROM signal_events"
+    ).fetchone()[0] == 1
+    assert engine.stats().state_writes == 0
+    assert engine.stats().canonical_signal_writes == 0
+
+
+def test_repeated_preopen_rollover_polling_does_not_read_each_symbol(
+    tmp_path: Path,
+) -> None:
+    next_day = "2026-09-28"
+    engine_path = tmp_path / "engine.db"
+    with CanonicalEngineStore(engine_path) as store:
+        store.upsert_current(_current_state())
+        assert store.upsert_signal(_signal_state())
+    market = CanonicalMarketStore(tmp_path / "market")
+    market.upsert_minute_bars(
+        [
+            _minute(
+                "08:00",
+                symbol=f"S{index:03d}",
+                trading_date=next_day,
+                close=None,
+                volume=0,
+                total=0,
+            )
+            for index in range(200)
+        ]
+    )
+    engine = CanonicalLiveEngine(
+        market_store=market,
+        engine_path=engine_path,
+        active_at=_at_on(next_day, "10:00"),
+        signal_enabled=True,
+    )
+    reads = 0
+    original = engine.market_reader.read_live_day
+
+    def counted_read(*args, **kwargs):
+        nonlocal reads
+        reads += 1
+        return original(*args, **kwargs)
+
+    engine.market_reader.read_live_day = counted_read  # type: ignore[method-assign]
+    for _ in range(5):
+        assert engine.advance(_at_on(next_day, "10:00")) == 0
+
+    assert reads == 0
+    assert engine.engine_store.current_row("AAA")["trading_date"] == DAY
+    assert engine.engine_store.signal_row("AAA")["trading_date"] == DAY
+    assert engine.stats().state_writes == 0
+    assert engine.stats().canonical_signal_writes == 0
+
+
+def test_one_safe_row_adopts_date_and_hydrates_full_live_universe(
+    tmp_path: Path,
+) -> None:
+    next_day = "2026-09-28"
+    market = CanonicalMarketStore(tmp_path / "market")
+    engine = CanonicalLiveEngine(
+        market_store=market,
         engine_path=tmp_path / "engine.db",
         active_at=_after("09:14"),
     )
     engine.engine_store.upsert_current(_current_state())
+    preopen = [
+        _minute(
+            "08:00",
+            symbol=f"S{index:03d}",
+            trading_date=next_day,
+            close=None,
+            volume=0,
+            total=0,
+        )
+        for index in range(200)
+    ]
+    market.upsert_minute_bars(
+        [
+            *preopen,
+            _minute(
+                "09:14",
+                symbol="SAFE",
+                trading_date=next_day,
+                total=100,
+            ),
+        ]
+    )
+    engine._exchange_for_symbol = lambda *_args: None  # type: ignore[method-assign]
 
-    engine.advance(datetime(2026, 9, 26, 8, 0, tzinfo=VN_TZ))
+    assert engine.advance(_at_on(next_day, "09:15", 3)) == 0
 
+    stats = engine.stats()
+    assert stats.trading_date == next_day
+    assert stats.active_symbols == 201
     assert engine.engine_store.current_row("AAA") is None
+
+
+def test_newer_market_evidence_rolls_once_and_preserves_signal_history(
+    tmp_path: Path,
+) -> None:
+    next_day = "2026-09-28"
+    market = CanonicalMarketStore(tmp_path / "market")
+    engine = CanonicalLiveEngine(
+        market_store=market,
+        engine_path=tmp_path / "engine.db",
+        active_at=_after("09:14"),
+        signal_enabled=True,
+    )
+    engine.engine_store.upsert_current(_current_state())
+    assert engine.engine_store.upsert_signal(_signal_state())
+    expired = {"current": 0, "signal": 0}
+    expire_current = engine.engine_store.expire_current_state
+    expire_signal = engine.engine_store.expire_signal_state
+
+    def counted_current(trading_date: str) -> int:
+        expired["current"] += 1
+        return expire_current(trading_date)
+
+    def counted_signal(trading_date: str) -> int:
+        expired["signal"] += 1
+        return expire_signal(trading_date)
+
+    engine.engine_store.expire_current_state = counted_current  # type: ignore[method-assign]
+    engine.engine_store.expire_signal_state = counted_signal  # type: ignore[method-assign]
+    midnight = datetime(2026, 9, 28, 0, 1, tzinfo=VN_TZ)
+    assert engine.advance(midnight) == 0
+    assert engine.advance(midnight) == 0
+    assert expired == {"current": 0, "signal": 0}
+
+    market.upsert_minute_bars(
+        [_minute("09:14", trading_date=next_day, total=100)]
+    )
+    observed_at = _at_on(next_day, "09:15", 3)
+    engine.advance(observed_at)
+    engine.advance(observed_at)
+
+    current = engine.engine_store.current_row("AAA")
+    assert current is not None and current["trading_date"] == next_day
+    signal = engine.engine_store.signal_row("AAA")
+    assert signal is not None and signal["trading_date"] == next_day
+    assert expired == {"current": 1, "signal": 1}
+    assert engine.engine_store.connection.execute(
+        "SELECT COUNT(*) FROM signal_events"
+    ).fetchone()[0] == 1
+
+
+def test_premarket_rebuild_survives_live_engine_startup_without_market_evidence(
+    tmp_path: Path,
+) -> None:
+    next_day = "2026-09-28"
+    market_dir = tmp_path / "market"
+    with CanonicalMarketStore(market_dir) as market:
+        market.upsert_daily_bars(
+            [DailyBar("AAA", DAY, exchange="HNX", close=100, volume=100)]
+        )
+    engine_path = tmp_path / "engine.db"
+    assert rebuild_engine(
+        market_db_dir=market_dir,
+        engine_db=engine_path,
+        as_of_date=next_day,
+    ) == (1, 0)
+    with CanonicalMarketStore(market_dir) as market:
+        market.upsert_minute_bars(
+            [
+                _minute(
+                    "08:00",
+                    trading_date=next_day,
+                    close=None,
+                    volume=0,
+                    total=0,
+                )
+            ]
+        )
+
+    engine = CanonicalLiveEngine(
+        market_store=CanonicalMarketStore(market_dir),
+        engine_path=engine_path,
+        active_at=_at_on(next_day, "08:00"),
+    )
+
+    state = engine.engine_store.current_row("AAA")
+    assert state is not None
+    assert state["trading_date"] == next_day
+    assert engine.stats().trading_date == next_day
+    before = dict(state)
+    assert engine.advance(_at_on(next_day, "10:00")) == 0
+    assert dict(engine.engine_store.current_row("AAA")) == before
 
 
 def test_hook_is_lightweight_and_same_minute_events_write_once(tmp_path: Path) -> None:
@@ -821,6 +1102,61 @@ def test_latest_quote_after_projected_minute_is_not_used(tmp_path: Path) -> None
     assert _state(engine)["last_price"] == 100
 
 
+def test_eod_corrected_close_without_provenance_is_not_replayed_at_stream_time(
+    tmp_path: Path,
+) -> None:
+    market = CanonicalMarketStore(tmp_path / "market")
+    stream_at = _at("14:29", 30)
+    market.write_realtime_event(
+        RealtimeMarketEvent(
+            symbol="AAA", trading_date=DAY, event_at=stream_at,
+            minute="14:29", exchange="HOSE", price=19600,
+            total_volume=90, provider_session="LO",
+        ),
+        observed_at=stream_at,
+    )
+    market.replace_rest_minute_sessions(
+        [
+            _minute(
+                "14:29", exchange="HOSE", close=19600,
+                volume=100, total=100,
+            )
+        ]
+    )
+    market.upsert_daily_bars(
+        [
+            DailyBar(
+                "AAA", DAY, exchange="HOSE", open=19800, high=20200,
+                low=19700, close=20050, volume=100,
+                quality_status="TRUSTED",
+            )
+        ]
+    )
+    for mode, resolution in (("minute", 1), ("daily", 0)):
+        market.mark_fetch_status(
+            mode=mode, symbol="AAA", from_date=DAY, to_date=DAY,
+            resolution=resolution, year=2026, status="COMPLETED",
+            rows_received=1, rows_written=1,
+        )
+    assert market.finalize_eod_latest_quote(
+        symbol="AAA", trading_date=DAY, expected_exchange="HOSE"
+    ) is True
+    quote = market.connection(2026).execute(
+        "SELECT last_price,last_price_at,event_time FROM latest_quotes WHERE symbol='AAA'"
+    ).fetchone()
+    assert tuple(quote) == (20050, None, "14:29:30")
+
+    observed_at = _at("14:35")
+    engine = CanonicalLiveEngine(
+        market_store=market,
+        engine_path=tmp_path / "engine.db",
+        active_at=observed_at,
+    )
+    _baseline(engine, "14:29")
+    assert engine.advance(observed_at) == 1
+    assert _state(engine)["last_price"] == 19600
+
+
 def test_restart_hydrates_today_and_silent_elapsed_minutes_need_no_fake_rows(
     tmp_path: Path,
 ) -> None:
@@ -926,6 +1262,7 @@ def test_engine_exception_keeps_canonical_commit_and_last_usable_state(
     assert market.connection(2026).execute(
         "SELECT COUNT(*) FROM minute_bars"
     ).fetchone()[0] == 1
+    collector.advance_time(_after("09:14"))
     original = engine.market_reader.read_live_day
     engine.market_reader.read_live_day = (  # type: ignore[method-assign]
         lambda *_args: (_ for _ in ()).throw(sqlite3.OperationalError("read failed"))
@@ -936,6 +1273,301 @@ def test_engine_exception_keeps_canonical_commit_and_last_usable_state(
         "SELECT COUNT(*) FROM minute_bars"
     ).fetchone()[0] == 1
     engine.market_reader.read_live_day = original  # type: ignore[method-assign]
+
+
+def test_canonical_signal_disabled_leaves_metrics_projection_unchanged(
+    tmp_path: Path,
+) -> None:
+    market = CanonicalMarketStore(tmp_path / "market")
+    market.upsert_minute_bars([_minute("09:14", total=100)])
+    engine = CanonicalLiveEngine(
+        market_store=market,
+        engine_path=tmp_path / "engine.db",
+        active_at=_after("09:14"),
+    )
+    _baseline(engine, "09:14")
+
+    assert engine.advance(_after("09:14")) == 1
+    assert _state(engine)["minute"] == "09:14"
+    assert engine.engine_store.signal_row("AAA") is None
+    stats = engine.stats()
+    assert not stats.canonical_signal_enabled
+    assert not stats.canonical_signal_initialized
+    assert stats.canonical_signal_writes == 0
+    assert stats.canonical_signal_events == 0
+    assert stats.canonical_signal_errors == 0
+
+
+def test_canonical_signal_enabled_writes_and_counts_projection(
+    tmp_path: Path,
+) -> None:
+    market = CanonicalMarketStore(tmp_path / "market")
+    market.upsert_minute_bars([_minute("09:14", total=100)])
+    engine = CanonicalLiveEngine(
+        market_store=market,
+        engine_path=tmp_path / "engine.db",
+        active_at=_after("09:14"),
+        signal_enabled=True,
+    )
+    _baseline(engine, "09:14")
+
+    assert engine.advance(_after("09:14")) == 1
+    signal = engine.engine_store.signal_row("AAA")
+    assert signal is not None
+    assert signal["session_type"] == "AM_CONTINUOUS"
+    stats = engine.stats()
+    assert stats.canonical_signal_enabled
+    assert stats.canonical_signal_initialized
+    assert stats.canonical_signal_writes == 1
+    assert stats.canonical_signal_events == 0
+    assert stats.canonical_signal_errors == 0
+
+
+@pytest.mark.parametrize(
+    ("exchange", "target", "anchor15", "anchor5", "expected_session"),
+    (
+        ("HOSE", "14:29", "14:14", "14:24", "PM_CONTINUOUS"),
+        ("HNX", "14:29", "14:14", "14:24", "PM_CONTINUOUS"),
+        ("UPCOM", "14:59", "14:44", "14:54", "PM_CONTINUOUS"),
+        ("HNX", "11:29", "11:14", "11:24", "AM_CONTINUOUS"),
+    ),
+)
+def test_fresh_boundary_minute_uses_metric_session_and_emits_once(
+    tmp_path: Path,
+    exchange: str,
+    target: str,
+    anchor15: str,
+    anchor5: str,
+    expected_session: str,
+) -> None:
+    market = CanonicalMarketStore(tmp_path / exchange)
+    market.upsert_minute_bars(
+        [
+            _minute(anchor15, exchange=exchange, close=100, volume=0, total=100),
+            _minute(anchor5, exchange=exchange, close=100, volume=0, total=100),
+            _minute(target, exchange=exchange, close=102, volume=200, total=140),
+        ]
+    )
+    observed_at = _after(target)
+    engine = CanonicalLiveEngine(
+        market_store=market,
+        engine_path=tmp_path / f"engine-{exchange}-{target.replace(':', '')}.db",
+        active_at=observed_at - timedelta(seconds=1),
+        signal_enabled=True,
+    )
+    _baseline(engine, target, denominator=100)
+    assert engine.signal_projector is not None
+    engine.signal_projector.project(
+        replace(
+            _current_state(),
+            exchange=exchange,
+            minute=anchor5,
+            rvol30=1,
+            updated_at="2026-09-25T03:00:00+00:00",
+        ),
+        _at(anchor5),
+    )
+
+    assert engine.advance(observed_at) == 1
+    signal = engine.engine_store.signal_row("AAA")
+    assert signal is not None
+    assert signal["minute"] == target
+    assert signal["session_type"] == expected_session
+    assert signal["signal_state"] == "FLOW_PRICE_CONFIRMED"
+    assert engine.engine_store.connection.execute(
+        "SELECT COUNT(*) FROM signal_events"
+    ).fetchone()[0] == 1
+
+    assert engine.advance(observed_at) == 0
+    assert engine.engine_store.connection.execute(
+        "SELECT COUNT(*) FROM signal_events"
+    ).fetchone()[0] == 1
+
+
+def test_normal_to_watching_transition_is_persisted_at_boundary(
+    tmp_path: Path,
+) -> None:
+    market = CanonicalMarketStore(tmp_path / "market")
+    market.upsert_minute_bars(
+        [_minute("14:29", exchange="HOSE", total=130)]
+    )
+    observed_at = _after("14:29")
+    engine = CanonicalLiveEngine(
+        market_store=market,
+        engine_path=tmp_path / "engine.db",
+        active_at=observed_at - timedelta(seconds=1),
+        signal_enabled=True,
+    )
+    _baseline(engine, "14:29", denominator=100)
+    assert engine.signal_projector is not None
+    engine.signal_projector.project(
+        replace(
+            _current_state(),
+            exchange="HOSE",
+            minute="14:28",
+            rvol30=1,
+            updated_at="2026-09-25T07:28:00+00:00",
+        ),
+        _at("14:28"),
+    )
+
+    assert engine.advance(observed_at) == 1
+    signal = engine.engine_store.signal_row("AAA")
+    assert signal is not None
+    assert signal["session_type"] == "PM_CONTINUOUS"
+    assert signal["previous_signal_state"] == "NORMAL"
+    assert signal["signal_state"] == "WATCHING"
+    assert engine.engine_store.connection.execute(
+        "SELECT COUNT(*) FROM signal_events"
+    ).fetchone()[0] == 1
+
+
+def test_post_eod_rest_restart_recomputes_current_and_preserves_positive_signal(
+    tmp_path: Path,
+) -> None:
+    market = CanonicalMarketStore(tmp_path / "market")
+    market.replace_rest_minute_sessions(
+        [
+            _minute("11:13", close=100, volume=100, total=100),
+            _minute("11:28", close=102, volume=100, total=200),
+            _minute("11:29", close=90, volume=100, total=300),
+        ]
+    )
+    engine_path = tmp_path / "engine.db"
+    engine = CanonicalLiveEngine(
+        market_store=market,
+        engine_path=engine_path,
+        active_at=_after("11:28"),
+        signal_enabled=True,
+    )
+    _baseline(engine, "11:28", "11:29", denominator=100)
+
+    assert engine.advance(_after("11:28")) == 1
+    first = engine.engine_store.signal_row("AAA")
+    assert first is not None
+    assert first["signal_state"] == "FLOW_PRICE_CONFIRMED"
+    assert first["session_type"] == "AM_CONTINUOUS"
+    assert engine.engine_store.connection.execute(
+        "SELECT COUNT(*) FROM signal_events"
+    ).fetchone()[0] == 1
+    engine.close()
+
+    restarted = CanonicalLiveEngine(
+        market_store=market,
+        engine_path=engine_path,
+        active_at=_at("12:00"),
+        signal_enabled=True,
+    )
+    assert restarted.advance(_at("12:00")) == 1
+    current = _state(restarted)
+    assert current["trading_date"] == DAY
+    assert current["minute"] == "11:29"
+    preserved = restarted.engine_store.signal_row("AAA")
+    assert preserved is not None
+    assert preserved["signal_state"] == "FLOW_PRICE_CONFIRMED"
+    assert preserved["session_type"] == "LUNCH_BREAK"
+    assert preserved["minute"] == "11:29"
+    assert restarted.engine_store.connection.execute(
+        "SELECT COUNT(*) FROM signal_events"
+    ).fetchone()[0] == 1
+    assert [
+        tuple(row)
+        for row in market.connection(2026).execute(
+            "SELECT minute,source FROM minute_bars ORDER BY minute"
+        )
+    ] == [("11:13", "SSI_REST"), ("11:28", "SSI_REST"), ("11:29", "SSI_REST")]
+
+
+@pytest.mark.parametrize(
+    ("exchange", "target", "observed"),
+    (
+        ("HOSE", "14:29", "14:35"),
+        ("HNX", "14:29", "14:35"),
+        ("UPCOM", "14:59", "15:10"),
+    ),
+)
+def test_inactive_restart_does_not_reclassify_stale_boundary_minute(
+    tmp_path: Path, exchange: str, target: str, observed: str
+) -> None:
+    market = CanonicalMarketStore(tmp_path / exchange)
+    market.upsert_minute_bars(
+        [_minute(target, exchange=exchange, total=140)]
+    )
+    engine_path = tmp_path / f"engine-{exchange}.db"
+    seed = CanonicalLiveEngine(
+        market_store=market,
+        engine_path=engine_path,
+        active_at=_at("14:00"),
+        signal_enabled=True,
+    )
+    _baseline(seed, target, denominator=100)
+    assert seed.signal_projector is not None
+    seed.signal_projector.project(
+        replace(
+            _current_state(),
+            exchange=exchange,
+            minute="14:00",
+            day_rvol=1.4,
+            rvol15=2,
+            rvol30=2,
+            price5_pct=0.8,
+            price15_pct=1.2,
+            updated_at="2026-09-25T07:00:00+00:00",
+        ),
+        _at("14:00"),
+    )
+    seed.close()
+
+    restarted = CanonicalLiveEngine(
+        market_store=market,
+        engine_path=engine_path,
+        active_at=_at(observed),
+        signal_enabled=True,
+    )
+    assert restarted.advance(_at(observed)) == 1
+    signal = restarted.engine_store.signal_row("AAA")
+    assert signal is not None
+    assert signal["signal_state"] == "FLOW_PRICE_CONFIRMED"
+    assert restarted.engine_store.connection.execute(
+        "SELECT COUNT(*) FROM signal_events"
+    ).fetchone()[0] == 1
+
+
+def test_signal_projection_failure_does_not_rollback_current_state(
+    tmp_path: Path,
+) -> None:
+    market = CanonicalMarketStore(tmp_path / "market")
+    market.upsert_minute_bars([_minute("09:14", total=100)])
+    engine = CanonicalLiveEngine(
+        market_store=market,
+        engine_path=tmp_path / "engine.db",
+        active_at=_after("09:14"),
+        signal_enabled=True,
+    )
+    _baseline(engine, "09:14")
+
+    class BrokenSignalProjector:
+        def project(
+            self,
+            _state: CurrentState,
+            _observed_at: datetime,
+            *,
+            fresh_continuous_minute: bool = False,
+        ):
+            raise sqlite3.OperationalError("signal write failed")
+
+    engine.signal_projector = BrokenSignalProjector()  # type: ignore[assignment]
+
+    assert engine.advance(_after("09:14")) == 1
+    assert _state(engine)["minute"] == "09:14"
+    stats = engine.stats()
+    assert stats.state_writes == 1
+    assert stats.calculation_errors == 0
+    assert stats.canonical_signal_enabled
+    assert stats.canonical_signal_initialized
+    assert stats.canonical_signal_writes == 0
+    assert stats.canonical_signal_events == 0
+    assert stats.canonical_signal_errors == 1
 
 
 def test_main_engine_wrapper_is_fail_open() -> None:
@@ -955,6 +1587,26 @@ def _current_state() -> CurrentState:
         day_rvol_sessions_used=10, rvol15_sessions_used=9,
         rvol30_sessions_used=8, quality_status="PARTIAL",
         reason_codes_json="[]",
+    )
+
+
+def _signal_state() -> SignalState:
+    return SignalState(
+        symbol="AAA",
+        exchange="HNX",
+        trading_date=DAY,
+        minute="09:14",
+        session_type="AM_CONTINUOUS",
+        signal_state="FLOW_PRICE_CONFIRMED",
+        signal_level=3,
+        signal_direction="POSITIVE",
+        reason_codes_json="[]",
+        signal_summary_vi="test",
+        metrics_trusted=1,
+        baseline_sessions_used=10,
+        engine_version="test",
+        config_version="test",
+        updated_at="2026-09-25T02:14:00+00:00",
     )
 
 
