@@ -107,6 +107,9 @@ Active production paths:
 - `ssi_shadow.db`: hot SSI quote/minute transport;
 - `ccc_market_YYYY.db`: canonical market history and current market facts;
 - `ccc_engine.db`: canonical baselines, current state, and signals;
+- `CanonicalStateReader` and state serializers: canonical frontend API contracts;
+- `app.volume_event.VolumeEvent`: normalized collector event contract;
+- shared `volume_baseline.py` grid and session-policy helpers;
 - `ccc-canonical-eod` and `ccc-canonical-premarket`: canonical maintenance.
 
 Retired production paths:
@@ -121,6 +124,18 @@ LEGACY-CODE-CLEANUP-01A removes the V2 runtime, harness, stock-state builder,
 readiness checker, daily finalizer, volume-baseline CLI, and hot-history bootstrap
 CLI. Shared types/helpers and migration compatibility remain where still consumed.
 No production collector path reads or writes V2 state/baseline databases.
+
+LEGACY-CODE-CLEANUP-01B removes `RealtimeVolumeEngine`, its V2 `VolumeSnapshot`
+and baseline loader, the `stock_state_current` projector/writer, and direct
+legacy SQL readers from `state_contract.py`. The active `VolumeEvent` and its
+validators moved unchanged to `app.volume_event`; canonical serializers and
+their key ordering remain unchanged. Its historical `BaselineValidationError`
+exception name is retained only to preserve date/minute validation semantics.
+
+Old `stock_state_current` and `signal_events` schema/migration definitions in
+`market_storage_schema.py` remain migration compatibility for existing offline
+initializer/import consumers. They do not enable a V2 production runtime. This
+cleanup does not remove or migrate any physical table or database.
 
 `VOLUME_ENGINE_ENABLED` and `LIVE_STATE_ENABLED` are obsolete configuration.
 Remove them from deployment environments. The small explicit startup guard is

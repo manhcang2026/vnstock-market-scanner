@@ -21,7 +21,7 @@ from .market_session import (
     normalize_exchange,
 )
 from .normalization import parse_trading_date
-from .realtime_volume import VolumeEvent
+from .volume_event import VolumeEvent
 from .storage import SQLiteStore
 
 LOG = logging.getLogger(__name__)

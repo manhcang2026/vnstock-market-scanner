@@ -641,7 +641,8 @@ def test_state_routes_ignore_conflicting_legacy_database(
     monkeypatch.setenv("MARKET_V2_DATABASE_PATH", str(legacy_path))
 
     access = AccessProbe(full_market=True, technical_allowed=True)
-    with _server(market_dir, engine_path, access) as server:
+    reader, statements = _traced_reader(market_dir, engine_path)
+    with _server(market_dir, engine_path, access, reader) as server:
         detail_status, detail = _get(server, "/v1/stock-detail/AAA")
         scanner_status, scanner = _get(server, "/v1/scanner")
         ccc_status, ccc = _get(
@@ -660,6 +661,8 @@ def test_state_routes_ignore_conflicting_legacy_database(
         for item in group["items"]
     )
     assert scanner["rows"][0]["last_price"] == 101.0
+    assert statements
+    assert all("stock_state_current" not in sql.lower() for sql in statements)
 
 
 def test_latest_engine_snapshot_date_selects_market_shard_not_wall_clock(

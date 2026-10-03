@@ -9,7 +9,6 @@ import pytest
 
 from app.storage import SQLiteStore
 from app.market_storage_schema import ensure_market_storage_schema
-from app.realtime_volume import load_volume_baseline
 from app.volume_baseline import (
     RawVolumeBar,
     SessionProof,
@@ -958,9 +957,6 @@ def test_four_sessions_report_four_and_no_history_symbol_does_not_fail(
     assert summary.symbols_without_history == 1
     assert summary.symbols_under_8_sessions == 2
     assert summary.symbols_no_history == 1
-    snapshot = load_volume_baseline(output)
-    assert snapshot.coverage["HPG"].baseline_sessions_used == 4
-    assert not any(key[0] == "HPG" for key in snapshot.points)
     connection.close()
 
 

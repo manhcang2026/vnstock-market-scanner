@@ -1,9 +1,9 @@
 # CCC Canonical Backend Contract
 
-> **Status:** Ownership updated by LEGACY-CODE-CLEANUP-01A; historical runtime observations below are dated 2026-09-28
+> **Status:** Ownership updated by LEGACY-CODE-CLEANUP-01B; historical runtime observations below are dated 2026-09-28
 > **Repository:** `manhcang2026/vnstock-market-scanner`  
 > **Cleanup branch:** `cleanup/legacy-backend-01`
-> **Production source/base at cleanup start:** `672d28813635c13e4bd2e0d6ad5dc94653db80c1` (cleanup not deployed)
+> **Repository base at 01B cleanup start:** `cb3b891604048c75e1adbefe1b8b6beece8735f0` (01B not deployed)
 > **Purpose:** This is the single handoff document for frontend/backend integration. Frontend work should use this contract instead of inferring behavior from legacy databases or old V2 code.
 
 ---
@@ -203,6 +203,20 @@ are compatibility metadata for old hot-history data, not an active bootstrap
 runtime. Canonical bounded historical/backfill recovery uses
 `app.clean_rest_bootstrap`, which writes SSI REST minute or daily ranges directly
 to `ccc_market_YYYY.db`.
+
+LEGACY-CODE-CLEANUP-01B also removes the remaining `RealtimeVolumeEngine`, V2
+`VolumeSnapshot`/baseline loader, `stock_state_current` projector/writer and
+direct legacy SQL readers. The collector keeps the normalized `VolumeEvent`
+contract in `app.volume_event`; its validation and exception semantics are
+unchanged. Canonical engine/store/readers, state serializers and shared baseline
+calculation helpers remain active with unchanged API keys/order and signals.
+
+The old `stock_state_current` and `signal_events` definitions/indexes and their
+migrations in `market_storage_schema.py` are **MIGRATION_COMPATIBILITY**. Retained
+offline benchmark/auction-history initializers and migration coverage still
+use this schema. Keep it unchanged; physical/schema cleanup is deferred. This
+does not refer to the active canonical engine's `signal_events` table.
+
 No physical database files have been deleted by this code cleanup. Preserve the
 older `auction_session_history` evidence until separately audited/imported or
 explicitly retired. Physical installed legacy units are a separate post-deploy

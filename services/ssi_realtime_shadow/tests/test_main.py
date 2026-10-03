@@ -170,7 +170,7 @@ def test_retired_executable_modules_and_service_files_are_absent() -> None:
     for name in (
         "live_state_runtime", "live_runtime_harness", "stock_state_build",
         "live_ready_check", "daily_finalize", "volume_baseline_build",
-        "historical_bootstrap",
+        "historical_bootstrap", "realtime_volume", "stock_state_current",
     ):
         assert not (SERVICE_ROOT / "app" / f"{name}.py").exists()
     systemd = SERVICE_ROOT / "ops" / "systemd"
