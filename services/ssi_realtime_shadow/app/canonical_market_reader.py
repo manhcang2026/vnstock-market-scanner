@@ -125,6 +125,42 @@ class CanonicalMarketReader:
         rows.sort(key=lambda row: (str(row["trading_date"]), str(row["minute"])))
         return rows
 
+    def daily_rows(
+        self,
+        *,
+        symbol: str,
+        date_from: str,
+        date_to: str,
+    ) -> list[dict[str, object]]:
+        start = date.fromisoformat(date_from)
+        end = date.fromisoformat(date_to)
+        rows: list[dict[str, object]] = []
+        for year in range(start.year, end.year + 1):
+            shard_from = max(start, date(year, 1, 1)).isoformat()
+            shard_to = min(end, date(year, 12, 31)).isoformat()
+            connection = self._connect(year)
+            if connection is None:
+                continue
+            try:
+                fetched = connection.execute(
+                    """
+                    SELECT trading_date, '09:00' AS minute, symbol, exchange,
+                           open, high, low, close, volume,
+                           quality_status, source AS data_source,
+                           NULL AS provider_time
+                    FROM daily_bars
+                    WHERE symbol = ?
+                      AND trading_date BETWEEN ? AND ?
+                    ORDER BY trading_date
+                    """,
+                    (symbol, shard_from, shard_to),
+                ).fetchall()
+                rows.extend(self._mapping(row) for row in fetched)
+            finally:
+                connection.close()
+        rows.sort(key=lambda row: str(row["trading_date"]))
+        return rows
+
     def candle_rows(
         self,
         *,

@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.canonical_market_store import CanonicalMarketStore
+from app.canonical_market_store import CanonicalMarketStore, DailyBar
 from app.canonical_market_reader import CanonicalMarketReader
 from app.chart_api import (
     ChartAPIHandler,
@@ -286,6 +286,55 @@ def test_chart_endpoint_is_public_and_returns_market_bars_only(tmp_path: Path) -
         assert "day_rvol" not in serialized
         assert "signal_state" not in serialized
         assert "reason_codes" not in serialized
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_daily_chart_public_payload_shape_is_unchanged(tmp_path: Path) -> None:
+    with CanonicalMarketStore(tmp_path) as store:
+        store.upsert_daily_bars(
+            [
+                DailyBar(
+                    symbol="HPG",
+                    trading_date="2025-12-31",
+                    exchange="HOSE",
+                    open=20,
+                    high=21,
+                    low=19,
+                    close=20.5,
+                    volume=1_000,
+                    source="SSI_REST",
+                    quality_status="TRUSTED",
+                )
+            ]
+        )
+
+    server = ChartHTTPServer(
+        ("127.0.0.1", 0), ChartAPIHandler, ChartDataStore(tmp_path),
+        SimpleNamespace(), tmp_path, tmp_path / "engine.db",
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        connection = http.client.HTTPConnection(*server.server_address, timeout=5)
+        connection.request(
+            "GET", "/v1/chart/HPG?from=2025-12-31&to=2025-12-31&resolution=1440"
+        )
+        response = connection.getresponse()
+        payload = json.loads(response.read())
+        assert response.status == 200
+        assert tuple(payload) == (
+            "symbol", "from", "to", "resolution", "count",
+            "invalid_ohlc_dropped", "source_counts", "bars",
+        )
+        assert tuple(payload["bars"][0]) == (
+            "trading_date", "minute", "symbol", "exchange", "open", "high",
+            "low", "close", "volume", "quality_status", "data_source",
+            "provider_time",
+        )
+        assert payload["bars"][0]["provider_time"] is None
     finally:
         server.shutdown()
         server.server_close()

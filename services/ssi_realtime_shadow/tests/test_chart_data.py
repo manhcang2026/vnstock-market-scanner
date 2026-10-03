@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from app.canonical_market_store import CanonicalMarketStore, MinuteBar
+from app.canonical_market_store import CanonicalMarketStore, DailyBar, MinuteBar
 from app.chart_data import ChartDataStore
 
 
@@ -40,6 +40,36 @@ def _bar(
 def _seed(market_dir: Path, *rows: MinuteBar) -> None:
     with CanonicalMarketStore(market_dir) as store:
         store.upsert_minute_bars(rows)
+
+
+def _seed_daily(market_dir: Path, *rows: DailyBar) -> None:
+    with CanonicalMarketStore(market_dir) as store:
+        store.upsert_daily_bars(rows)
+
+
+def _daily(
+    *,
+    day: str,
+    source: str = "SSI_REST",
+    quality: str = "TRUSTED",
+    open_price: float | None = 10.0,
+    high: float | None = 11.0,
+    low: float | None = 9.0,
+    close: float | None = 10.5,
+    volume: int | None = 100,
+) -> DailyBar:
+    return DailyBar(
+        symbol="HPG",
+        trading_date=day,
+        exchange="HOSE",
+        open=open_price,
+        high=high,
+        low=low,
+        close=close,
+        volume=volume,
+        source=source,
+        quality_status=quality,
+    )
 
 
 def test_single_year_canonical_query_and_source_counts(tmp_path: Path) -> None:
@@ -181,24 +211,203 @@ def test_intraday_aggregation_resolutions(
     assert bar.quality_status == "LATE_CORRECTION"
 
 
-def test_daily_resolution_aggregates_canonical_minutes(tmp_path: Path) -> None:
-    _seed(
+def test_2025_daily_chart_uses_daily_bars_without_minutes(tmp_path: Path) -> None:
+    _seed_daily(
         tmp_path,
-        _bar(day="2026-10-01", minute="09:00", close=10, volume=100),
-        _bar(
-            day="2026-10-01", minute="14:45", open_price=10, high=13,
-            low=8, close=12, volume=250,
-        ),
-        _bar(day="2026-10-02", minute="09:00", close=11, volume=120),
+        _daily(day="2025-01-02", close=10, volume=100),
+        _daily(day="2025-12-31", high=13, close=12, volume=250),
     )
     result = ChartDataStore(tmp_path).query(
-        symbol="HPG", date_from="2026-10-01", date_to="2026-10-02",
+        symbol="HPG", date_from="2025-01-01", date_to="2025-12-31",
         resolution=1440,
     )
     assert len(result.bars) == 2
-    assert result.bars[0].minute == "09:00"
-    assert result.bars[0].close == 12
-    assert result.bars[0].volume == 350
+    assert [(bar.trading_date, bar.minute, bar.close) for bar in result.bars] == [
+        ("2025-01-02", "09:00", 10),
+        ("2025-12-31", "09:00", 12),
+    ]
+    assert result.source_counts == {"SSI_REST": 2}
+
+
+def test_daily_cross_year_query_is_chronological(tmp_path: Path) -> None:
+    _seed_daily(
+        tmp_path,
+        _daily(day="2025-12-31", close=9.5),
+        _daily(day="2026-01-05", close=10.5),
+    )
+    result = ChartDataStore(tmp_path).query(
+        symbol="HPG", date_from="2025-12-20", date_to="2026-01-10",
+        resolution=1440,
+    )
+    assert [(bar.trading_date, bar.close) for bar in result.bars] == [
+        ("2025-12-31", 9.5),
+        ("2026-01-05", 10.5),
+    ]
+
+
+def test_daily_missing_year_shard_is_missing_data_and_not_created(
+    tmp_path: Path,
+) -> None:
+    _seed_daily(tmp_path, _daily(day="2026-01-05"))
+    result = ChartDataStore(tmp_path).query(
+        symbol="HPG", date_from="2025-12-20", date_to="2026-01-10",
+        resolution=1440,
+    )
+    assert [bar.trading_date for bar in result.bars] == ["2026-01-05"]
+    assert not (tmp_path / "ccc_market_2025.db").exists()
+
+
+def test_daily_row_wins_over_minute_fallback_for_same_date(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_daily(
+        tmp_path, _daily(day="2026-10-02", high=13, close=12, volume=1_000)
+    )
+    _seed(
+        tmp_path,
+        _bar(day="2026-10-02", minute="09:00", close=99, volume=999),
+    )
+    store = ChartDataStore(tmp_path)
+
+    def unexpected_minute_query(**_kwargs):
+        raise AssertionError("date_to daily row must prevent minute fallback query")
+
+    monkeypatch.setattr(store.reader, "minute_rows", unexpected_minute_query)
+    result = store.query(
+        symbol="HPG", date_from="2026-10-02", date_to="2026-10-02",
+        resolution=1440,
+    )
+    assert [(bar.close, bar.volume, bar.data_source) for bar in result.bars] == [
+        (12, 1_000, "SSI_REST")
+    ]
+    assert result.source_counts == {"SSI_REST": 1}
+
+
+def test_missing_daily_row_falls_back_to_aggregated_date_to_minutes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed(
+        tmp_path,
+        _bar(
+            day="2026-10-02", minute="09:00", source="SSI_STREAM",
+            open_price=10, high=11, low=9, close=10.5, volume=100,
+        ),
+        _bar(
+            day="2026-10-02", minute="14:45", source="SSI_STREAM",
+            open_price=10.5, high=13, low=8, close=12, volume=250,
+        ),
+    )
+    store = ChartDataStore(tmp_path)
+    original_minute_rows = store.reader.minute_rows
+    calls: list[dict[str, object]] = []
+
+    def tracked_minute_rows(**kwargs):
+        calls.append(kwargs)
+        return original_minute_rows(**kwargs)
+
+    monkeypatch.setattr(store.reader, "minute_rows", tracked_minute_rows)
+    result = store.query(
+        symbol="HPG", date_from="2026-10-02", date_to="2026-10-02",
+        resolution=1440,
+    )
+    assert calls == [
+        {
+            "symbol": "HPG",
+            "date_from": "2026-10-02",
+            "date_to": "2026-10-02",
+        }
+    ]
+    assert len(result.bars) == 1
+    bar = result.bars[0]
+    assert (bar.minute, bar.open, bar.high, bar.low, bar.close, bar.volume) == (
+        "09:00", 10, 13, 8, 12, 350
+    )
+    assert bar.data_source == "SSI_STREAM"
+    assert result.source_counts == {"SSI_STREAM": 1}
+
+
+def test_daily_range_does_not_fallback_to_minutes_for_earlier_gaps(
+    tmp_path: Path,
+) -> None:
+    _seed_daily(tmp_path, _daily(day="2026-10-01", close=10))
+    _seed(
+        tmp_path,
+        _bar(day="2026-10-02", minute="09:00", close=11),
+        _bar(day="2026-10-03", minute="09:00", close=12, high=13),
+    )
+    result = ChartDataStore(tmp_path).query(
+        symbol="HPG", date_from="2026-10-01", date_to="2026-10-03",
+        resolution=1440,
+    )
+    assert [bar.trading_date for bar in result.bars] == [
+        "2026-10-01",
+        "2026-10-03",
+    ]
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"open_price": None}, {"high": None}, {"low": None},
+        {"close": None}, {"volume": None},
+    ],
+)
+def test_nullable_daily_evidence_is_omitted_without_minute_fallback(
+    tmp_path: Path,
+    changes: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seed_daily(tmp_path, _daily(day="2026-10-02", **changes))
+    _seed(tmp_path, _bar(day="2026-10-02", minute="09:00"))
+    store = ChartDataStore(tmp_path)
+
+    def unexpected_minute_query(**_kwargs):
+        raise AssertionError("invalid date_to daily row still owns the date")
+
+    monkeypatch.setattr(store.reader, "minute_rows", unexpected_minute_query)
+    result = store.query(
+        symbol="HPG", date_from="2026-10-02", date_to="2026-10-02",
+        resolution=1440,
+    )
+    assert result.bars == ()
+    assert result.invalid_ohlc_dropped == 1
+
+
+def test_invalid_daily_ohlc_filtering_and_include_invalid(tmp_path: Path) -> None:
+    _seed_daily(
+        tmp_path,
+        _daily(
+            day="2026-10-02", open_price=12, high=11, low=9, close=10,
+            quality="PARTIAL",
+        ),
+    )
+    store = ChartDataStore(tmp_path)
+    filtered = store.query(
+        symbol="HPG", date_from="2026-10-02", date_to="2026-10-02",
+        resolution=1440,
+    )
+    included = store.query(
+        symbol="HPG", date_from="2026-10-02", date_to="2026-10-02",
+        resolution=1440, include_invalid=True,
+    )
+    assert filtered.bars == ()
+    assert filtered.invalid_ohlc_dropped == 1
+    assert len(included.bars) == 1
+    assert included.bars[0].quality_status == "INVALID_OHLC"
+
+
+@pytest.mark.parametrize("resolution", [1, 5, 15, 30, 60])
+def test_intraday_resolutions_still_read_minute_bars(
+    tmp_path: Path, resolution: int
+) -> None:
+    _seed_daily(tmp_path, _daily(day="2026-10-02", close=999, volume=999))
+    _seed(tmp_path, _bar(day="2026-10-02", minute="10:17", close=10.5))
+    result = ChartDataStore(tmp_path).query(
+        symbol="HPG", date_from="2026-10-02", date_to="2026-10-02",
+        resolution=resolution,
+    )
+    assert len(result.bars) == 1
+    assert result.bars[0].close == 10.5
 
 
 @pytest.mark.parametrize(

@@ -198,6 +198,14 @@ class ChartDataStore:
                 f"resolution must be one of {sorted(ALLOWED_RESOLUTIONS)}"
             )
 
+        if resolution == 1440:
+            return self._query_daily(
+                symbol=symbol,
+                date_from=date_from,
+                date_to=date_to,
+                include_invalid=include_invalid,
+            )
+
         rows = self.reader.minute_rows(
             symbol=symbol,
             date_from=date_from,
@@ -236,3 +244,77 @@ class ChartDataStore:
             invalid_ohlc_dropped=invalid_dropped,
             source_counts=source_counts,
         )
+
+    def _query_daily(
+        self,
+        *,
+        symbol: str,
+        date_from: str,
+        date_to: str,
+        include_invalid: bool,
+    ) -> ChartResult:
+        daily_rows = self.reader.daily_rows(
+            symbol=symbol,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        daily_dates = {str(row["trading_date"]) for row in daily_rows}
+        invalid_dropped = 0
+        daily_bars: list[ChartBar] = []
+        source_counts: dict[str, int] = {}
+
+        for row in daily_rows:
+            bar, dropped = self._validated_bar(row, include_invalid=include_invalid)
+            invalid_dropped += dropped
+            if bar is None:
+                continue
+            daily_bars.append(bar)
+            source_counts[bar.data_source] = source_counts.get(bar.data_source, 0) + 1
+
+        minute_bars: list[ChartBar] = []
+        if date_to not in daily_dates:
+            for row in self.reader.minute_rows(
+                symbol=symbol,
+                date_from=date_to,
+                date_to=date_to,
+            ):
+                bar, dropped = self._validated_bar(
+                    row, include_invalid=include_invalid
+                )
+                invalid_dropped += dropped
+                if bar is not None:
+                    minute_bars.append(bar)
+
+        fallback_bars = _aggregate(minute_bars, 1440)
+        for bar in fallback_bars:
+            source_counts[bar.data_source] = source_counts.get(bar.data_source, 0) + 1
+
+        bars = tuple(sorted((*daily_bars, *fallback_bars), key=lambda bar: bar.trading_date))
+        return ChartResult(
+            symbol=symbol,
+            date_from=date_from,
+            date_to=date_to,
+            resolution=1440,
+            bars=bars,
+            invalid_ohlc_dropped=invalid_dropped,
+            source_counts=source_counts,
+        )
+
+    @staticmethod
+    def _validated_bar(
+        row: Mapping[str, object], *, include_invalid: bool
+    ) -> tuple[ChartBar | None, int]:
+        required = tuple(
+            row[field] for field in ("open", "high", "low", "close", "volume")
+        )
+        if any(value is None for value in required):
+            return None, 1
+        try:
+            open_price, high, low, close = (float(value) for value in required[:4])
+            volume = int(required[4])
+        except (TypeError, ValueError, OverflowError):
+            return None, 1
+        valid = is_valid_ohlc(open_price, high, low, close, volume)
+        if not valid and not include_invalid:
+            return None, 1
+        return _row_to_bar(row, invalid_override=not valid), 0
