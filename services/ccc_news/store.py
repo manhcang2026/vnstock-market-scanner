@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .models import NewsItem
+from .symbols import SymbolMatch
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS news_articles (
@@ -34,6 +35,16 @@ CREATE INDEX IF NOT EXISTS idx_news_articles_source_published
     ON news_articles(source, published_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_news_articles_category_published
     ON news_articles(category, published_at DESC, id DESC);
+
+CREATE TABLE IF NOT EXISTS news_article_symbols (
+    article_id INTEGER NOT NULL REFERENCES news_articles(id) ON DELETE CASCADE,
+    symbol TEXT NOT NULL,
+    match_type TEXT NOT NULL CHECK (match_type IN ('TICKER', 'NAME')),
+    matched_text TEXT NOT NULL,
+    PRIMARY KEY (article_id, symbol)
+);
+CREATE INDEX IF NOT EXISTS idx_news_article_symbols_symbol
+    ON news_article_symbols(symbol, article_id);
 """
 
 
@@ -83,6 +94,7 @@ class NewsStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(self.path)
         self._conn.row_factory = sqlite3.Row
+        self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA busy_timeout=5000")
         self._conn.execute("PRAGMA synchronous=NORMAL")
@@ -191,6 +203,48 @@ class NewsStore:
     def count(self) -> int:
         row = self._conn.execute("SELECT COUNT(*) AS count FROM news_articles").fetchone()
         return int(row["count"])
+
+    def replace_symbols_for_url(self, url: str, matches: list[SymbolMatch]) -> int:
+        row = self._conn.execute(
+            "SELECT id FROM news_articles WHERE url = ?",
+            (_clean(url),),
+        ).fetchone()
+        if row is None:
+            return 0
+        article_id = int(row["id"])
+        unique = {match.symbol: match for match in matches}
+        with self._conn:
+            self._conn.execute(
+                "DELETE FROM news_article_symbols WHERE article_id = ?",
+                (article_id,),
+            )
+            self._conn.executemany(
+                """
+                INSERT INTO news_article_symbols (article_id, symbol, match_type, matched_text)
+                VALUES (?, ?, ?, ?)
+                """,
+                [
+                    (article_id, match.symbol, match.match_type, match.matched_text)
+                    for match in sorted(unique.values(), key=lambda item: item.symbol)
+                ],
+            )
+        return len(unique)
+
+    def for_symbol(self, symbol: str, *, limit: int = 20) -> list[dict[str, object]]:
+        rows = self._conn.execute(
+            """
+            SELECT a.id, a.source, a.category, a.title, a.summary, a.url,
+                   a.published_at, a.image_url, a.image_origin,
+                   a.image_usage_status, s.match_type, s.matched_text
+            FROM news_article_symbols s
+            JOIN news_articles a ON a.id = s.article_id
+            WHERE s.symbol = ?
+            ORDER BY a.published_at DESC, a.id DESC
+            LIMIT ?
+            """,
+            (_clean(symbol).upper(), max(0, int(limit))),
+        ).fetchall()
+        return [dict(row) for row in rows]
 
     def latest(self, *, limit: int = 20) -> list[dict[str, object]]:
         rows = self._conn.execute(

@@ -10,6 +10,7 @@ from .models import FeedSpec, NewsItem
 from .providers import ALL_FEEDS, CAFEF_FEEDS, VIETSTOCK_FEEDS
 from .rss import fetch_feed
 from .store import NewsStore
+from .symbols import SymbolMapper
 
 Fetcher = Callable[[FeedSpec], list[NewsItem]]
 
@@ -64,6 +65,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="Optional isolated SQLite path. When omitted, collection is read-only.",
     )
+    parser.add_argument(
+        "--metadata",
+        type=Path,
+        default=Path("config/watchlist.csv"),
+        help="Stock identity CSV used for deterministic symbol mapping.",
+    )
     return parser
 
 
@@ -72,13 +79,32 @@ def main(argv: list[str] | None = None) -> int:
     items, errors = collect(_feeds_for(args.source), timeout=args.timeout)
 
     if args.db is not None and items:
+        mapper = None
+        if args.metadata.exists():
+            mapper = SymbolMapper.from_csv(args.metadata)
+        else:
+            print(f"WARN symbol metadata not found: {args.metadata}", file=sys.stderr)
         with NewsStore(args.db) as store:
             stats = store.upsert_many(items)
+            mapped_articles = mapped_links = 0
+            if mapper is not None:
+                for item in items:
+                    matches = mapper.match(item)
+                    links = store.replace_symbols_for_url(item.url, matches)
+                    if links:
+                        mapped_articles += 1
+                        mapped_links += links
             print(
                 f"STORE db={args.db} inserted={stats.inserted} "
                 f"updated={stats.updated} unchanged={stats.unchanged} total={store.count()}",
                 file=sys.stderr,
             )
+            if mapper is not None:
+                print(
+                    f"SYMBOLS identities={len(mapper.identities)} "
+                    f"mapped_articles={mapped_articles} links={mapped_links}",
+                    file=sys.stderr,
+                )
 
     for error in errors:
         print(f"WARN {error}", file=sys.stderr)

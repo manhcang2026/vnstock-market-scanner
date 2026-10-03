@@ -6,6 +6,7 @@ from pathlib import Path
 
 from services.ccc_news.models import NewsItem
 from services.ccc_news.store import NewsStore
+from services.ccc_news.symbols import SymbolMatch
 
 
 def _item(*, title: str = "HPG co tin moi", summary: str = "Tom tat") -> NewsItem:
@@ -62,6 +63,23 @@ class NewsStoreTests(unittest.TestCase):
             with NewsStore(path) as reopened:
                 self.assertEqual(reopened.count(), 1)
                 self.assertEqual(reopened.latest(limit=1)[0]["source"], "CafeF")
+
+    def test_symbol_links_are_replaced_and_queryable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "ccc_news.db"
+            with NewsStore(path) as store:
+                store.upsert_many([_item()])
+                count = store.replace_symbols_for_url(
+                    _item().url,
+                    [SymbolMatch("HPG", "TICKER", "HPG")],
+                )
+                self.assertEqual(count, 1)
+                [row] = store.for_symbol("HPG")
+                self.assertEqual(row["title"], "HPG co tin moi")
+                self.assertEqual(row["match_type"], "TICKER")
+
+                store.replace_symbols_for_url(_item().url, [])
+                self.assertEqual(store.for_symbol("HPG"), [])
 
 
 if __name__ == "__main__":
