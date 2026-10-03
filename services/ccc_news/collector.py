@@ -3,11 +3,13 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
 from collections.abc import Callable, Iterable
 
 from .models import FeedSpec, NewsItem
 from .providers import ALL_FEEDS, CAFEF_FEEDS, VIETSTOCK_FEEDS
 from .rss import fetch_feed
+from .store import NewsStore
 
 Fetcher = Callable[[FeedSpec], list[NewsItem]]
 
@@ -57,12 +59,26 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--limit", type=int, default=20)
     parser.add_argument("--timeout", type=float, default=15.0)
     parser.add_argument("--json", action="store_true")
+    parser.add_argument(
+        "--db",
+        type=Path,
+        help="Optional isolated SQLite path. When omitted, collection is read-only.",
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     items, errors = collect(_feeds_for(args.source), timeout=args.timeout)
+
+    if args.db is not None and items:
+        with NewsStore(args.db) as store:
+            stats = store.upsert_many(items)
+            print(
+                f"STORE db={args.db} inserted={stats.inserted} "
+                f"updated={stats.updated} unchanged={stats.unchanged} total={store.count()}",
+                file=sys.stderr,
+            )
 
     for error in errors:
         print(f"WARN {error}", file=sys.stderr)
