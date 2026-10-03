@@ -28,7 +28,13 @@ const LOOKBACK_DAYS = {
   1440: 730,
 }
 
-const HISTORY_FLOOR = '2026-01-05'
+const HISTORY_FLOORS = {
+  5: '2026-01-05',
+  15: '2026-01-05',
+  30: '2026-01-05',
+  60: '2026-01-05',
+  1440: '2025-01-02',
+}
 
 const HISTORY_EXPAND_DAYS = {
   5: 30,
@@ -716,7 +722,8 @@ export default function StockDetailPage() {
   const chartDate = quote?.trading_date || ''
   const historyDepthKey = `${symbol}:${resolution}`
   const lookbackDays = historyDepth[historyDepthKey] ?? LOOKBACK_DAYS[resolution] ?? 30
-  const maxLookbackDays = chartDate ? daysBetween(HISTORY_FLOOR, chartDate) : lookbackDays
+  const historyFloor = HISTORY_FLOORS[resolution] ?? '2026-01-05'
+  const maxLookbackDays = chartDate ? daysBetween(historyFloor, chartDate) : lookbackDays
   const effectiveLookbackDays = Math.min(lookbackDays, maxLookbackDays || lookbackDays)
   const chartRequest = chartDate
     ? chartRequestFor(symbol, chartDate, resolution, effectiveLookbackDays)
@@ -828,7 +835,7 @@ export default function StockDetailPage() {
   const earliestLoadedDate = bars[0]?.trading_date || ''
   const hasMoreHistory = Boolean(
     earliestLoadedDate
-    && earliestLoadedDate > HISTORY_FLOOR
+    && earliestLoadedDate > historyFloor
     && effectiveLookbackDays < maxLookbackDays,
   )
 
