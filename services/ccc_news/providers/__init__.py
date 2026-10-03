@@ -1,0 +1,6 @@
+from .cafef import CAFEF_FEEDS
+from .vietstock import VIETSTOCK_FEEDS
+
+ALL_FEEDS = (*CAFEF_FEEDS, *VIETSTOCK_FEEDS)
+
+__all__ = ["ALL_FEEDS", "CAFEF_FEEDS", "VIETSTOCK_FEEDS"]
